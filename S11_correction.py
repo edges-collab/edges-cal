@@ -354,13 +354,14 @@ def _read_data_and_corrections(root_dir, branch_dir):
 
     # Standards assumed at the switch
     sw = {'open': 1* np.ones_like(f), 'short': -1* np.ones_like(f), 'load': np.zeros_like(f)}
-
+    print(data.keys())
+    print(sw.keys())
     # Correction at the switch
     corrections = {}
     for kind in kinds:
         corrections[kind], xx1, xx2, xx3 = rc.de_embed(
-            sw['open'], sw['short'], sw['load'],data['open']['sw'],
-            data['short']['sw'], data['load']['sw'], data[kind]['ex']
+            sw['open'], sw['short'], sw['load'],data['Open']['sw'],
+            data['Short']['sw'], data['Match']['sw'], data[kind]['ex']
         )
 
     return data, corrections, sw,  xx1, xx2, xx3, f
@@ -372,14 +373,14 @@ def low_band_switch_correction_june_2016(
     data, corrections, sw, xx1, xx2, xx3, f = _read_data_and_corrections(
         root_folder, 'Receiver01_2018_01_08_040_to_200_MHz/25C/S11/InternalSwitch/'
     )
-
+    print(corrections.keys())
     # Computation of S-parameters to the receiver input
     # ToDo: PASS THIS IN
     resistance_of_match = resistance_m  # 50.027 #50.177#50.124#male
     md = 1
     oa, sa, la = rc.agilent_85033E(f, resistance_of_match, md)
 
-    xx, s11, s12s21, s22 = rc.de_embed(oa, sa, la, corrections['open'], corrections['short'], corrections['load'], corrections['open'])
+    xx, s11, s12s21, s22 = rc.de_embed(oa, sa, la, corrections['Open'], corrections['Short'], corrections['Match'], corrections['Open'])
 
     # Polynomial fit of S-parameters from "f" to input frequency vector "f_in"
     # ------------------------------------------------------------------------
