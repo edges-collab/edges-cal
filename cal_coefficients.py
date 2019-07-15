@@ -9,13 +9,13 @@ import os
 
 clear = lambda: os.system('cls')
 clear()
-from receiver_calibration_func import *
+import receiver_calibration_func as rcf
 import glob
-from S11_correction import *
+import S11_correction as s11
 import matplotlib.pyplot as plt
-
-
-# f_center=None
+import reflection_coefficient as rc
+import numpy as np
+F_CENTER=75.0
 
 class spectra(object):
     def __init__(self, data_out, path, flow, fhigh, percent, runNum):
@@ -122,28 +122,28 @@ class spectra(object):
     ras = None
 
 
-def explog(x, a, b, c, d, e):
+def explog(x, a, b, c, d, e, f_center=F_CENTER):
     return a * (x / f_center) ** (
             b + c * np.log(x / f_center) + d * np.log(x / f_center) ** 2 + e * np.log(x / f_center) ** 3) + 2.725
 
 
-def physical5(x, a, b, c, d, e):
+def physical5(x, a, b, c, d, e, f_center=F_CENTER):
     return np.log(
         a * (x / f_center) ** (-2.5 + b + c * np.log(x / f_center)) * np.exp(-d * (x / f_center) ** -2) + e * (
                 x / f_center) ** -2)  # + 2.725
 
 
-def physicallin5(x, a, b, c, d, e):
+def physicallin5(x, a, b, c, d, e, f_center=F_CENTER):
     return a * (x / f_center) ** -2.5 + b * (x / f_center) ** -2.5 * np.log(x / f_center) + c * (
             x / f_center) ** -2.5 * (np.log(x / f_center)) ** 2 + d * (x / f_center) ** -4.5 + e * (
                    x / f_center) ** -2
 
 
-def loglog(x, a, b, c, d, e):
+def loglog(x, a, b, c, d, e, f_center=F_CENTER):
     return a + b * x + c * x ** 2 + d * x ** 3 + e * x ** 4
 
 
-def linlog(x, a, b, c, d, e):
+def linlog(x, a, b, c, d, e, f_center=F_CENTER):
     return (x / f_center) ** b * (a + b * np.log(x / f_center) + c * np.log(x / f_center) ** 2 + d * np.log(
         x / f_center) ** 3 + e * np.log(x / f_center) ** 4)
 
@@ -155,7 +155,7 @@ def spec_read(s, percent=5.0):
     Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
     loadname = 'Ambient'
     Res_files = glob.glob(s.path_res + loadname + '*' + '.txt')
-    s.Ambient_av_s, s.Ambient_av_t, s.amb_temp, s.amb_ts = average_calibration_spectrum(Spec_files, Res_files, percent)
+    s.Ambient_av_s, s.Ambient_av_t, s.amb_temp, s.amb_ts = rcf.average_calibration_spectrum(Spec_files, Res_files, percent)
 
     # Hot Load
     print("Hot Load")
@@ -163,21 +163,21 @@ def spec_read(s, percent=5.0):
     Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
     loadname = 'HotLoad'
     Res_files = glob.glob(s.path_res + loadname + '*' + '.txt')
-    s.Hot_av_s, s.Hot_av_t, s.hot_temp, s.hot_ts = average_calibration_spectrum(Spec_files, Res_files, 4 * percent)
+    s.Hot_av_s, s.Hot_av_t, s.hot_temp, s.hot_ts = rcf.average_calibration_spectrum(Spec_files, Res_files, 4 * percent)
 
     # open Load
     print('Open Load')
     loadname = 'LongCableOpen'
     Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
     Res_files = glob.glob(s.path_res + loadname + '*' + '.txt')
-    s.Open_av_s, s.Open_av_t, s.open_temp, s.open_ts = average_calibration_spectrum(Spec_files, Res_files, percent)
+    s.Open_av_s, s.Open_av_t, s.open_temp, s.open_ts = rcf.average_calibration_spectrum(Spec_files, Res_files, percent)
 
     # Short Load
     print('Short Load')
     loadname = 'LongCableShort'
     Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
     Res_files = glob.glob(s.path_res + loadname + '*' + '.txt')
-    s.Short_av_s, s.Short_av_t, s.short_temp, s.short_ts = average_calibration_spectrum(Spec_files, Res_files, percent)
+    s.Short_av_s, s.Short_av_t, s.short_temp, s.short_ts = rcf.average_calibration_spectrum(Spec_files, Res_files, percent)
 
     # Ant Sim
     print('Ant Sim')
@@ -185,10 +185,10 @@ def spec_read(s, percent=5.0):
     Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
     loadname = 'AntSim4'
     Res_files = glob.glob(s.path_res + loadname + '*.txt')
-    s.AntSim3_av_s, s.AntSim3_av_t, s.antsim_temp, s.antsim_ts = average_calibration_spectrum(Spec_files, Res_files,
+    s.AntSim3_av_s, s.AntSim3_av_t, s.antsim_temp, s.antsim_ts = rcf.average_calibration_spectrum(Spec_files, Res_files,
                                                                                               percent)
 
-    s.ff, s.ilow, s.ihigh = frequency_edges(s.flow, s.fhigh)
+    s.ff, s.ilow, s.ihigh = rcf.frequency_edges(s.flow, s.fhigh)
     s.fe = s.ff[s.ilow:s.ihigh + 1]
     s.samb = s.Ambient_av_s[s.ilow:s.ihigh + 1]
     s.shot = s.Hot_av_s[s.ilow:s.ihigh + 1]
@@ -196,24 +196,12 @@ def spec_read(s, percent=5.0):
     s.sshort = s.Short_av_s[s.ilow:s.ihigh + 1]
     s.santsim3 = s.AntSim3_av_s[s.ilow:s.ihigh + 1]
 
-    '''
-    mask = np.zeros(len(santsim3))
-    mask[2450:2465] = 1
-    santsim3 =ma.masked_array(santsim3,mask)
-    '''
     # Spectra modeling
     s.fen = (s.fe - (s.flow + (s.fhigh - s.flow) / 2)) / ((s.fhigh - s.flow) / 2)
-    '''
-    fit_sopen     = fit_polynomial_fourier('fourier', fen, sopen,     107, plot='yes')
-    fit_sshort = fit_polynomial_fourier('fourier', fen, sshort,     107, plot='yes')
-
-    model_sopen = model_evaluate('fourier', fit_sopen[0],    fen)
-    model_sshort= model_evaluate('fourier', fit_sshort[0],    fen)
-    freq = np.fft.fftfreq(len(fe))
-    '''
 
 
 def specSave(s):
+    # TODO: this should be a method on s
     np.savetxt(s.data_out + 'samb.txt', s.samb)
     np.savetxt(s.data_out + 'shot.txt', s.shot)
     np.savetxt(s.data_out + 'sopen.txt', s.sopen)
@@ -223,11 +211,7 @@ def specSave(s):
 
 def spec_plot(s):
     print('Saving and plotting')
-    np.savetxt(s.data_out + 'samb.txt', s.samb)
-    np.savetxt(s.data_out + 'shot.txt', s.shot)
-    np.savetxt(s.data_out + 'sopen.txt', s.sopen)
-    np.savetxt(s.data_out + 'sshort.txt', s.sshort)
-    np.savetxt(s.data_out + 'santsim2.txt', s.santsim3)
+    specSave(s)
 
     plt.figure(1, figsize=(12, 8), facecolor='white')
     plt.subplot(4, 1, 1)
@@ -260,7 +244,6 @@ def spec_plot(s):
 
     plt.show()
     plt.savefig('Antsim', dpi=plt.figure(1).dpi)
-    return
 
 
 def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
@@ -308,8 +291,9 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
     a1_sw_c, x1, x2, x3 = rc.de_embed(o_sw, s_sw, l_sw, o_m, s_m, l_m, a1_m)
 
     # Correction at receiver input
-    a1_c = low_band_switch_correction_june_2016(a1_sw_c, f_in=f_a1, flow=spec.flow, fhigh=spec.fhigh,
-                                                resistance_m=resistance_m, verification='no')
+    a1_c = s11.low_band_switch_correction_june_2016(
+        a1_sw_c, f_in=f_a1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+    )
 
     a1 = a1_c[(f_a1 / 1e6 >= spec.flow) & (f_a1 / 1e6 <= spec.fhigh)]
 
@@ -329,8 +313,9 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
     h1_sw_c, x1, x2, x3 = rc.de_embed(o_sw, s_sw, l_sw, o_m, s_m, l_m, h1_m)
 
     # Correction at receiver input
-    h1_c = low_band_switch_correction_june_2016(h1_sw_c, f_in=f_h1, flow=spec.flow, fhigh=spec.fhigh,
-                                                resistance_m=resistance_m, verification='no')
+    h1_c = s11.low_band_switch_correction_june_2016(
+        h1_sw_c, f_in=f_h1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+    )
 
     h1 = h1_c[(f_h1 / 1e6 >= spec.flow) & (f_h1 / 1e6 <= spec.fhigh)]
 
@@ -350,8 +335,9 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
     o1_sw_c, x1, x2, x3 = rc.de_embed(o_sw, s_sw, l_sw, o_m, s_m, l_m, o1_m)
 
     # Correction at receiver input
-    o1_c = low_band_switch_correction_june_2016(o1_sw_c, f_in=f_o1, flow=spec.flow, fhigh=spec.fhigh,
-                                                resistance_m=resistance_m, verification='no')
+    o1_c = s11.low_band_switch_correction_june_2016(
+        o1_sw_c, f_in=f_o1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+    )
 
     o1 = o1_c[(f_o1 / 1e6 >= spec.flow) & (f_o1 / 1e6 <= spec.fhigh)]
 
@@ -371,8 +357,9 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
     s1_sw_c, x1, x2, x3 = rc.de_embed(o_sw, s_sw, l_sw, o_m, s_m, l_m, s1_m)
 
     # Correction at receiver input
-    s1_c = low_band_switch_correction_june_2016(s1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh,
-                                                resistance_m=resistance_m, verification='no')
+    s1_c = s11.low_band_switch_correction_june_2016(
+        s1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+    )
 
     s1 = s1_c[(f_s1 / 1e6 >= spec.flow) & (f_s1 / 1e6 <= spec.fhigh)]
 
@@ -392,8 +379,9 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
     as1_sw_c, x1, x2, x3 = rc.de_embed(o_sw, s_sw, l_sw, o_m, s_m, l_m, as1_m)
 
     # Correction at receiver input
-    as1_c = low_band_switch_correction_june_2016(as1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh,
-                                                 resistance_m=resistance_m, verification='no')
+    as1_c = s11.low_band_switch_correction_june_2016(
+        as1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+    )
 
     as1 = as1_c[(f_as1 / 1e6 >= spec.flow) & (f_as1 / 1e6 <= spec.fhigh)]
 
@@ -433,23 +421,23 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
     # Modeling S11
     print('Modeling S11')
     f_s11n = (spec.f_s11 / 1e6 - ((spec.fhigh - spec.flow) / 2 + spec.flow)) / ((spec.fhigh - spec.flow) / 2)
-    spec.fit_s11_LNA_mag = fit_polynomial_fourier('fourier', f_s11n, spec.s11_LNA_mag, 37, plot='no')  #
-    spec.fit_s11_LNA_ang = fit_polynomial_fourier('fourier', f_s11n, spec.s11_LNA_ang, 37, plot='no')  #
+    spec.fit_s11_LNA_mag = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_LNA_mag, 37)
+    spec.fit_s11_LNA_ang = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_LNA_ang, 37)
 
-    spec.fit_s11_amb_mag = fit_polynomial_fourier('fourier', f_s11n, spec.s11_amb_mag, 37, plot='no')  #
-    spec.fit_s11_amb_ang = fit_polynomial_fourier('fourier', f_s11n, spec.s11_amb_ang, 37, plot='no')  #
+    spec.fit_s11_amb_mag = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_amb_mag, 37)
+    spec.fit_s11_amb_ang = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_amb_ang, 37)
 
-    spec.fit_s11_hot_mag = fit_polynomial_fourier('fourier', f_s11n, spec.s11_hot_mag, 37, plot='no')  #
-    spec.fit_s11_hot_ang = fit_polynomial_fourier('fourier', f_s11n, spec.s11_hot_ang, 37, plot='no')  #
+    spec.fit_s11_hot_mag = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_hot_mag, 37)
+    spec.fit_s11_hot_ang = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_hot_ang, 37)
 
-    spec.fit_s11_open_mag = fit_polynomial_fourier('fourier', f_s11n, spec.s11_open_mag, 105, plot='no')  # 27
-    spec.fit_s11_open_ang = fit_polynomial_fourier('fourier', f_s11n, spec.s11_open_ang, 105, plot='no')  # 27
+    spec.fit_s11_open_mag = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_open_mag, 105)
+    spec.fit_s11_open_ang = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_open_ang, 105)
 
-    spec.fit_s11_shorted_mag = fit_polynomial_fourier('fourier', f_s11n, spec.s11_shorted_mag, 105, plot='no')  # 27
-    spec.fit_s11_shorted_ang = fit_polynomial_fourier('fourier', f_s11n, spec.s11_shorted_ang, 105, plot='no')  # 27
+    spec.fit_s11_shorted_mag = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_shorted_mag, 105)
+    spec.fit_s11_shorted_ang = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_shorted_ang, 105)
 
-    spec.fit_s11_antsim3_mag = fit_polynomial_fourier('fourier', f_s11n, spec.s11_antsim3_mag, 55, plot='no')  # 27
-    spec.fit_s11_antsim3_ang = fit_polynomial_fourier('fourier', f_s11n, spec.s11_antsim3_ang, 55, plot='no')  # 27
+    spec.fit_s11_antsim3_mag = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_antsim3_mag, 55)
+    spec.fit_s11_antsim3_ang = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_antsim3_ang, 55)
 
     s11 = np.genfromtxt(spec.path_s11 + 'semi_rigid_s_parameters_WITH_HEADER.txt')
 
@@ -482,43 +470,43 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
     s22_sr_mag = np.abs(s22_sr)
     s22_sr_ang = np.unwrap(np.angle(s22_sr))
 
-    fit_s11_sr_mag = fit_polynomial_fourier('polynomial', f_s11n_r, s11_sr_mag, 21, plot='no')  # 7
-    fit_s11_sr_ang = fit_polynomial_fourier('polynomial', f_s11n_r, s11_sr_ang, 21, plot='no')  # 7
+    fit_s11_sr_mag = rcf.fit_polynomial_fourier('polynomial', f_s11n_r, s11_sr_mag, 21)
+    fit_s11_sr_ang = rcf.fit_polynomial_fourier('polynomial', f_s11n_r, s11_sr_ang, 21)
 
-    fit_s12s21_sr_mag = fit_polynomial_fourier('polynomial', f_s11n_r, s12s21_sr_mag, 21, plot='no')  # 21
-    fit_s12s21_sr_ang = fit_polynomial_fourier('polynomial', f_s11n_r, s12s21_sr_ang, 21, plot='no')  # 9
+    fit_s12s21_sr_mag = rcf.fit_polynomial_fourier('polynomial', f_s11n_r, s12s21_sr_mag, 21)
+    fit_s12s21_sr_ang = rcf.fit_polynomial_fourier('polynomial', f_s11n_r, s12s21_sr_ang, 21)
 
-    fit_s22_sr_mag = fit_polynomial_fourier('polynomial', f_s11n_r, s22_sr_mag, 21, plot='no')  # 7
-    fit_s22_sr_ang = fit_polynomial_fourier('polynomial', f_s11n_r, s22_sr_ang, 21, plot='no')  # 7
+    fit_s22_sr_mag = rcf.fit_polynomial_fourier('polynomial', f_s11n_r, s22_sr_mag, 21)
+    fit_s22_sr_ang = rcf.fit_polynomial_fourier('polynomial', f_s11n_r, s22_sr_ang, 21)
 
-    model_s11_LNA_mag = model_evaluate('fourier', spec.fit_s11_LNA_mag[0], spec.fen)
-    model_s11_LNA_ang = model_evaluate('fourier', spec.fit_s11_LNA_ang[0], spec.fen)
+    model_s11_LNA_mag = rcf.model_evaluate('fourier', spec.fit_s11_LNA_mag[0], spec.fen)
+    model_s11_LNA_ang = rcf.model_evaluate('fourier', spec.fit_s11_LNA_ang[0], spec.fen)
     spec.model_s11_LNA_mag = model_s11_LNA_mag
     spec.model_s11_LNA_ang = model_s11_LNA_ang
 
-    model_s11_ambient_mag = model_evaluate('fourier', spec.fit_s11_amb_mag[0], spec.fen)
-    model_s11_ambient_ang = model_evaluate('fourier', spec.fit_s11_amb_ang[0], spec.fen)
+    model_s11_ambient_mag = rcf.model_evaluate('fourier', spec.fit_s11_amb_mag[0], spec.fen)
+    model_s11_ambient_ang = rcf.model_evaluate('fourier', spec.fit_s11_amb_ang[0], spec.fen)
 
-    model_s11_hot_mag = model_evaluate('fourier', spec.fit_s11_hot_mag[0], spec.fen)
-    model_s11_hot_ang = model_evaluate('fourier', spec.fit_s11_hot_ang[0], spec.fen)
+    model_s11_hot_mag = rcf.model_evaluate('fourier', spec.fit_s11_hot_mag[0], spec.fen)
+    model_s11_hot_ang = rcf.model_evaluate('fourier', spec.fit_s11_hot_ang[0], spec.fen)
 
-    model_s11_open_mag = model_evaluate('fourier', spec.fit_s11_open_mag[0], spec.fen)
-    model_s11_open_ang = model_evaluate('fourier', spec.fit_s11_open_ang[0], spec.fen)
+    model_s11_open_mag = rcf.model_evaluate('fourier', spec.fit_s11_open_mag[0], spec.fen)
+    model_s11_open_ang = rcf.model_evaluate('fourier', spec.fit_s11_open_ang[0], spec.fen)
 
-    model_s11_shorted_mag = model_evaluate('fourier', spec.fit_s11_shorted_mag[0], spec.fen)
-    model_s11_shorted_ang = model_evaluate('fourier', spec.fit_s11_shorted_ang[0], spec.fen)
+    model_s11_shorted_mag = rcf.model_evaluate('fourier', spec.fit_s11_shorted_mag[0], spec.fen)
+    model_s11_shorted_ang = rcf.model_evaluate('fourier', spec.fit_s11_shorted_ang[0], spec.fen)
 
-    model_s11_antsim3_mag = model_evaluate('fourier', spec.fit_s11_antsim3_mag[0], spec.fen)
-    model_s11_antsim3_ang = model_evaluate('fourier', spec.fit_s11_antsim3_ang[0], spec.fen)
+    model_s11_antsim3_mag = rcf.model_evaluate('fourier', spec.fit_s11_antsim3_mag[0], spec.fen)
+    model_s11_antsim3_ang = rcf.model_evaluate('fourier', spec.fit_s11_antsim3_ang[0], spec.fen)
 
-    model_s11_sr_mag = model_evaluate('polynomial', fit_s11_sr_mag[0], spec.fen)
-    model_s11_sr_ang = model_evaluate('polynomial', fit_s11_sr_ang[0], spec.fen)
+    model_s11_sr_mag = rcf.model_evaluate('polynomial', fit_s11_sr_mag[0], spec.fen)
+    model_s11_sr_ang = rcf.model_evaluate('polynomial', fit_s11_sr_ang[0], spec.fen)
 
-    model_s12s21_sr_mag = model_evaluate('polynomial', fit_s12s21_sr_mag[0], spec.fen)
-    model_s12s21_sr_ang = model_evaluate('polynomial', fit_s12s21_sr_ang[0], spec.fen)
+    model_s12s21_sr_mag = rcf.model_evaluate('polynomial', fit_s12s21_sr_mag[0], spec.fen)
+    model_s12s21_sr_ang = rcf.model_evaluate('polynomial', fit_s12s21_sr_ang[0], spec.fen)
 
-    model_s22_sr_mag = model_evaluate('polynomial', fit_s22_sr_mag[0], spec.fen)
-    model_s22_sr_ang = model_evaluate('polynomial', fit_s22_sr_ang[0], spec.fen)
+    model_s22_sr_mag = rcf.model_evaluate('polynomial', fit_s22_sr_mag[0], spec.fen)
+    model_s22_sr_ang = rcf.model_evaluate('polynomial', fit_s22_sr_ang[0], spec.fen)
 
     # converting back to real/imaginary
 
@@ -574,28 +562,28 @@ def s11_cal(spec, cterms, wterms):
     np.savetxt(output_file_str, output_file)
     # ==================================================================================
 
-    spec.scale, spec.off, spec.Tu, spec.TC, spec.TS = calibration_quantities(
+    spec.scale, spec.off, spec.Tu, spec.TC, spec.TS = rcf.calibration_quantities(
         spec.flow, spec.fhigh, spec.fe, spec.samb, spec.shot, spec.sopen, spec.sshort,
         spec.rl, spec.ra, spec.rh, spec.ro, spec.rs, spec.Ambient_av_t, spec.Thd,
         spec.Open_av_t, spec.Short_av_t, spec.cterms, spec.wterms
     )
-    spec.Ant_sim_calibrated = calibrated_antenna_temperature(
+    spec.Ant_sim_calibrated = rcf.calibrated_antenna_temperature(
         spec.santsim3, spec.ras, spec.rl, spec.scale, spec.off,
         spec.Tu, spec.TC, spec.TS, Tamb_internal=300
     )
-    spec.Ambient_calibrated = calibrated_antenna_temperature(
+    spec.Ambient_calibrated = rcf.calibrated_antenna_temperature(
         spec.samb, spec.ra, spec.rl, spec.scale, spec.off, spec.Tu,
         spec.TC, spec.TS, Tamb_internal=300
     )
-    spec.Hot_calibrated = calibrated_antenna_temperature(
+    spec.Hot_calibrated = rcf.calibrated_antenna_temperature(
         spec.shot, spec.rh, spec.rl, spec.scale, spec.off, spec.Tu,
         spec.TC, spec.TS, Tamb_internal=300
     )
-    spec.Open_calibrated = calibrated_antenna_temperature(
+    spec.Open_calibrated = rcf.calibrated_antenna_temperature(
         spec.sopen, spec.ro, spec.rl, spec.scale, spec.off, spec.Tu,
         spec.TC, spec.TS, Tamb_internal=300
     )
-    spec.Short_calibrated = calibrated_antenna_temperature(
+    spec.Short_calibrated = rcf.calibrated_antenna_temperature(
         spec.sshort, spec.rs, spec.rl, spec.scale, spec.off, spec.Tu,
         spec.TC, spec.TS, Tamb_internal=300
     )
@@ -778,13 +766,7 @@ def s11_plot(s):
     # plt.legend()
     plt.grid()
 
-    plt.show()
-
     lim = len(s.fe)  # np.where(fe==100)[0][0]
-
-    # Saving the calibration coefficients
-    temp = np.array([s.fe, s.scale, s.off,
-                     s.Tu, s.TC, s.TS])
 
     # turn temp into variable
     np.savetxt(s.data_out + 'All_cal-params_' + str(s.flow) + '_' + str(s.fhigh) + '_' + str(s.cterms) + '-' + str(
