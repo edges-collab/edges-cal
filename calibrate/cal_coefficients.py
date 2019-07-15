@@ -259,7 +259,7 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
 
     # Correction at receiver input
     a1_c = s11.low_band_switch_correction_june_2016(
-        a1_sw_c, f_in=f_a1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+        '/data5/edges/data/', a1_sw_c, f_in=f_a1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
     )
 
     a1 = a1_c[(f_a1 / 1e6 >= spec.flow) & (f_a1 / 1e6 <= spec.fhigh)]
@@ -281,7 +281,7 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
 
     # Correction at receiver input
     h1_c = s11.low_band_switch_correction_june_2016(
-        h1_sw_c, f_in=f_h1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+        '/data5/edges/data/', h1_sw_c, f_in=f_h1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
     )
 
     h1 = h1_c[(f_h1 / 1e6 >= spec.flow) & (f_h1 / 1e6 <= spec.fhigh)]
@@ -303,7 +303,7 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
 
     # Correction at receiver input
     o1_c = s11.low_band_switch_correction_june_2016(
-        o1_sw_c, f_in=f_o1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+        '/data5/edges/data/', o1_sw_c, f_in=f_o1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
     )
 
     o1 = o1_c[(f_o1 / 1e6 >= spec.flow) & (f_o1 / 1e6 <= spec.fhigh)]
@@ -325,7 +325,7 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
 
     # Correction at receiver input
     s1_c = s11.low_band_switch_correction_june_2016(
-        s1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+        '/data5/edges/data/', s1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
     )
 
     s1 = s1_c[(f_s1 / 1e6 >= spec.flow) & (f_s1 / 1e6 <= spec.fhigh)]
@@ -347,7 +347,7 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
 
     # Correction at receiver input
     as1_c = s11.low_band_switch_correction_june_2016(
-        as1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+        '/data5/edges/data/', as1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
     )
 
     as1 = as1_c[(f_as1 / 1e6 >= spec.flow) & (f_as1 / 1e6 <= spec.fhigh)]
@@ -408,7 +408,7 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
 
     s11_data = np.genfromtxt(spec.path_s11 + 'semi_rigid_s_parameters_WITH_HEADER.txt')
 
-    for i in range(len(s11[:, 0])):
+    for i in range(len(s11_data[:, 0])):
         if (s11_data[i, 0] <= spec.flow) and (s11_data[i + 1, 0] > spec.flow):
             index_low = i
         if (s11_data[i - 1, 0] < spec.fhigh) and (s11_data[i, 0] >= spec.fhigh):
