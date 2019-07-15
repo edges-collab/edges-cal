@@ -212,7 +212,7 @@ def spec_plot(s):
     plt.savefig('Antsim', dpi=plt.figure(1).dpi)
 
 
-def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
+def s11_model(spec, s11_path, resistance_f=50.009, resistance_m=50.166):
     print('S11')
 
     path_LNA = spec.path_s11 + 'ReceiverReading01/'
@@ -259,7 +259,7 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
 
     # Correction at receiver input
     a1_c = s11.low_band_switch_correction_june_2016(
-        '/data5/edges/data/', a1_sw_c, f_in=f_a1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+        s11_path, a1_sw_c, f_in=f_a1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
     )
 
     a1 = a1_c[(f_a1 / 1e6 >= spec.flow) & (f_a1 / 1e6 <= spec.fhigh)]
@@ -303,7 +303,7 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
 
     # Correction at receiver input
     o1_c = s11.low_band_switch_correction_june_2016(
-        '/data5/edges/data/', o1_sw_c, f_in=f_o1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+        s11_path, o1_sw_c, f_in=f_o1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
     )
 
     o1 = o1_c[(f_o1 / 1e6 >= spec.flow) & (f_o1 / 1e6 <= spec.fhigh)]
@@ -325,7 +325,7 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
 
     # Correction at receiver input
     s1_c = s11.low_band_switch_correction_june_2016(
-        '/data5/edges/data/', s1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+        s11_path, s1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
     )
 
     s1 = s1_c[(f_s1 / 1e6 >= spec.flow) & (f_s1 / 1e6 <= spec.fhigh)]
@@ -347,7 +347,7 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
 
     # Correction at receiver input
     as1_c = s11.low_band_switch_correction_june_2016(
-        '/data5/edges/data/', as1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
+        s11_path, as1_sw_c, f_in=f_s1, flow=spec.flow, fhigh=spec.fhigh, resistance_m=resistance_m
     )
 
     as1 = as1_c[(f_as1 / 1e6 >= spec.flow) & (f_as1 / 1e6 <= spec.fhigh)]
