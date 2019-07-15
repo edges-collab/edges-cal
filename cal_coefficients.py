@@ -7,7 +7,7 @@ Edited by: David Lewis
 """
 import os
 
-clear = lambda: os.system('cls')
+clear = lambda: os.system('cls')  # TODO: what the heck does this do?
 clear()
 import receiver_calibration_func as rcf
 import glob
@@ -15,7 +15,9 @@ import S11_correction as s11
 import matplotlib.pyplot as plt
 import reflection_coefficient as rc
 import numpy as np
-F_CENTER=75.0
+
+F_CENTER = 75.0
+
 
 class spectra(object):
     def __init__(self, data_out, path, flow, fhigh, percent, runNum):
@@ -155,7 +157,8 @@ def spec_read(s, percent=5.0):
     Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
     loadname = 'Ambient'
     Res_files = glob.glob(s.path_res + loadname + '*' + '.txt')
-    s.Ambient_av_s, s.Ambient_av_t, s.amb_temp, s.amb_ts = rcf.average_calibration_spectrum(Spec_files, Res_files, percent)
+    s.Ambient_av_s, s.Ambient_av_t, s.amb_temp, s.amb_ts = rcf.average_calibration_spectrum(Spec_files, Res_files,
+                                                                                            percent)
 
     # Hot Load
     print("Hot Load")
@@ -177,7 +180,8 @@ def spec_read(s, percent=5.0):
     loadname = 'LongCableShort'
     Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
     Res_files = glob.glob(s.path_res + loadname + '*' + '.txt')
-    s.Short_av_s, s.Short_av_t, s.short_temp, s.short_ts = rcf.average_calibration_spectrum(Spec_files, Res_files, percent)
+    s.Short_av_s, s.Short_av_t, s.short_temp, s.short_ts = rcf.average_calibration_spectrum(Spec_files, Res_files,
+                                                                                            percent)
 
     # Ant Sim
     print('Ant Sim')
@@ -186,7 +190,7 @@ def spec_read(s, percent=5.0):
     loadname = 'AntSim4'
     Res_files = glob.glob(s.path_res + loadname + '*.txt')
     s.AntSim3_av_s, s.AntSim3_av_t, s.antsim_temp, s.antsim_ts = rcf.average_calibration_spectrum(Spec_files, Res_files,
-                                                                                              percent)
+                                                                                                  percent)
 
     s.ff, s.ilow, s.ihigh = rcf.frequency_edges(s.flow, s.fhigh)
     s.fe = s.ff[s.ilow:s.ihigh + 1]
@@ -439,24 +443,19 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
     spec.fit_s11_antsim3_mag = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_antsim3_mag, 55)
     spec.fit_s11_antsim3_ang = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_antsim3_ang, 55)
 
-    s11 = np.genfromtxt(spec.path_s11 + 'semi_rigid_s_parameters_WITH_HEADER.txt')
+    s11_data = np.genfromtxt(spec.path_s11 + 'semi_rigid_s_parameters_WITH_HEADER.txt')
 
     for i in range(len(s11[:, 0])):
-        if (s11[i, 0] <= spec.flow) and (s11[i + 1, 0] > spec.flow):
+        if (s11_data[i, 0] <= spec.flow) and (s11_data[i + 1, 0] > spec.flow):
             index_low = i
-        if (s11[i - 1, 0] < spec.fhigh) and (s11[i, 0] >= spec.fhigh):
+        if (s11_data[i - 1, 0] < spec.fhigh) and (s11_data[i, 0] >= spec.fhigh):
             index_high = i
     index_s11 = np.arange(index_low, index_high + 1)
 
-    f_s11n_r = (s11[index_s11, 0] - ((spec.fhigh - spec.flow) / 2 + spec.flow)) / ((spec.fhigh - spec.flow) / 2)
-    s11_sr = s11[index_s11, 1] + 1j * s11[index_s11, 2]
-    s12s21_sr = s11[index_s11, 3] + 1j * s11[index_s11, 4]
-    s22_sr = s11[index_s11, 5] + 1j * s11[index_s11, 6]
-
-    temp = np.array([spec.f_s11 / 1e6, np.real(LNA), np.imag(LNA),
-                     np.real(a1), np.imag(a1), np.real(h1), np.imag(h1),
-                     np.real(o1), np.imag(o1), np.real(s1), np.imag(s1),
-                     np.real(as1), np.imag(as1)])
+    f_s11n_r = (s11_data[index_s11, 0] - ((spec.fhigh - spec.flow) / 2 + spec.flow)) / ((spec.fhigh - spec.flow) / 2)
+    s11_sr = s11_data[index_s11, 1] + 1j * s11_data[index_s11, 2]
+    s12s21_sr = s11_data[index_s11, 3] + 1j * s11_data[index_s11, 4]
+    s22_sr = s11_data[index_s11, 5] + 1j * s11_data[index_s11, 6]
 
     # sr-s11
     s11_sr_mag = np.abs(s11_sr)
