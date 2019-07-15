@@ -7,7 +7,7 @@ Created on Thu Feb 08 21:07:31 2018
 
 import numpy as np
 from os import path
-import reflection_coefficient as rc
+from calibrate import reflection_coefficient as rc
 import matplotlib.pyplot as plt
 
 def high_band_switch_correction(data_path, ant_s11, sw_temp):

@@ -5,16 +5,13 @@ Original author: Nivedita Mahesh
 Edited by: David Lewis 
 
 """
+import glob
 import os
 
-clear = lambda: os.system('cls')  # TODO: what the heck does this do?
-clear()
-import receiver_calibration_func as rcf
-import glob
-import S11_correction as s11
 import matplotlib.pyplot as plt
-import reflection_coefficient as rc
 import numpy as np
+
+from calibrate import reflection_coefficient as rc, S11_correction as s11, receiver_calibration_func as rcf
 
 F_CENTER = 75.0
 
@@ -22,20 +19,16 @@ F_CENTER = 75.0
 class spectra(object):
     def __init__(self, data_out, path, flow, fhigh, percent, runNum):
         # Initialize file paths and spectra parameters
-        self.data_out = data_out  # '/home/dmlewis/data/data_files/'
-        self.path = path  # '/data5/edges/data/data-Nivedita/Receiver01_01_08_2018_040_to_200_MHz/25C/'
-        self.path_res = path + 'Resistance/'
-        self.path_spec = path + 'Spectra/mat_files/'
-        self.path_s11 = path + 'S11/'
+        self.data_out = data_out
+        self.path = path
+        self.path_res = os.path.join(path, 'Resistance')
+        self.path_spec = os.path.join(path, 'Spectra', 'mat_files')
+        self.path_s11 = os.path.join(path, 'S11')
         self.flow = flow  # 50
         self.fhigh = fhigh  # 190
         self.f_center = (flow + (fhigh - flow) / 2)  # 75#
-        # global f_center
-        # f_center=self.f_center
         self.percent = percent  # 5.0
         self.runNum = runNum
-        # self.cterms = cterms
-        # self.wterms=wterms
 
     cterms = None
     wterms = None
@@ -106,7 +99,7 @@ class spectra(object):
     Ant_sim_calibrated = None
     Ambient_calibrated = None
     Hot_calibrated = None
-    OPen_calibrated = None
+    Open_calibrated = None
     Short_calibrated = None
     scale = None
     off = None
@@ -122,6 +115,19 @@ class spectra(object):
     ro = None
     rs = None
     ras = None
+
+    def construct_average(self, kind, percent=5.0):
+        spec_files = glob.glob(os.path.join(self.path_spec, kind + '*.mat'))
+        res_files = glob.glob(os.path.join(self.path_res, kind + '*.txt'))
+
+        setattr(
+            self, kind.lower() + "_ave",
+            rcf.AverageCal(spec_files, res_files, percent)
+        )
+
+    def save(self):
+        for kind in ['samb', 'shot', 'shopen', 'sshort', 'santsim4']:
+            np.savetxt(os.path.join(self.data_out, kind), getattr(self, kind))
 
 
 def explog(x, a, b, c, d, e, f_center=F_CENTER):
@@ -152,70 +158,27 @@ def linlog(x, a, b, c, d, e, f_center=F_CENTER):
 
 def spec_read(s, percent=5.0):
     # Ambient Load
-    print("Ambient Load")
-    loadname = 'Ambient'
-    Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
-    loadname = 'Ambient'
-    Res_files = glob.glob(s.path_res + loadname + '*' + '.txt')
-    s.Ambient_av_s, s.Ambient_av_t, s.amb_temp, s.amb_ts = rcf.average_calibration_spectrum(Spec_files, Res_files,
-                                                                                            percent)
-
-    # Hot Load
-    print("Hot Load")
-    loadname = 'HotLoad'
-    Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
-    loadname = 'HotLoad'
-    Res_files = glob.glob(s.path_res + loadname + '*' + '.txt')
-    s.Hot_av_s, s.Hot_av_t, s.hot_temp, s.hot_ts = rcf.average_calibration_spectrum(Spec_files, Res_files, 4 * percent)
-
-    # open Load
-    print('Open Load')
-    loadname = 'LongCableOpen'
-    Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
-    Res_files = glob.glob(s.path_res + loadname + '*' + '.txt')
-    s.Open_av_s, s.Open_av_t, s.open_temp, s.open_ts = rcf.average_calibration_spectrum(Spec_files, Res_files, percent)
-
-    # Short Load
-    print('Short Load')
-    loadname = 'LongCableShort'
-    Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
-    Res_files = glob.glob(s.path_res + loadname + '*' + '.txt')
-    s.Short_av_s, s.Short_av_t, s.short_temp, s.short_ts = rcf.average_calibration_spectrum(Spec_files, Res_files,
-                                                                                            percent)
-
-    # Ant Sim
-    print('Ant Sim')
-    loadname = 'AntSim4'
-    Spec_files = glob.glob(s.path_spec + loadname + '*' + '.mat')
-    loadname = 'AntSim4'
-    Res_files = glob.glob(s.path_res + loadname + '*.txt')
-    s.AntSim3_av_s, s.AntSim3_av_t, s.antsim_temp, s.antsim_ts = rcf.average_calibration_spectrum(Spec_files, Res_files,
-                                                                                                  percent)
+    s.construct_average("Ambient", percent)
+    s.construct_average("HotLoad", 4 * percent)
+    s.construct_average("LongCableOpen", percent)
+    s.construct_average("LongCableShort", percent)
+    s.construct_average("AntSim4", percent)
 
     s.ff, s.ilow, s.ihigh = rcf.frequency_edges(s.flow, s.fhigh)
     s.fe = s.ff[s.ilow:s.ihigh + 1]
-    s.samb = s.Ambient_av_s[s.ilow:s.ihigh + 1]
-    s.shot = s.Hot_av_s[s.ilow:s.ihigh + 1]
-    s.sopen = s.Open_av_s[s.ilow:s.ihigh + 1]
-    s.sshort = s.Short_av_s[s.ilow:s.ihigh + 1]
-    s.santsim3 = s.AntSim3_av_s[s.ilow:s.ihigh + 1]
+    s.samb = s.ambient_ave.temp_ave[s.ilow:s.ihigh + 1]
+    s.shot = s.hotload_ave.temp_ave[s.ilow:s.ihigh + 1]
+    s.sopen = s.longcableopen_ave.temp_ave[s.ilow:s.ihigh + 1]
+    s.sshort = s.longcableshort_ave.temp_ave[s.ilow:s.ihigh + 1]
+    s.santsim3 = s.antsim4_ave.temp_ave[s.ilow:s.ihigh + 1]
 
     # Spectra modeling
     s.fen = (s.fe - (s.flow + (s.fhigh - s.flow) / 2)) / ((s.fhigh - s.flow) / 2)
 
 
-def specSave(s):
-    # TODO: this should be a method on s
-    np.savetxt(s.data_out + 'samb.txt', s.samb)
-    np.savetxt(s.data_out + 'shot.txt', s.shot)
-    np.savetxt(s.data_out + 'sopen.txt', s.sopen)
-    np.savetxt(s.data_out + 'sshort.txt', s.sshort)
-    np.savetxt(s.data_out + 'santsim2.txt', s.santsim3)
-
-
 def spec_plot(s):
     print('Saving and plotting')
-    specSave(s)
+    s.save()
 
     plt.figure(1, figsize=(12, 8), facecolor='white')
     plt.subplot(4, 1, 1)
@@ -246,7 +209,6 @@ def spec_plot(s):
     plt.ylabel("Antsim Spectra (K)")
     plt.xlabel('freq(MHz)')
 
-    plt.show()
     plt.savefig('Antsim', dpi=plt.figure(1).dpi)
 
 
@@ -262,6 +224,7 @@ def s11_model(spec, resistance_f=50.009, resistance_m=50.166):
 
     # Receiver reflection coefficient
     print('Reflection Coefficient')
+
     # Reading measurements
     o, fr0 = rc.s1p_read(path_LNA + 'Open0' + str(spec.runNum) + '.s1p')
     s, fr0 = rc.s1p_read(path_LNA + 'Short0' + str(spec.runNum) + '.s1p')

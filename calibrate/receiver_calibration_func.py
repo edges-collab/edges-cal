@@ -8,7 +8,7 @@ Created on Thu Feb 08 14:02:33 2018
 import scipy as sp
 import scipy.io as sio
 
-from modelling import *
+from calibrate.modelling import *
 
 
 def level1_MAT(file_name, plot=False):
@@ -67,7 +67,7 @@ def temperature_thermistor_oven_industries_TR136_170(R, unit):
     return T
 
 
-def average_calibration_spectrum(spectrum_files, resistance_file, start_percent=0, plot=False):
+class AverageCal:
     """
     This function loads and averages (in time) calibration data (ambient, hot, open,
     shorted, simulators, etc.) in MAT format produced by the "acq2level1.m" MATLAB program.
@@ -99,58 +99,53 @@ def average_calibration_spectrum(spectrum_files, resistance_file, start_percent=
     >>> av_ta, av_temp = average_calibration_spectrum(spec_files, res_file, start_percentage=10)
     """
 
-    # spectra
-    for i in range(len(spectrum_files)):
-        tai = level1_MAT(spectrum_files[i], plot=False)
-        if i == 0:
-            ta = tai
-        elif i > 0:
-            ta = np.concatenate((ta, tai), axis=1)
+    def __init__(self, spectrum_files, resistance_file, start_percent=0):
+        self.start_percent = start_percent
 
-    index_start_spectra = int((start_percent / 100) * len(ta[0, :]))
-    ta_sel = ta[:, index_start_spectra::]
-    av_ta = np.mean(ta_sel, axis=1)
+        self.ave_spectrum = self.read_spectrum(spectrum_files)
+        self.thermistor_temp = self.read_temperature(resistance_file)
 
-    # temperature
-    if isinstance(resistance_file, list):
-        for i in range(len(resistance_file)):
+    @property
+    def temp_ave(self):
+        """Average thermistor temperature"""
+        return np.mean(self.indexed_temp)
+
+    @property
+    def start_index(self):
+        """Starting index for useful measurements"""
+        return int((self.start_percent / 100) * len(self.thermistor_temp))
+
+    @property
+    def indexed_temp(self):
+        """A view of the thermistor temperatures beginning at the start index."""
+        return self.thermistor_temp[self.start_index:]
+
+    def read_spectrum(self, spectrum_files, start_percent=None):
+        start_percent = start_percent or self.start_percent
+
+        for i in range(len(spectrum_files)):
+            tai = level1_MAT(spectrum_files[i], plot=False)
             if i == 0:
-                R = np.genfromtxt(resistance_file[i])
-            else:
-                R = np.concatenate((R, np.genfromtxt(resistance_file[i])), axis=0)
-    else:
-        R = np.genfromtxt(resistance_file)
+                ta = tai
+            elif i > 0:
+                ta = np.concatenate((ta, tai), axis=1)
 
-    temp = temperature_thermistor_oven_industries_TR136_170(R, 'K')
-    index_start_temp = int((start_percent / 100) * len(temp))
-    temp_sel = temp[index_start_temp::]
-    av_temp = np.average(temp_sel)
+        index_start_spectra = int((start_percent / 100) * len(ta[0, :]))
+        ta_sel = ta[:, index_start_spectra::]
+        av_ta = np.mean(ta_sel, axis=1)
+        return av_ta
 
-    # plot
-    if plot:
-        plt.subplot(2, 2, 1)
-        plt.plot(ta[:, 3e4], 'r')
-        plt.plot([index_start_spectra, index_start_spectra], [min(ta[:, 3e4]) - 5, max(ta[:, 3e4]) + 5], 'k--')
-        plt.ylabel('spectral temperature')
-        plt.ylim([min(ta[:, 3e4]) - 5, max(ta[:, 3e4]) + 5])
+    def read_temperature(self, resistance_file):
+        if isinstance(resistance_file, list):
+            for i in range(len(resistance_file)):
+                if i == 0:
+                    R = np.genfromtxt(resistance_file[i])
+                else:
+                    R = np.concatenate((R, np.genfromtxt(resistance_file[i])), axis=0)
+        else:
+            R = np.genfromtxt(resistance_file)
 
-        plt.subplot(2, 2, 2)
-        plt.plot(ta_sel[:, 3e4], 'r')
-        plt.ylim([min(ta[:, 3e4]) - 5, max(ta[:, 3e4]) + 5])
-
-        plt.subplot(2, 2, 3)
-        plt.plot(temp, 'r')
-        plt.plot([index_start_temp, index_start_temp], [min(temp) - 5, max(temp) + 5], 'k--')
-        plt.xlabel('sample')
-        plt.ylabel('physical temperature')
-        plt.ylim([min(temp) - 5, max(temp) + 5])
-
-        plt.subplot(2, 2, 4)
-        plt.plot(temp_sel, 'r')
-        plt.xlabel('sample')
-        plt.ylim([min(temp) - 5, max(temp) + 5])
-
-    return av_ta, av_temp, temp, temp_sel
+        return temperature_thermistor_oven_industries_TR136_170(R, 'K')
 
 
 def frequency_edges(flow, fhigh):
