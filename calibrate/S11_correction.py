@@ -5,10 +5,13 @@ Created on Thu Feb 08 21:07:31 2018
 @author: Nivedita
 """
 
-import numpy as np
 from os import path
-from calibrate import reflection_coefficient as rc
+
 import matplotlib.pyplot as plt
+import numpy as np
+
+from calibrate import reflection_coefficient as rc
+
 
 def high_band_switch_correction(data_path, ant_s11, sw_temp):
     par_15 = np.genfromtxt(path.join(data_path, 'parameters_receiver_15degC.txt'))
@@ -134,9 +137,9 @@ def low_band_switch_correction(root_path, ant_s11, temp_sw, f_in=np.zeros([0, 1]
     data_path_25 = path.join(root_path, 'Receiver01_01_08_2018_040_to_200_MHz/25C/S11/InternalSwitch')
     data_path_35 = path.join(root_path, 'Receiver01_01_08_2018_040_to_200_MHz/35C/S11/InternalSwitch')
 
-    measurements = {15:{}, 25:{}, 35:{}}
+    measurements = {15: {}, 25: {}, 35: {}}
 
-    for i, temp in enumerate([15,25,35]):
+    for i, temp in enumerate([15, 25, 35]):
         data_path = path.join(root_path, "Receiver01_01_08_2018_040_to_200_MHz/{}C/S11/InternalSwitch".format(temp))
         for kind in ['open', 'short', 'load']:
             measurements[temp][kind] = {}
@@ -216,8 +219,8 @@ def low_band_switch_correction(root_path, ant_s11, temp_sw, f_in=np.zeros([0, 1]
     s12 = {}
     for temp in [15, 25, 35]:
         xx, s11[temp], s12[temp], s22[temp] = rc.de_embed(
-            oa15, sa15, la15, corrections[temp]['open'],corrections[temp]['short'],
-            corrections[temp]['load'],corrections[temp]['open']
+            oa15, sa15, la15, corrections[temp]['open'], corrections[temp]['short'],
+            corrections[temp]['load'], corrections[temp]['open']
         )
 
     # Switch temperatures
@@ -332,6 +335,7 @@ def low_band_switch_correction(root_path, ant_s11, temp_sw, f_in=np.zeros([0, 1]
 
     return corr_ant_s11, fit_s11, fit_s12s21, fit_s22
 
+
 def _read_data_and_corrections(root_dir, branch_dir):
     path_folder = path.join(root_dir, branch_dir)
     kinds = ['Open', 'Short', 'Match']
@@ -353,34 +357,32 @@ def _read_data_and_corrections(root_dir, branch_dir):
     # l_ex, f = rc.s1p_read(path_folder + 'ExternalMatch01.s1p')
 
     # Standards assumed at the switch
-    sw = {'open': 1* np.ones_like(f), 'short': -1* np.ones_like(f), 'load': np.zeros_like(f)}
-    print(data.keys())
-    print(sw.keys())
+    sw = {'open': 1 * np.ones_like(f), 'short': -1 * np.ones_like(f), 'load': np.zeros_like(f)}
     # Correction at the switch
     corrections = {}
     for kind in kinds:
         corrections[kind], xx1, xx2, xx3 = rc.de_embed(
-            sw['open'], sw['short'], sw['load'],data['Open']['sw'],
+            sw['open'], sw['short'], sw['load'], data['Open']['sw'],
             data['Short']['sw'], data['Match']['sw'], data[kind]['ex']
         )
 
-    return data, corrections, sw,  xx1, xx2, xx3, f
+    return data, corrections, sw, xx1, xx2, xx3, f
+
 
 def low_band_switch_correction_june_2016(
         root_folder, ant_s11, f_in=np.zeros([0, 1]), flow=50,
-        fhigh=100, resistance_m=50.166, verification=False, plot=False):
-
+        fhigh=100, resistance_m=50.166):
     data, corrections, sw, xx1, xx2, xx3, f = _read_data_and_corrections(
         root_folder, 'Receiver01_2018_01_08_040_to_200_MHz/25C/S11/InternalSwitch/'
     )
-    print(corrections.keys())
     # Computation of S-parameters to the receiver input
     # ToDo: PASS THIS IN
     resistance_of_match = resistance_m  # 50.027 #50.177#50.124#male
     md = 1
     oa, sa, la = rc.agilent_85033E(f, resistance_of_match, md)
 
-    xx, s11, s12s21, s22 = rc.de_embed(oa, sa, la, corrections['Open'], corrections['Short'], corrections['Match'], corrections['Open'])
+    xx, s11, s12s21, s22 = rc.de_embed(oa, sa, la, corrections['Open'], corrections['Short'], corrections['Match'],
+                                       corrections['Open'])
 
     # Polynomial fit of S-parameters from "f" to input frequency vector "f_in"
     # ------------------------------------------------------------------------
@@ -429,99 +431,11 @@ def low_band_switch_correction_june_2016(
     fit_s22 = fit_real_s22 + 1j * fit_imag_s22
 
     # Corrected antenna S11
-    corr_ant_s11 = rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, ant_s11)
-
-    # Verification
-    if verification:
-        # Correction at the switch
-        a6_sw, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, corrections['open'], corrections['short'], corrections['load'], a6)
-        a10_sw, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, corrections['open'], corrections['short'], corrections['load'], a10)
-        a12_sw, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, corrections['open'], corrections['short'], corrections['load'], a12)
-
-        a6c = rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, a6_sw)
-        a10c = rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, a10_sw)
-        a12c = rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, a12_sw)
-
-        gamma_6dB = np.ones(len(f)) * rc.impedance2gamma(85.267, 50)
-        gamma_10dB = np.ones(len(f)) * rc.impedance2gamma(60.828, 50)
-
-        gamma_6dB_plus = np.ones(len(f)) * rc.impedance2gamma(85.267 + 0.01, 50)
-        gamma_6dB_minus = np.ones(len(f)) * rc.impedance2gamma(85.267 - 0.01, 50)
-
-        gamma_10dB_plus = np.ones(len(f)) * rc.impedance2gamma(60.828 + 0.01, 50)
-        gamma_10dB_minus = np.ones(len(f)) * rc.impedance2gamma(60.828 - 0.01, 50)
-
-        # Correction of verification measurements at VNA input
-        oa_vna, sa_vna, la_vna = rc.agilent_85033E(f_vna, resistance_of_match, md)
-        a6_vna_c, xx, xx, xx = rc.de_embed(oa_vna, sa_vna, la_vna, o_vna, s_vna, l_vna, a6_vna)
-        a10_vna_c, xx, xx, xx = rc.de_embed(oa_vna, sa_vna, la_vna, o_vna, s_vna, l_vna, a10_vna)
-        a12_vna_c, xx, xx, xx = rc.de_embed(oa_vna, sa_vna, la_vna, o_vna, s_vna, l_vna, a12_vna)
-
-        # Plot
-        plt.subplot(2, 2, 1)
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(a6c)))
-        plt.plot(f_vna / 1e6, 20 * np.log10(np.abs(a6_vna_c)))
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB)), 'r')
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB_plus)), 'r--')
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB_minus)), 'r--')
-
-        plt.xlim([40, 200])
-        plt.ylim([-11.69, -11.66])
-        plt.grid()
-        plt.legend(['at receiver input', 'at VNA input', 'from DC resistance', '+/- 0.01 Ohms'])
-        plt.ylabel('6-dB attenuator\n magnitude [dB]')
-
-        ax = plt.gca()
-        ax.ticklabel_format(useOffset=False)
-
-        plt.subplot(2, 2, 3)
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(a10c)))
-        plt.plot(f_vna / 1e6, 20 * np.log10(np.abs(a10_vna_c)))
-        plt.ylim([-20.22, -20.18])
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB)), 'r')
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB_plus)), 'r--')
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB_minus)), 'r--')
-
-        plt.xlim([40, 200])
-        plt.grid()
-        plt.xlabel('frequency [MHz]')
-        plt.ylabel('10-dB attenuator\n magnitude [dB]')
-
-        ax = plt.gca()
-        ax.ticklabel_format(useOffset=False)
-
-        plt.subplot(2, 2, 2)
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(a6c)))
-        plt.plot(f_vna / 1e6, 20 * np.log10(np.abs(a6_vna_c)))
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB)), 'r')
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB_plus)), 'r--')
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB_minus)), 'r--')
-        plt.xlim([50, 100])
-        plt.ylim([-11.69, -11.66])
-        plt.grid()
-
-        ax = plt.gca()
-        ax.ticklabel_format(useOffset=False)
-
-        plt.subplot(2, 2, 4)
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(a10c)))
-        plt.plot(f_vna / 1e6, 20 * np.log10(np.abs(a10_vna_c)))
-        plt.ylim([-20.22, -20.18])
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB)), 'r')
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB_plus)), 'r--')
-        plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB_minus)), 'r--')
-        plt.xlim([50, 100])
-        plt.grid()
-        plt.xlabel('frequency [MHz]')
-
-        ax = plt.gca()
-        ax.ticklabel_format(useOffset=False)
-
-    return corr_ant_s11
+    return rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, ant_s11)
 
 
 def low_band_switch_correction_may_2019(root_dir, ant_s11, f_in=np.zeros([0, 1]),
-                                        flow=50, fhigh=100, verification=False, plot=False):
+                                        flow=50, fhigh=100):
     data, corrections, sw, xx1, xx2, xx3, f = _read_data_and_corrections(
         root_dir, 'Receiver02_2018_09_24_040_to_200_MHz/25C/S11/InternalSwitch01/'
     )
@@ -581,93 +495,4 @@ def low_band_switch_correction_may_2019(root_dir, ant_s11, f_in=np.zeros([0, 1])
     fit_s22 = fit_real_s22 + 1j * fit_imag_s22
 
     # Corrected antenna S11
-    corr_ant_s11 = rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, ant_s11)
-
-    # Verification
-    if verification:
-        # Correction at the switch
-        a6_sw, xx1, xx2, xx3 = rc.de_embed(sw['open'], sw['short'], sw['load'], data['open'], data['short'], data['load'], a6)
-        a10_sw, xx1, xx2, xx3 = rc.de_embed(sw['open'], sw['short'], sw['load'], data['open'], data['short'], data['load'], a10)
-        a12_sw, xx1, xx2, xx3 = rc.de_embed(sw['open'], sw['short'], sw['load'], data['open'], data['short'], data['load'], a12)
-
-        a6c = rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, a6_sw)
-        a10c = rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, a10_sw)
-        a12c = rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, a12_sw)
-
-        gamma_6dB = np.ones(len(f)) * rc.impedance2gamma(85.267, 50)
-        gamma_10dB = np.ones(len(f)) * rc.impedance2gamma(60.828, 50)
-
-        gamma_6dB_plus = np.ones(len(f)) * rc.impedance2gamma(85.267 + 0.01, 50)
-        gamma_6dB_minus = np.ones(len(f)) * rc.impedance2gamma(85.267 - 0.01, 50)
-
-        gamma_10dB_plus = np.ones(len(f)) * rc.impedance2gamma(60.828 + 0.01, 50)
-        gamma_10dB_minus = np.ones(len(f)) * rc.impedance2gamma(60.828 - 0.01, 50)
-
-        # Correction of verification measurements at VNA input
-        oa_vna, sa_vna, la_vna = rc.agilent_85033E(f_vna, resistance_of_match, md)
-        a6_vna_c, xx, xx, xx = rc.de_embed(oa_vna, sa_vna, la_vna, o_vna, s_vna, l_vna, a6_vna)
-        a10_vna_c, xx, xx, xx = rc.de_embed(oa_vna, sa_vna, la_vna, o_vna, s_vna, l_vna, a10_vna)
-        a12_vna_c, xx, xx, xx = rc.de_embed(oa_vna, sa_vna, la_vna, o_vna, s_vna, l_vna, a12_vna)
-
-        # Plot
-        if plot:
-            plt.subplot(2, 2, 1)
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(a6c)))
-            plt.plot(f_vna / 1e6, 20 * np.log10(np.abs(a6_vna_c)))
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB)), 'r')
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB_plus)), 'r--')
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB_minus)), 'r--')
-
-            plt.xlim([40, 200])
-            plt.ylim([-11.69, -11.66])
-            plt.grid()
-            plt.legend(['at receiver input', 'at VNA input', 'from DC resistance', '+/- 0.01 Ohms'])
-            plt.ylabel('6-dB attenuator\n magnitude [dB]')
-
-            ax = plt.gca()
-            ax.ticklabel_format(useOffset=False)
-
-            plt.subplot(2, 2, 3)
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(a10c)))
-            plt.plot(f_vna / 1e6, 20 * np.log10(np.abs(a10_vna_c)))
-            plt.ylim([-20.22, -20.18])
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB)), 'r')
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB_plus)), 'r--')
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB_minus)), 'r--')
-
-            plt.xlim([40, 200])
-            plt.grid()
-            plt.xlabel('frequency [MHz]')
-            plt.ylabel('10-dB attenuator\n magnitude [dB]')
-
-            ax = plt.gca()
-            ax.ticklabel_format(useOffset=False)
-
-            plt.subplot(2, 2, 2)
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(a6c)))
-            plt.plot(f_vna / 1e6, 20 * np.log10(np.abs(a6_vna_c)))
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB)), 'r')
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB_plus)), 'r--')
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_6dB_minus)), 'r--')
-            plt.xlim([50, 100])
-            plt.ylim([-11.69, -11.66])
-            plt.grid()
-
-            ax = plt.gca()
-            ax.ticklabel_format(useOffset=False)
-
-            plt.subplot(2, 2, 4)
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(a10c)))
-            plt.plot(f_vna / 1e6, 20 * np.log10(np.abs(a10_vna_c)))
-            plt.ylim([-20.22, -20.18])
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB)), 'r')
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB_plus)), 'r--')
-            plt.plot(f / 1e6, 20 * np.log10(np.abs(gamma_10dB_minus)), 'r--')
-            plt.xlim([50, 100])
-            plt.grid()
-            plt.xlabel('frequency [MHz]')
-
-            ax = plt.gca()
-            ax.ticklabel_format(useOffset=False)
-
-    return corr_ant_s11
+    return rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, ant_s11)

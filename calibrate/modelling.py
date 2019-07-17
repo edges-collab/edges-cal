@@ -184,8 +184,7 @@ def fit_polynomial_fourier(model_type, xdata, ydata, nterms, Weights=1, plot=Fal
                 if nterms == 5:
                     AT[4, :] = xdata ** (-2)
         else:
-            print('ERROR: For the Physical model it has to be 4 or 5 terms.')
-            AT = 0
+            raise ValueError('For the Physical model it has to be 4 or 5 terms.')
 
     # nterms ONLY includes the number of parameters for the baseline.
 
