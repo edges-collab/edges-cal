@@ -148,7 +148,7 @@ def spec_read(s, percent=5.0):
 
 
 def spec_plot(s):
-    fig, ax = plt.subplots(1, 5, figsize=(12, 8), facecolor='white', sharex=True)
+    fig, ax = plt.subplots(5, 1, figsize=(12, 8), facecolor='white', sharex=True)
 
     for i, kind in enumerate(s._kinds):
         ax[i].plot(s.fe, getattr(s, "s_{}".format(kind)))
@@ -321,7 +321,7 @@ def s11_cal(spec, cterms, wterms):
 
 
 def residual_plot(s, kind):
-    fig, ax = plt.subplots(1, 4, sharex=True)
+    fig, ax = plt.subplots(4, 1, sharex=True)
     for axx in ax:
         axx.xaxis.set_ticks([50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180], [])
         axx.grid(True)

@@ -13,5 +13,9 @@ fig.savefig("spec_plot.png")
 
 s11_model(run1, '/data5/edges/data/', resistance_f=50.0002, resistance_m=50.166)
 s11_cal(run1, 11, 12)
-s11_plot(run1)
+figs = s11_plot(run1)
+
+for i, fig in enumerate(figs):
+    fig.savefig(f"fig{i}.png")
+
 s11_write(run1)
