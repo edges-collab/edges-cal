@@ -35,7 +35,12 @@ def level1_MAT(file_name, plot=False):
 
     # loading data and extracting main array
     d = sio.loadmat(file_name)
-    darray = d['ta']
+    if 'ta' in d.keys():
+        darray = d['ta']
+    elif 'ant_temp' in d.keys():
+        darray=d['ant_temp']
+   
+        
 
     # extracting spectra and date/time
     ds = darray
