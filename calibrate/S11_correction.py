@@ -376,7 +376,6 @@ def low_band_switch_correction_june_2016(
         root_folder, 'Receiver01_2018_01_08_040_to_200_MHz/25C/S11/InternalSwitch/'
     )
     # Computation of S-parameters to the receiver input
-    # ToDo: PASS THIS IN
     resistance_of_match = resistance_m  # 50.027 #50.177#50.124#male
     md = 1
     oa, sa, la = rc.agilent_85033E(f, resistance_of_match, md)

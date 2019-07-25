@@ -93,15 +93,18 @@ class spectra(object):
         self.fe = self.ff[self.ilow:self.ihigh + 1]
         self.fen = (self.fe - self.f_center) / (self.f_range / 2)
 
-    def construct_average(self, kind, percent=5.0):
-        spec_files = glob.glob(os.path.join(self.path_spec, self._filemap[self._kinds.index(kind)] + '*.mat'))
-        res_files = glob.glob(os.path.join(self.path_res, self._filemap[self._kinds.index(kind)] + '*.txt'))
+    def construct_average(self, kind, percent=5.0, spec_files=None, res_files=None):
+        if spec_files is None:
+            spec_files = glob.glob(os.path.join(self.path_spec, self._filemap[self._kinds.index(kind)] + '*.mat'))
+        if res_files is None:    
+            res_files = glob.glob(os.path.join(self.path_res, self._filemap[self._kinds.index(kind)] + '*.txt'))
 
         if not spec_files:
             raise FileNotFoundError("No .mat files found for {}".format(kind))
         if not res_files:
             raise FileNotFoundError("No .txt files found for {}".format(kind))
-
+        #print(spec_files)
+        #print(res_files)
         setattr(
             self, kind + "_ave",
             rcf.AverageCal(spec_files, res_files, percent)
@@ -138,14 +141,25 @@ def linlog(x, a, b, c, d, e, f_center=F_CENTER):
         x / f_center) ** 3 + e * np.log(x / f_center) ** 4)
 
 
-def spec_read(s, percent=5.0):
+def spec_read(s, percent=5.0, spec_files=None, res_files=None):
     for kind in s._kinds:
-        s.construct_average(kind, percent * (4 if kind == 'hot_load' else 1))
+        if spec_files is not None: 
+            speclist=[file for file in spec_files if file.lower().find(kind)!=-1]
+            if not speclist: speclist=None
+        else: speclist=spec_files
+        if res_files is not None: 
+            reslist=[file for file in res_files if file.lower().find(kind)!=-1]
+            if not reslist: reslist=None
+        else: reslist=res_files
+        print("Reading {}".format(kind))
+        #print(speclist)
+        #print(reslist)
+        s.construct_average(kind, percent * (4 if kind == 'hot_load' else 1), spec_files=speclist, res_files=reslist)
         setattr(
             s, "s_{}".format(kind),
             getattr(s, "{}_ave".format(kind)).ave_spectrum[s.ilow:s.ihigh + 1]
         )
-
+    print("Finished reading")
 
 def spec_plot(s):
     fig, ax = plt.subplots(5, 1, figsize=(12, 8), facecolor='white', sharex=True)
@@ -155,8 +169,8 @@ def spec_plot(s):
         ax[i].grid(True)
         ax[i].set_ylabel(s._filemap[i] + " [K]")
         ax[i].set_xlabel("Frequency [MHz]")
-
-    return fig
+    plt.show()
+    # return fig
 
 
 def s11_model(spec, s11_path, resistance_f=50.009, resistance_m=50.166):
@@ -321,7 +335,7 @@ def s11_cal(spec, cterms, wterms):
 
 
 def residual_plot(s, kind):
-    fig, ax = plt.subplots(4, 1, sharex=True)
+    fig, ax = plt.subplots(4, 1, sharex=True, facecolor='w')
     for axx in ax:
         axx.xaxis.set_ticks([50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180], [])
         axx.grid(True)
@@ -359,7 +373,7 @@ def cal_plot(s, kind, bins=64):
     stop = bins
     rms = np.sqrt(np.mean((cal[:stop] - np.mean(cal[:stop])) ** 2))
 
-    plt.figure()
+    plt.figure(facecolor='w')
     plt.plot(fnew[:stop], cal[:stop], 'r', label='Calibrated')
     plt.text(65, np.max(cal), 'RMS=' + str(np.round(rms, 3)) + 'K')
     plt.ylim([np.min(cal), np.max(cal)])
@@ -377,7 +391,7 @@ def s11_plot(s):
     figs = []
     for kind in ['short', 'open', 'hot_load', 'antsim', 'lna']:
         figs.append(residual_plot(s, kind))
-        if kind != 'lna':
+        if kind == 'antsim':
             figs.append(cal_plot(s, kind))
 
     # turn temp into variable
@@ -392,7 +406,7 @@ def s11_plot(s):
 
     labels = ["Scale (C1)", "Offset (C2) [K]", "TU [K]", "TC [K]", "TS [K]"]
     for kind, label in zip(['scale', 'off', "Tu", "TC", "TS"], labels):
-        plt.figure()
+        plt.figure(facecolor='w')
         plt.plot(s.fe, getattr(s, kind))
         plt.xlabel("Frequency [MHz]")
         plt.ylabel(label)
@@ -401,7 +415,7 @@ def s11_plot(s):
         figs.append(plt.gcf())
 
     # Plot temperatures in Celsius
-    fig, ax = plt.subplots(1, 5, sharex=True)
+    fig, ax = plt.subplots(5, 1, sharex=True, facecolor='w')
     for i, kind in enumerate(['ambient', 'hot_load', 'open', 'short', 'antsim']):
         ax[i].plot(getattr(s, "{}_ave".format(kind)).thermistor_temp[::120] - 273)
         ax[i].grid(True)

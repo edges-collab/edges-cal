@@ -106,7 +106,6 @@ class AverageCal:
 
     def __init__(self, spectrum_files, resistance_file, start_percent=0):
         self.start_percent = start_percent
-
         self.ave_spectrum = self.read_spectrum(spectrum_files)
         self.thermistor_temp = self.read_temperature(resistance_file)
 
@@ -127,14 +126,13 @@ class AverageCal:
 
     def read_spectrum(self, spectrum_files, start_percent=None):
         start_percent = start_percent or self.start_percent
-
         for i in range(len(spectrum_files)):
             tai = level1_MAT(spectrum_files[i], plot=False)
             if i == 0:
                 ta = tai
             elif i > 0:
                 ta = np.concatenate((ta, tai), axis=1)
-
+        #print('Start percent: ' ,start_percent)
         index_start_spectra = int((start_percent / 100) * len(ta[0, :]))
         ta_sel = ta[:, index_start_spectra::]
         av_ta = np.mean(ta_sel, axis=1)
