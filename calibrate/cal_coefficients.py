@@ -103,8 +103,7 @@ class spectra(object):
             raise FileNotFoundError("No .mat files found for {}".format(kind))
         if not res_files:
             raise FileNotFoundError("No .txt files found for {}".format(kind))
-        #print(spec_files)
-        #print(res_files)
+
         setattr(
             self, kind + "_ave",
             rcf.AverageCal(spec_files, res_files, percent)
@@ -152,8 +151,6 @@ def spec_read(s, percent=5.0, spec_files=None, res_files=None):
             if not reslist: reslist=None
         else: reslist=res_files
         print("Reading {}".format(kind))
-        #print(speclist)
-        #print(reslist)
         s.construct_average(kind, percent * (4 if kind == 'hot_load' else 1), spec_files=speclist, res_files=reslist)
         setattr(
             s, "s_{}".format(kind),
@@ -169,8 +166,7 @@ def spec_plot(s):
         ax[i].grid(True)
         ax[i].set_ylabel(s._filemap[i] + " [K]")
         ax[i].set_xlabel("Frequency [MHz]")
-    plt.show()
-    # return fig
+    
 
 
 def s11_model(spec, s11_path, resistance_f=50.009, resistance_m=50.166):
@@ -203,7 +199,7 @@ def s11_model(spec, s11_path, resistance_f=50.009, resistance_m=50.166):
     model_s22_sr_mag = rcf.model_evaluate('polynomial', fit_s22_sr_mag[0], spec.fen)
     model_s22_sr_ang = rcf.model_evaluate('polynomial', fit_s22_sr_ang[0], spec.fen)
 
-    # Receiver reflection coefficient
+    ### Receiver reflection coefficient
     print('Reflection Coefficient')
 
     # Reading measurements
@@ -342,17 +338,22 @@ def residual_plot(s, kind):
         axx.set_xlabel("Frequency [MHz]")
 
     fig.suptitle(kind)
-
-    ax[0].plot(s.f_s11 / 1e6, 20 * np.log10(s.fit_s11_LNA_mag[1]))
+    
+    s11_mag=getattr(s,'s11_{}_mag'.format(kind))
+    s11_ang=getattr(s,'s11_{}_ang'.format(kind))
+    fit_s11_mag=getattr(s,'fit_s11_{}_mag'.format(kind))
+    fit_s11_ang=getattr(s,'fit_s11_{}_ang'.format(kind))
+    
+    ax[0].plot(s.f_s11 / 1e6, 20 * np.log10(fit_s11_mag[1]))
     ax[0].set_ylabel('S11(mag)')
 
-    ax[1].plot(s.f_s11 / 1e6, (s.fit_s11_LNA_mag[1] - s.s11_LNA_mag), 'g')
+    ax[1].plot(s.f_s11 / 1e6, (fit_s11_mag[1] - s11_mag), 'g')
     ax[1].set_ylabel('Delta S11(mag)')
 
-    ax[2].plot(s.f_s11 / 1e6, s.fit_s11_LNA_ang[1] * 180 / np.pi)
+    ax[2].plot(s.f_s11 / 1e6, fit_s11_ang[1] * 180 / np.pi)
     ax[2].set_ylabel(' S11(Ang)')
 
-    ax[3].plot(s.f_s11 / 1e6, (s.s11_LNA_ang - s.fit_s11_LNA_ang[1]), 'g')
+    ax[3].plot(s.f_s11 / 1e6, (s11_ang - fit_s11_ang[1]), 'g')
     ax[3].set_ylabel('Delta S11(Ang)')
 
     return fig
@@ -364,11 +365,12 @@ def cal_plot(s, kind, bins=64):
     # binning
     fact = len(getattr(s, "{}_calibrated".format(kind))[:lim]) / bins
     fnew = np.linspace(s.flow, s.fhigh, bins)
-
+    temp_calibrated=getattr(s, "{}_calibrated".format(kind))
+    
     cal = np.zeros(bins)
 
     for i in range(bins):
-        cal[i] = np.average(s.antsim_calibrated[int(i * fact):int((i + 1) * fact)])
+        cal[i] = np.average(temp_calibrated[int(i * fact):int((i + 1) * fact)])
 
     stop = bins
     rms = np.sqrt(np.mean((cal[:stop] - np.mean(cal[:stop])) ** 2))
@@ -378,7 +380,7 @@ def cal_plot(s, kind, bins=64):
     plt.text(65, np.max(cal), 'RMS=' + str(np.round(rms, 3)) + 'K')
     plt.ylim([np.min(cal), np.max(cal)])
     plt.xlabel('Frequency [MHz]')
-    plt.ylabel('Ant_sim3')
+    plt.ylabel(kind)
     plt.ticklabel_format(useOffset=False)
     plt.grid()
 
@@ -386,13 +388,16 @@ def cal_plot(s, kind, bins=64):
 
 
 def s11_plot(s):
-    # TODO: break this up into sub-functions
-
+    
     figs = []
-    for kind in ['short', 'open', 'hot_load', 'antsim', 'lna']:
+    for kind in ['short', 'open', 'hot_load', 'antsim', 'LNA']:
+        #if kind!= 'LNA':
         figs.append(residual_plot(s, kind))
-        if kind == 'antsim':
-            figs.append(cal_plot(s, kind))
+            #figs.append(cal_plot(s, kind))
+        #if kind == 'antsim':
+        #    figs.append(cal_plot(s, kind))
+        #if kind=='LNA':
+        #    figs.append(residual_plot(s, kind))
 
     # turn temp into variable
     # TODO: why is this here?
@@ -413,9 +418,14 @@ def s11_plot(s):
         plt.grid()
         plt.ticklabel_format(useOffset=False)
         figs.append(plt.gcf())
+        
+    #plot calibrated temperature in K
+    for kind in ['ambient', 'hot_load', 'open', 'short', 'antsim']:
+        figs.append(cal_plot(s, kind))
 
-    # Plot temperatures in Celsius
-    fig, ax = plt.subplots(5, 1, sharex=True, facecolor='w')
+    
+    # Plot Thermistor temperatures in Celsius
+    fig, ax = plt.subplots(5, 1, sharex=False, facecolor='w', figsize=(8,8))
     for i, kind in enumerate(['ambient', 'hot_load', 'open', 'short', 'antsim']):
         ax[i].plot(getattr(s, "{}_ave".format(kind)).thermistor_temp[::120] - 273)
         ax[i].grid(True)
@@ -426,7 +436,6 @@ def s11_plot(s):
 
 
 def s11_write(s):
-    # TODO: this shouldn't be in a plotting function!
     np.savetxt(s.data_out + 'fit_s11_LNA_mag.txt', s.fit_s11_LNA_mag[1])
     np.savetxt(s.data_out + 'fit_s11_LNA_ang.txt', s.fit_s11_LNA_ang[1])
 
