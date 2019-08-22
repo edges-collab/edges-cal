@@ -33,11 +33,9 @@ class s1p:
         for k, (spec, f) in self.read(ignore or []):
             setattr(self, k, spec)
             self.f = f
-        #print(dir(self))
     def read(self, ignore=None):
         ignore = ignore or []
         for k, v in self._mapping.items():
-            #print("reading "+k)
             if k in ignore:
                 continue
             s1pPath=os.path.join(self.base_path, "{}{}.s1p".format(v, self.run_num))
@@ -251,14 +249,11 @@ def s11_model(spec, s11_path, resistance_f=50.009, resistance_m=50.166):
     corrs = {}
     datas = {}
     for kind, long_kind in kind_mapping.items():
-        
-        #print(str(kind))  #Troubleshooting
-        
+                
         pth = os.path.join(spec.path_s11, long_kind)
         if os.path.isdir(pth)==False and kind=='ambient':
             pth=os.path.join(spec.path_s11, long_kind+'Load')
         
-        #print(pth)
         datas[kind] = s1p(pth, spec.runNum, ignore=['receiver'])
         _corr = s11.low_band_switch_correction_june_2016(
             s11_path, datas[kind].get_corrections()[0], f_in=datas[kind].f,
