@@ -33,14 +33,19 @@ class s1p:
         for k, (spec, f) in self.read(ignore or []):
             setattr(self, k, spec)
             self.f = f
-
+        #print(dir(self))
     def read(self, ignore=None):
         ignore = ignore or []
         for k, v in self._mapping.items():
+            #print("reading "+k)
             if k in ignore:
                 continue
-
-            yield k, rc.s1p_read(os.path.join(self.base_path, "{}{}.s1p".format(v, self.run_num)))
+            s1pPath=os.path.join(self.base_path, "{}{}.s1p".format(v, self.run_num))
+            if os.path.isfile(s1pPath):
+                yield k, rc.s1p_read(s1pPath)
+            elif k=='receiver':
+                s1pPath=os.path.join(self.base_path, "Receiver0{}.s1p".format(self.run_num))
+                yield k, rc.s1p_read(s1pPath)
 
     @property
     def switchval_open(self):
@@ -73,7 +78,7 @@ class s1p:
 
 class spectra(object):
     _kinds = ['ambient', 'hot_load', 'open', 'short', 'antsim']
-    _filemap = ['Ambient', "HotLoad", 'LongCableOpen', "LongCableShort", "AntSim4"]
+    _filemap = ['Ambient', "HotLoad", 'LongCableOpen', "LongCableShort", "AntSim"]
 
     def __init__(self, data_out, path, flow, fhigh, percent, runNum):
         # Initialize file paths and spectra parameters
@@ -143,11 +148,11 @@ def linlog(x, a, b, c, d, e, f_center=F_CENTER):
 def spec_read(s, percent=5.0, spec_files=None, res_files=None):
     for kind in s._kinds:
         if spec_files is not None: 
-            speclist=[file for file in spec_files if file.lower().find(kind)!=-1]
+            speclist=[file for file in spec_files if file.find(s._filemap[s._kinds.index(kind)])!=-1]
             if not speclist: speclist=None
         else: speclist=spec_files
         if res_files is not None: 
-            reslist=[file for file in res_files if file.lower().find(kind)!=-1]
+            reslist=[file for file in res_files if file.find(s._filemap[s._kinds.index(kind)])!=-1]
             if not reslist: reslist=None
         else: reslist=res_files
         print("Reading {}".format(kind))
@@ -203,7 +208,7 @@ def s11_model(spec, s11_path, resistance_f=50.009, resistance_m=50.166):
     print('Reflection Coefficient')
 
     # Reading measurements
-    path_LNA = os.path.join(spec.path_s11, 'ReceiverReading01')
+    path_LNA = os.path.join(spec.path_s11, 'ReceiverReading0'+str(spec.runNum))
     measurements = s1p(path_LNA, spec.runNum, ignore=['external'])
 
     # Models of standards
@@ -218,7 +223,7 @@ def s11_model(spec, s11_path, resistance_f=50.009, resistance_m=50.166):
     spec.s11_LNA_ang = np.unwrap(np.angle(LNA))
 
     f_s11n = (spec.f_s11 / 1e6 - ((spec.fhigh - spec.flow) / 2 + spec.flow)) / ((spec.fhigh - spec.flow) / 2)
-
+    
     spec.fit_s11_LNA_mag = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_LNA_mag, 37)
     spec.fit_s11_LNA_ang = rcf.fit_polynomial_fourier('fourier', f_s11n, spec.s11_LNA_ang, 37)
 
@@ -246,7 +251,14 @@ def s11_model(spec, s11_path, resistance_f=50.009, resistance_m=50.166):
     corrs = {}
     datas = {}
     for kind, long_kind in kind_mapping.items():
+        
+        #print(str(kind))  #Troubleshooting
+        
         pth = os.path.join(spec.path_s11, long_kind)
+        if os.path.isdir(pth)==False and kind=='ambient':
+            pth=os.path.join(spec.path_s11, long_kind+'Load')
+        
+        #print(pth)
         datas[kind] = s1p(pth, spec.runNum, ignore=['receiver'])
         _corr = s11.low_band_switch_correction_june_2016(
             s11_path, datas[kind].get_corrections()[0], f_in=datas[kind].f,
@@ -295,7 +307,7 @@ def s11_model(spec, s11_path, resistance_f=50.009, resistance_m=50.166):
     spec.Thd = G * spec.hot_load_ave.temp_ave + (1 - G) * spec.ambient_ave.temp_ave
 
 
-def s11_cal(spec, cterms, wterms):
+def s11_cal(spec, cterms=5, wterms=7):
     print('Calibration coefficients')
     spec.cterms = cterms
     spec.wterms = wterms
@@ -376,7 +388,16 @@ def cal_plot(s, kind, bins=64):
     rms = np.sqrt(np.mean((cal[:stop] - np.mean(cal[:stop])) ** 2))
 
     plt.figure(facecolor='w')
-    plt.plot(fnew[:stop], cal[:stop], 'r', label='Calibrated')
+    plt.plot(fnew[:stop], cal[:stop], 'b', label='Calibrated')
+    if kind=='ambient':
+        plt.axhline(s.ambient_ave.temp_ave,color='r' )
+    if kind=='hot_load':
+        plt.plot(s.fe,s.Thd,color='r')
+    if kind=='open':
+        plt.axhline(s.open_ave.temp_ave,color='r' )
+    if kind=='short':
+        plt.axhline(s.short_ave.temp_ave,color='r' )
+    
     plt.text(65, np.max(cal), 'RMS=' + str(np.round(rms, 3)) + 'K')
     plt.ylim([np.min(cal), np.max(cal)])
     plt.xlabel('Frequency [MHz]')
@@ -390,7 +411,7 @@ def cal_plot(s, kind, bins=64):
 def s11_plot(s):
     
     figs = []
-    for kind in ['short', 'open', 'hot_load', 'antsim', 'LNA']:
+    for kind in ['ambient','short', 'open', 'hot_load', 'antsim', 'LNA']:
         #if kind!= 'LNA':
         figs.append(residual_plot(s, kind))
             #figs.append(cal_plot(s, kind))
