@@ -14,8 +14,6 @@ from calibrate import S11_correction as s11
 from calibrate import receiver_calibration_func as rcf
 from calibrate import reflection_coefficient as rc
 
-F_CENTER = 75.0
-
 
 class s1p:
     _mapping = {
@@ -132,53 +130,6 @@ class spectra(object):
                 os.path.join(self.data_out, kind + "_spec.txt"),
                 getattr(self, "s_{}".format(kind)),
             )
-
-
-def explog(x, a, b, c, d, e, f_center=F_CENTER):
-    return (
-        a
-        * (x / f_center)
-        ** (
-            b
-            + c * np.log(x / f_center)
-            + d * np.log(x / f_center) ** 2
-            + e * np.log(x / f_center) ** 3
-        )
-        + 2.725
-    )
-
-
-def physical5(x, a, b, c, d, e, f_center=F_CENTER):
-    return np.log(
-        a
-        * (x / f_center) ** (-2.5 + b + c * np.log(x / f_center))
-        * np.exp(-d * (x / f_center) ** -2)
-        + e * (x / f_center) ** -2
-    )  # + 2.725
-
-
-def physicallin5(x, a, b, c, d, e, f_center=F_CENTER):
-    return (
-        a * (x / f_center) ** -2.5
-        + b * (x / f_center) ** -2.5 * np.log(x / f_center)
-        + c * (x / f_center) ** -2.5 * (np.log(x / f_center)) ** 2
-        + d * (x / f_center) ** -4.5
-        + e * (x / f_center) ** -2
-    )
-
-
-def loglog(x, a, b, c, d, e, f_center=F_CENTER):
-    return a + b * x + c * x ** 2 + d * x ** 3 + e * x ** 4
-
-
-def linlog(x, a, b, c, d, e, f_center=F_CENTER):
-    return (x / f_center) ** b * (
-        a
-        + b * np.log(x / f_center)
-        + c * np.log(x / f_center) ** 2
-        + d * np.log(x / f_center) ** 3
-        + e * np.log(x / f_center) ** 4
-    )
 
 
 def spec_read(s, percent=5.0, spec_files=None, res_files=None):

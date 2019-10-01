@@ -4,14 +4,12 @@ Created on Thu Feb 08 14:02:33 2018
 
 @author: Nivedita
 """
-
+import numpy as np
 import scipy as sp
 import scipy.io as sio
 
-from calibrate.modelling import *
 
-
-def level1_MAT(file_name, plot=False):
+def load_level1_MAT(file_name):
     """
     This function loads the antenna temperature and date/time from MAT files produced by
     the MATLAB function acq2level1.m
@@ -30,28 +28,15 @@ def level1_MAT(file_name, plot=False):
 
     Examples
     --------
-    >>> ds, dd = level1_MAT('/file.MAT', plot='yes')
+    >>> ds, dd = load_level1_MAT('/file.MAT', plot='yes')
     """
 
     # loading data and extracting main array
     d = sio.loadmat(file_name)
-    if 'ta' in d.keys():
-        darray = d['ta']
-    elif 'ant_temp' in d.keys():
-        darray=d['ant_temp']
-   
-        
-
-    # extracting spectra and date/time
-    ds = darray
-
-    if plot:
-        plt.imshow(ds, aspect='auto', vmin=0, vmax=2000)
-        plt.xlabel('frequency channels')
-        plt.ylabel('trace')
-        plt.colorbar()
-
-    return ds
+    if "ta" in d.keys():
+        return d["ta"]
+    elif "ant_temp" in d.keys():
+        return d["ant_temp"]
 
 
 def temperature_thermistor_oven_industries_TR136_170(R, unit):
@@ -64,9 +49,9 @@ def temperature_thermistor_oven_industries_TR136_170(R, unit):
     TK = 1 / (a1 + a2 * np.log(R) + a3 * (np.log(R)) ** 3)
 
     # Kelvin or Celsius
-    if unit == 'K':
+    if unit == "K":
         T = TK
-    if unit == 'C':
+    if unit == "C":
         T = TK - 273.15
 
     return T
@@ -74,10 +59,11 @@ def temperature_thermistor_oven_industries_TR136_170(R, unit):
 
 class AverageCal:
     """
-    This function loads and averages (in time) calibration data (ambient, hot, open,
-    shorted, simulators, etc.) in MAT format produced by the "acq2level1.m" MATLAB program.
-     It also returns the average physical temperature of the corresponding calibrator,
-     measured with an Oven Industries TR136-170 thermistor.
+    Load and average (in time) calibration data (ambient, hot, open,
+    shorted, simulators, etc.) in MAT format.
+
+    It also returns the average physical temperature of the corresponding calibrator,
+    measured with an Oven Industries TR136-170 thermistor.
 
     Parameters
     ----------
@@ -86,9 +72,7 @@ class AverageCal:
     resistance_file: string, or list,
         Path and name of resistance file to process
     start_percent: float, optional
-        percentage of initial data to dismiss, for both, spectra and resistance
-    plot: bool, optional
-        flag for plotting representative data cuts.
+        percentage of initial data to dismiss, for both spectra and resistance
 
     Returns
     -------
@@ -101,7 +85,7 @@ class AverageCal:
     >>> spec_file2 = '/file2.mat'
     >>> spec_files = [spec_file1, spec_file2]
     >>> res_file = 'res_file.txt'
-    >>> av_ta, av_temp = average_calibration_spectrum(spec_files, res_file, start_percentage=10)
+    >>> av_ta, av_temp = AverageCal(spec_files, res_file, start_percentage=10)
     """
 
     def __init__(self, spectrum_files, resistance_file, start_percent=0):
@@ -122,17 +106,17 @@ class AverageCal:
     @property
     def indexed_temp(self):
         """A view of the thermistor temperatures beginning at the start index."""
-        return self.thermistor_temp[self.start_index:]
+        return self.thermistor_temp[self.start_index :]
 
     def read_spectrum(self, spectrum_files, start_percent=None):
         start_percent = start_percent or self.start_percent
         for i in range(len(spectrum_files)):
-            tai = level1_MAT(spectrum_files[i], plot=False)
+            tai = load_level1_MAT(spectrum_files[i])
             if i == 0:
                 ta = tai
             elif i > 0:
                 ta = np.concatenate((ta, tai), axis=1)
-        #print('Start percent: ' ,start_percent)
+        # print('Start percent: ' ,start_percent)
         index_start_spectra = int((start_percent / 100) * len(ta[0, :]))
         ta_sel = ta[:, index_start_spectra::]
         av_ta = np.mean(ta_sel, axis=1)
@@ -142,13 +126,15 @@ class AverageCal:
         if isinstance(resistance_file, list):
             for i in range(len(resistance_file)):
                 if i == 0:
-                    R = np.genfromtxt(resistance_file[i])
+                    resistance = np.genfromtxt(resistance_file[i])
                 else:
-                    R = np.concatenate((R, np.genfromtxt(resistance_file[i])), axis=0)
+                    resistance = np.concatenate(
+                        (resistance, np.genfromtxt(resistance_file[i])), axis=0
+                    )
         else:
-            R = np.genfromtxt(resistance_file)
+            resistance = np.genfromtxt(resistance_file)
 
-        return temperature_thermistor_oven_industries_TR136_170(R, 'K')
+        return temperature_thermistor_oven_industries_TR136_170(resistance, "K")
 
 
 def frequency_edges(flow, fhigh):
@@ -183,7 +169,7 @@ def frequency_edges(flow, fhigh):
 
     # Indices of frequency limits
     if flow < 0 or flow >= max(freqs) or fhigh < 0 or fhigh >= max(freqs):
-        raise ValueError('Limits are 0 MHz and ' + str(max(freqs)) + ' MHz')
+        raise ValueError("Limits are 0 MHz and " + str(max(freqs)) + " MHz")
 
     for i in range(len(freqs) - 1):
         if (freqs[i] <= flow) and (freqs[i + 1] >= flow):
@@ -229,7 +215,7 @@ def NWP_fit(flow, fhigh, f, rl, ro, rs, Toe, Tse, To, Ts, wterms):
     # print(ydata)
 
     # Solving system using 'short' QR decomposition (see R. Butt, Num. Anal. Using MATLAB)
-    Q1, R1 = sp.linalg.qr(M, mode='economic')
+    Q1, R1 = sp.linalg.qr(M, mode="economic")
     param = sp.linalg.solve(R1, np.dot(Q1.T, ydata))
 
     # Evaluating TU, TC, and TS
@@ -245,8 +231,27 @@ def NWP_fit(flow, fhigh, f, rl, ro, rs, Toe, Tse, To, Ts, wterms):
     return TU, TC, TS
 
 
-def calibration_quantities(flow, fhigh, f, Tae, The, Toe, Tse, rl, ra, rh, ro, rs, Ta,
-                           Th, To, Ts, cterms, wterms, Tamb_internal=300, ):
+def calibration_quantities(
+    flow,
+    fhigh,
+    f,
+    Tae,
+    The,
+    Toe,
+    Tse,
+    rl,
+    ra,
+    rh,
+    ro,
+    rs,
+    Ta,
+    Th,
+    To,
+    Ts,
+    cterms,
+    wterms,
+    Tamb_internal=300,
+):
     # S11 quantities
     Fa = np.sqrt(1 - np.abs(rl) ** 2) / (1 - ra * rl)
     Fh = np.sqrt(1 - np.abs(rl) ** 2) / (1 - rh * rl)
@@ -331,21 +336,24 @@ def calibration_quantities(flow, fhigh, f, Tae, The, Toe, Tse, rl, ra, rh, ro, r
         Tse_iter[i, :] = (Tse - Tamb_internal) * sca[i, :] + Tamb_internal - off[i, :]
 
         # Step 4: computing NWP
-        TU[i, :], TC[i, :], TS[i, :] = NWP_fit(flow, fhigh, f, rl, ro, rs, Toe_iter[i, :], Tse_iter[i, :], To, Ts,
-                                               wterms)
+        TU[i, :], TC[i, :], TS[i, :] = NWP_fit(
+            flow, fhigh, f, rl, ro, rs, Toe_iter[i, :], Tse_iter[i, :], To, Ts, wterms
+        )
 
     return sca[-1, :], off[-1, :], TU[-1, :], TC[-1, :], TS[-1, :]
 
 
-def calibrated_antenna_temperature(Tde, rd, rl, sca, off, TU, TC, TS, Tamb_internal=300):
-    '''
+def calibrated_antenna_temperature(
+    Tde, rd, rl, sca, off, TU, TC, TS, Tamb_internal=300
+):
+    """
     Function for equation (7)
     rd - refelection coefficient of the load
     rl - reflection coefficient of the receiver
     Td - temperature of the device under test
     TU ,Tc,Ts - noise wave parameters
     Tamb_internal - noise temperature of the load
-    '''
+    """
 
     # S11 quantities
     Fd = np.sqrt(1 - np.abs(rl) ** 2) / (1 - rd * rl)
@@ -368,15 +376,17 @@ def calibrated_antenna_temperature(Tde, rd, rl, sca, off, TU, TC, TS, Tamb_inter
     return Td
 
 
-def uncalibrated_antenna_temperature(Td, rd, rl, sca, off, TU, TC, TS, Tamb_internal=300):
-    '''
+def uncalibrated_antenna_temperature(
+    Td, rd, rl, sca, off, TU, TC, TS, Tamb_internal=300
+):
+    """
     Function for equation (7)
     rd - refelection coefficient of the load
     rl - reflection coefficient of the receiver
     Td - temperature of the device under test
     TU ,Tc,Ts - noise wave parameters
     Tamb_internal - noise temperature of the load
-    '''
+    """
     # S11 quantities
     Fd = np.sqrt(1 - np.abs(rl) ** 2) / (1 - rd * rl)
     PHId = np.angle(rd * Fd)
@@ -389,7 +399,7 @@ def uncalibrated_antenna_temperature(Td, rd, rl, sca, off, TU, TC, TS, Tamb_inte
     # Noise wave contribution
     NWPd = TU * K2d + TC * K3d + TS * K4d
 
-    # Scaled and offset spectrum 
+    # Scaled and offset spectrum
     Tde_corrected = Td * K1d + NWPd
 
     # Removing scale and offset
