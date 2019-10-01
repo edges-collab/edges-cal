@@ -30,7 +30,6 @@ def load_level1_MAT(file_name):
     --------
     >>> ds, dd = load_level1_MAT('/file.MAT', plot='yes')
     """
-
     # loading data and extracting main array
     d = sio.loadmat(file_name)
     if "ta" in d.keys():
@@ -39,22 +38,27 @@ def load_level1_MAT(file_name):
         return d["ant_temp"]
 
 
-def temperature_thermistor_oven_industries_TR136_170(R, unit):
+def temperature_thermistor(resistance, coeffs="oven_industries_TR136_170", kelvin=True):
     # Steinhart-Hart coefficients
-    a1 = 1.03514e-3
-    a2 = 2.33825e-4
-    a3 = 7.92467e-8
+    _coeffs = {"oven_industries_TR136_170": [1.03514e-3, 2.33825e-4, 7.92467e-8]}
+
+    if type(coeffs) is str:
+        coeffs = _coeffs[coeffs]
+
+    assert len(coeffs) == 3
 
     # TK in Kelvin
-    TK = 1 / (a1 + a2 * np.log(R) + a3 * (np.log(R)) ** 3)
+    temp = 1 / (
+        coeffs[0]
+        + coeffs[1] * np.log(resistance)
+        + coeffs[2] * (np.log(resistance)) ** 3
+    )
 
     # Kelvin or Celsius
-    if unit == "K":
-        T = TK
-    if unit == "C":
-        T = TK - 273.15
-
-    return T
+    if kelvin:
+        return temp
+    else:
+        return temp - 273.15
 
 
 class AverageCal:
@@ -110,13 +114,13 @@ class AverageCal:
 
     def read_spectrum(self, spectrum_files, start_percent=None):
         start_percent = start_percent or self.start_percent
-        for i in range(len(spectrum_files)):
-            tai = load_level1_MAT(spectrum_files[i])
+        for i, fl in enumerate(spectrum_files):
+            tai = load_level1_MAT(fl)
             if i == 0:
                 ta = tai
-            elif i > 0:
+            else:
                 ta = np.concatenate((ta, tai), axis=1)
-        # print('Start percent: ' ,start_percent)
+
         index_start_spectra = int((start_percent / 100) * len(ta[0, :]))
         ta_sel = ta[:, index_start_spectra::]
         av_ta = np.mean(ta_sel, axis=1)
@@ -134,7 +138,7 @@ class AverageCal:
         else:
             resistance = np.genfromtxt(resistance_file)
 
-        return temperature_thermistor_oven_industries_TR136_170(resistance, "K")
+        return temperature_thermistor(resistance)
 
 
 def frequency_edges(flow, fhigh):
@@ -229,6 +233,83 @@ def NWP_fit(flow, fhigh, f, rl, ro, rs, Toe, Tse, To, Ts, wterms):
         TS = TS + param[i + 2 * wterms, 0] * fn ** i
 
     return TU, TC, TS
+
+
+def get_F(gamma_rec, gamma_ant):
+    """Get the F parameter for a given receiver and antenna"""
+    return np.sqrt(1 - np.abs(gamma_rec) ** 2) / (1 - gamma_ant * gamma_rec)
+
+
+def get_alpha(gamma_rec, gamma_ant):
+    """Get the alpha parameter for a given receiver and antenna"""
+    return np.angle(gamma_ant * get_F(gamma_rec, gamma_ant))
+
+
+def power_ratio(
+    freqs,
+    temp_ant,
+    gamma_ant,
+    gamma_rec,
+    c1_poly,
+    c2_poly,
+    temp_unc_poly,
+    temp_cos_poly,
+    temp_sin_poly,
+    temp_noise_source,
+    temp_load,
+    ref_freq=75.0,
+):
+    """
+    Compute the ratio of raw powers from the three-position switch.
+
+    Computes (as a model)
+
+    .. math :: Q_P = (P_ant - P_L)/(P_NS - P_L)
+
+    Parameters
+    ----------
+    freqs : array_like
+        Frequencies of the spectra.
+    temp_ant : array_like, shape (NFREQS,)
+        Temperature of the antenna, or simulator.
+    gamma_ant : array_like, shape (NFREQS,)
+        S11 of the antenna (or simulator)
+    gamma_rec : array_like, shape (NFREQS,)
+        S11 of the receiver.
+    c1_poly : :class:`np.poly1d`
+        A polynomial representing the C_1 term.
+    c2_poly : :class:`np.poly1d`
+        A polynomial representing the C_2 term
+    temp_unc_poly : :class:`np.poly1d`
+        A polynomial representing the uncorrelated noise-wave parameter
+    temp_cos_poly : :class:`np.poly1d`
+        A polynomial representing the cosine noise-wave parameter
+    temp_sin_poly : :class:`np.poly1d`
+        A polynomial representing the sine noise-wave parameter
+    temp_noise_source : array_like, shape (NFREQS,)
+        Temperature of the internal noise source
+    temp_load : array_like, shape (NFREQS,)
+        Temperature of the internal load
+    ref_freq : float, optional
+        A reference frequency around which to expand the polynomials.
+
+    Returns
+    -------
+    array_like : the quantity Q_P as a function of frequency.
+    """
+    F = get_F(gamma_rec, gamma_ant)
+    alpha = get_alpha(gamma_rec, gamma_ant)
+
+    f = freqs / ref_freq
+
+    return (
+        temp_ant * (1 - np.abs(gamma_ant) ** 2) * np.abs(F) ** 2
+        + temp_unc_poly(f) * np.abs(gamma_ant) ** 2 * np.abs(F) ** 2
+        + np.abs(gamma_ant)
+        * np.abs(F)
+        * (temp_cos_poly(f) * np.cos(alpha) + temp_sin_poly(f) * np.sin(alpha))
+        + (c2_poly(f) - temp_load)
+    ) / (c1_poly(f) * temp_noise_source * (1 - np.abs(gamma_rec) ** 2))
 
 
 def calibration_quantities(
