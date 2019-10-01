@@ -10,9 +10,10 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
-from calibrate import S11_correction as s11
-from calibrate import receiver_calibration_func as rcf
-from calibrate import reflection_coefficient as rc
+
+from . import S11_correction as s11
+from . import receiver_calibration_func as rcf
+from . import reflection_coefficient as rc
 
 
 class s1p:

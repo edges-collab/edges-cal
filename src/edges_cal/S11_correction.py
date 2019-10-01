@@ -7,16 +7,15 @@ Created on Thu Feb 08 21:07:31 2018
 
 from os import path
 
-import matplotlib.pyplot as plt
 import numpy as np
 
-from calibrate import reflection_coefficient as rc
+from . import reflection_coefficient as rc
 
 
 def high_band_switch_correction(data_path, ant_s11, sw_temp):
-    par_15 = np.genfromtxt(path.join(data_path, 'parameters_receiver_15degC.txt'))
-    par_25 = np.genfromtxt(path.join(data_path, 'parameters_receiver_25degC.txt'))
-    par_35 = np.genfromtxt(path.join(data_path, 'parameters_receiver_35degC.txt'))
+    par_15 = np.genfromtxt(path.join(data_path, "parameters_receiver_15degC.txt"))
+    par_25 = np.genfromtxt(path.join(data_path, "parameters_receiver_25degC.txt"))
+    par_35 = np.genfromtxt(path.join(data_path, "parameters_receiver_35degC.txt"))
 
     # frequency
     f = np.arange(50, 200.1, 0.25)
@@ -47,7 +46,7 @@ def high_band_switch_correction(data_path, ant_s11, sw_temp):
     s22_ang_35 = np.polyval(par_35[:, 5], f / 150)
 
     # switch temperatures
-    temp_all = np.genfromtxt(path.join(data_path, 'switch_temperatures.txt'))
+    temp_all = np.genfromtxt(path.join(data_path, "switch_temperatures.txt"))
     temp15 = temp_all[0]
     temp25 = temp_all[1]
     temp35 = temp_all[2]
@@ -63,42 +62,74 @@ def high_band_switch_correction(data_path, ant_s11, sw_temp):
     # inter (extra) polating switch S-parameters to input temperature
     if sw_temp <= temp25:
         for i in range(len(f)):
-            p = np.polyfit(np.array([temp15, temp25]), np.array([s11_mag_15[i], s11_mag_25[i]]), 1)
+            p = np.polyfit(
+                np.array([temp15, temp25]), np.array([s11_mag_15[i], s11_mag_25[i]]), 1
+            )
             new_s11_mag[i] = np.polyval(p, sw_temp)
 
-            p = np.polyfit(np.array([temp15, temp25]), np.array([s11_ang_15[i], s11_ang_25[i]]), 1)
+            p = np.polyfit(
+                np.array([temp15, temp25]), np.array([s11_ang_15[i], s11_ang_25[i]]), 1
+            )
             new_s11_ang[i] = np.polyval(p, sw_temp)
 
-            p = np.polyfit(np.array([temp15, temp25]), np.array([s12s21_mag_15[i], s12s21_mag_25[i]]), 1)
+            p = np.polyfit(
+                np.array([temp15, temp25]),
+                np.array([s12s21_mag_15[i], s12s21_mag_25[i]]),
+                1,
+            )
             new_s12s21_mag[i] = np.polyval(p, sw_temp)
 
-            p = np.polyfit(np.array([temp15, temp25]), np.array([s12s21_ang_15[i], s12s21_ang_25[i]]), 1)
+            p = np.polyfit(
+                np.array([temp15, temp25]),
+                np.array([s12s21_ang_15[i], s12s21_ang_25[i]]),
+                1,
+            )
             new_s12s21_ang[i] = np.polyval(p, sw_temp)
 
-            p = np.polyfit(np.array([temp15, temp25]), np.array([s22_mag_15[i], s22_mag_25[i]]), 1)
+            p = np.polyfit(
+                np.array([temp15, temp25]), np.array([s22_mag_15[i], s22_mag_25[i]]), 1
+            )
             new_s22_mag[i] = np.polyval(p, sw_temp)
 
-            p = np.polyfit(np.array([temp15, temp25]), np.array([s22_ang_15[i], s22_ang_25[i]]), 1)
+            p = np.polyfit(
+                np.array([temp15, temp25]), np.array([s22_ang_15[i], s22_ang_25[i]]), 1
+            )
             new_s22_ang[i] = np.polyval(p, sw_temp)
 
     if sw_temp > temp25:
         for i in range(len(f)):
-            p = np.polyfit(np.array([temp25, temp35]), np.array([s11_mag_25[i], s11_mag_35[i]]), 1)
+            p = np.polyfit(
+                np.array([temp25, temp35]), np.array([s11_mag_25[i], s11_mag_35[i]]), 1
+            )
             new_s11_mag[i] = np.polyval(p, sw_temp)
 
-            p = np.polyfit(np.array([temp25, temp35]), np.array([s11_ang_25[i], s11_ang_35[i]]), 1)
+            p = np.polyfit(
+                np.array([temp25, temp35]), np.array([s11_ang_25[i], s11_ang_35[i]]), 1
+            )
             new_s11_ang[i] = np.polyval(p, sw_temp)
 
-            p = np.polyfit(np.array([temp25, temp35]), np.array([s12s21_mag_25[i], s12s21_mag_35[i]]), 1)
+            p = np.polyfit(
+                np.array([temp25, temp35]),
+                np.array([s12s21_mag_25[i], s12s21_mag_35[i]]),
+                1,
+            )
             new_s12s21_mag[i] = np.polyval(p, sw_temp)
 
-            p = np.polyfit(np.array([temp25, temp35]), np.array([s12s21_ang_25[i], s12s21_ang_35[i]]), 1)
+            p = np.polyfit(
+                np.array([temp25, temp35]),
+                np.array([s12s21_ang_25[i], s12s21_ang_35[i]]),
+                1,
+            )
             new_s12s21_ang[i] = np.polyval(p, sw_temp)
 
-            p = np.polyfit(np.array([temp25, temp35]), np.array([s22_mag_25[i], s22_mag_35[i]]), 1)
+            p = np.polyfit(
+                np.array([temp25, temp35]), np.array([s22_mag_25[i], s22_mag_35[i]]), 1
+            )
             new_s22_mag[i] = np.polyval(p, sw_temp)
 
-            p = np.polyfit(np.array([temp25, temp35]), np.array([s22_ang_25[i], s22_ang_35[i]]), 1)
+            p = np.polyfit(
+                np.array([temp25, temp35]), np.array([s22_ang_25[i], s22_ang_35[i]]), 1
+            )
             new_s22_ang[i] = np.polyval(p, sw_temp)
 
     # modeling new corrections in frequency
@@ -109,12 +140,12 @@ def high_band_switch_correction(data_path, ant_s11, sw_temp):
     p_new_s22_mag = np.polyfit(f / 150, new_s22_mag, deg)
     p_new_s22_ang = np.polyfit(f / 150, new_s22_ang, deg)
 
-    sw_s11_mag = np.polyval(p_new_s11_mag, f / 150);
-    sw_s11_ang = np.polyval(p_new_s11_ang, f / 150);
-    sw_s12s21_mag = np.polyval(p_new_s12s21_mag, f / 150);
-    sw_s12s21_ang = np.polyval(p_new_s12s21_ang, f / 150);
-    sw_s22_mag = np.polyval(p_new_s22_mag, f / 150);
-    sw_s22_ang = np.polyval(p_new_s22_ang, f / 150);
+    sw_s11_mag = np.polyval(p_new_s11_mag, f / 150)
+    sw_s11_ang = np.polyval(p_new_s11_ang, f / 150)
+    sw_s12s21_mag = np.polyval(p_new_s12s21_mag, f / 150)
+    sw_s12s21_ang = np.polyval(p_new_s12s21_ang, f / 150)
+    sw_s22_mag = np.polyval(p_new_s22_mag, f / 150)
+    sw_s22_ang = np.polyval(p_new_s22_ang, f / 150)
 
     # combine computed complex S-parameters
     sw_s11 = sw_s11_mag * (np.cos(sw_s11_ang) + 1j * np.sin(sw_s11_ang))
@@ -129,19 +160,17 @@ def high_band_switch_correction(data_path, ant_s11, sw_temp):
 
 
 def low_band_switch_correction(root_path, ant_s11, temp_sw, f_in=np.zeros([0, 1])):
-    '''
+    """
     Takes the S11 of the load measured through the LNA and corrects for it.
-    '''
-    # Paths
-    data_path_15 = path.join(root_path, 'Receiver01_01_08_2018_040_to_200_MHz/15C/S11/InternalSwitch')
-    data_path_25 = path.join(root_path, 'Receiver01_01_08_2018_040_to_200_MHz/25C/S11/InternalSwitch')
-    data_path_35 = path.join(root_path, 'Receiver01_01_08_2018_040_to_200_MHz/35C/S11/InternalSwitch')
-
+    """
     measurements = {15: {}, 25: {}, 35: {}}
 
     for i, temp in enumerate([15, 25, 35]):
-        data_path = path.join(root_path, "Receiver01_01_08_2018_040_to_200_MHz/{}C/S11/InternalSwitch".format(temp))
-        for kind in ['open', 'short', 'load']:
+        data_path = path.join(
+            root_path,
+            "Receiver01_01_08_2018_040_to_200_MHz/{}C/S11/InternalSwitch".format(temp),
+        )
+        for kind in ["open", "short", "load"]:
             measurements[temp][kind] = {}
             for inp in [False, True]:
                 measurements[temp][kind]["inp" if inp else "meas"], fd = rc.s1p_read(
@@ -177,125 +206,64 @@ def low_band_switch_correction(root_path, ant_s11, temp_sw, f_in=np.zeros([0, 1]
 
     # Standards assumed at the switch
     o_sw = 1 * np.ones(len(fd))
-    s_sw = -1 * np.ones(len(fd))
     l_sw = 0 * np.ones(len(fd))
 
     corrections = {15: {}, 25: {}, 35: {}}
 
     # Correction at the switch -- 15degC
     for temp in [15, 25, 35]:
-        for kind in ['open', 'short', 'load']:
+        for kind in ["open", "short", "load"]:
             corrections[temp][kind], xx1, xx2, xx3 = rc.de_embed(
-                o_sw, l_sw, measurements[temp]['open']['meas'],
-                measurements[temp]['short']['meas'],
-                measurements[temp]['load']['meas'],
-                measurements[temp]['open']['inp'],
+                o_sw,
+                l_sw,
+                measurements[temp]["open"]["meas"],
+                measurements[temp]["short"]["meas"],
+                measurements[temp]["load"]["meas"],
+                measurements[temp]["open"]["inp"],
             )
 
-    # o_m15, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, o_sw_m15, s_sw_m15, l_sw_m15, o_sw_in15)
-    # s_m15, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, o_sw_m15, s_sw_m15, l_sw_m15, s_sw_in15)
-    # l_m15, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, o_sw_m15, s_sw_m15, l_sw_m15, l_sw_in15)
-    #
-    # # Correction at the switch -- 25degC
-    # o_m25, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, o_sw_m25, s_sw_m25, l_sw_m25, o_sw_in25)
-    # s_m25, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, o_sw_m25, s_sw_m25, l_sw_m25, s_sw_in25)
-    # l_m25, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, o_sw_m25, s_sw_m25, l_sw_m25, l_sw_in25)
-    #
-    # # Correction at the switch -- 35degC
-    # o_m35, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, o_sw_m35, s_sw_m35, l_sw_m35, o_sw_in35)
-    # s_m35, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, o_sw_m35, s_sw_m35, l_sw_m35, s_sw_in35)
-    # l_m35, xx1, xx2, xx3 = rc.de_embed(o_sw, s_sw, l_sw, o_sw_m35, s_sw_m35, l_sw_m35, l_sw_in35)
-
     # Correction at the input
-    resistance_male15 = 50.13
-    resistance_male25 = 50.12
-    resistance_male35 = 50.11
-    oa15, sa15, la15 = rc.agilent_85033E(fd, resistance_male15, 1)
-    oa25, sa25, la25 = rc.agilent_85033E(fd, resistance_male25, 1)
-    oa35, sa35, la35 = rc.agilent_85033E(fd, resistance_male35, 1)
+    resistance_male = {15: 50.13, 25: 50.12, 35: 50.11}
 
     s11 = {}
     s22 = {}
     s12 = {}
     for temp in [15, 25, 35]:
+        oa, sa, la = rc.agilent_85033E(fd, resistance_male[temp], 1)
+
         xx, s11[temp], s12[temp], s22[temp] = rc.de_embed(
-            oa15, sa15, la15, corrections[temp]['open'], corrections[temp]['short'],
-            corrections[temp]['load'], corrections[temp]['open']
+            oa,
+            sa,
+            la,
+            corrections[temp]["open"],
+            corrections[temp]["short"],
+            corrections[temp]["load"],
+            corrections[temp]["open"],
         )
 
     # Switch temperatures
-    temp15 = 18.67
-    temp25 = 27.16
-    temp35 = 35.31
+    switch_temps = {15: 18.67, 25: 27.16, 35: 35.31}
 
-    # interpolated arrays
-    real_s11_eval = np.zeros(len(fd))
-    imag_s11_eval = np.zeros(len(fd))
-    real_s12s21_eval = np.zeros(len(fd))
-    imag_s12s21_eval = np.zeros(len(fd))
-    real_s22_eval = np.zeros(len(fd))
-    imag_s22_eval = np.zeros(len(fd))
+    if temp_sw < switch_temps[25]:
+        temp_low = 15
+        temp_high = 25
+    else:
+        temp_low = 15
+        temp_high = 25
 
-    for i in range(201):
-        if temp_sw < temp25:
-            temp_array = np.array([temp15, temp25])
+    temp_array = np.array([switch_temps[temp_low], switch_temps[temp_high]])
 
-            real_s11 = np.real(np.array([s11[15][i], s11[25][i]]))
-            imag_s11 = np.imag(np.array([s11[15][i], s11[25][i]]))
-
-            real_s12s21 = np.real(np.array([s12[15][i], s12[25][i]]))
-            imag_s12s21 = np.imag(np.array([s12[15][i], s12[25][i]]))
-
-            real_s22 = np.real(np.array([s22[15][i], s22[25][i]]))
-            imag_s22 = np.imag(np.array([s22[15][i], s22[25][i]]))
-
-            p = np.polyfit(temp_array, real_s11, 1)
-            real_s11_eval[i] = np.polyval(p, temp_sw)
-
-            p = np.polyfit(temp_array, imag_s11, 1)
-            imag_s11_eval[i] = np.polyval(p, temp_sw)
-
-            p = np.polyfit(temp_array, real_s12s21, 1)
-            real_s12s21_eval[i] = np.polyval(p, temp_sw)
-
-            p = np.polyfit(temp_array, imag_s12s21, 1)
-            imag_s12s21_eval[i] = np.polyval(p, temp_sw)
-
-            p = np.polyfit(temp_array, real_s22, 1)
-            real_s22_eval[i] = np.polyval(p, temp_sw)
-
-            p = np.polyfit(temp_array, imag_s22, 1)
-            imag_s22_eval[i] = np.polyval(p, temp_sw)
-
-        elif temp_sw >= temp25:
-            temp_array = np.array([temp25, temp35])
-
-            real_s11 = np.real(np.array([s11[25][i], s11[35][i]]))
-            imag_s11 = np.imag(np.array([s11[25][i], s11[35][i]]))
-
-            real_s12s21 = np.real(np.array([s12[25][i], s12[35][i]]))
-            imag_s12s21 = np.imag(np.array([s12[25][i], s12[35][i]]))
-
-            real_s22 = np.real(np.array([s22[25][i], s22[35][i]]))
-            imag_s22 = np.imag(np.array([s22[25][i], s22[35][i]]))
-
-            p = np.polyfit(temp_array, real_s11, 1)
-            real_s11_eval[i] = np.polyval(p, temp_sw)
-
-            p = np.polyfit(temp_array, imag_s11, 1)
-            imag_s11_eval[i] = np.polyval(p, temp_sw)
-
-            p = np.polyfit(temp_array, real_s12s21, 1)
-            real_s12s21_eval[i] = np.polyval(p, temp_sw)
-
-            p = np.polyfit(temp_array, imag_s12s21, 1)
-            imag_s12s21_eval[i] = np.polyval(p, temp_sw)
-
-            p = np.polyfit(temp_array, real_s22, 1)
-            real_s22_eval[i] = np.polyval(p, temp_sw)
-
-            p = np.polyfit(temp_array, imag_s22, 1)
-            imag_s22_eval[i] = np.polyval(p, temp_sw)
+    def get_sxx_eval(sxx, imag):
+        res = np.zeros(len(fd))
+        for i in range(201):
+            s = np.array([sxx[temp_low][i], sxx[temp_high][i]])
+            if imag:
+                s = np.imag(s)
+            else:
+                s = np.real(s)
+            p = np.polyfit(temp_array, s, 1)
+            res[i] = np.polyval(p, temp_sw)
+        return res
 
     # Final smoothing
     fdn = fd / 75e6
@@ -308,27 +276,19 @@ def low_band_switch_correction(root_path, ant_s11, temp_sw, f_in=np.zeros([0, 1]
     else:
         fn_in = fdn
 
-    p = np.polyfit(fdn, real_s11_eval, 7)
-    fit_real_s11 = np.polyval(p, fn_in)
+    def get_smoothed_fit_part(sxx, imag):
+        sxx_eval = get_sxx_eval(sxx, imag=imag)
+        p = np.polyfit(fdn, sxx_eval, 7)
+        return np.polyval(p, fn_in)
 
-    p = np.polyfit(fdn, imag_s11_eval, 7)
-    fit_imag_s11 = np.polyval(p, fn_in)
+    def get_smoothed_fit(sxx):
+        real_fit = get_smoothed_fit_part(sxx, imag=False)
+        imag_fit = get_smoothed_fit_part(sxx, imag=True)
+        return real_fit + 1j * imag_fit
 
-    p = np.polyfit(fdn, real_s12s21_eval, 7)
-    fit_real_s12s21 = np.polyval(p, fn_in)
-
-    p = np.polyfit(fdn, imag_s12s21_eval, 7)
-    fit_imag_s12s21 = np.polyval(p, fn_in)
-
-    p = np.polyfit(fdn, real_s22_eval, 7)
-    fit_real_s22 = np.polyval(p, fn_in)
-
-    p = np.polyfit(fdn, imag_s22_eval, 7)
-    fit_imag_s22 = np.polyval(p, fn_in)
-
-    fit_s11 = fit_real_s11 + 1j * fit_imag_s11
-    fit_s12s21 = fit_real_s12s21 + 1j * fit_imag_s12s21
-    fit_s22 = fit_real_s22 + 1j * fit_imag_s22
+    fit_s11 = get_smoothed_fit(s11)
+    fit_s12s21 = get_smoothed_fit(s12)
+    fit_s22 = get_smoothed_fit(s22)
 
     # Corrected antenna S11
     corr_ant_s11 = rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, ant_s11)
@@ -338,14 +298,16 @@ def low_band_switch_correction(root_path, ant_s11, temp_sw, f_in=np.zeros([0, 1]
 
 def _read_data_and_corrections(root_dir, branch_dir):
     path_folder = path.join(root_dir, branch_dir)
-    kinds = ['Open', 'Short', 'Match']
+    kinds = ["Open", "Short", "Match"]
 
     data = {}
     for kind in kinds:
         data[kind] = {}
         for extern in [False, True]:
             data[kind]["ex" if extern else "sw"], f = rc.s1p_read(
-                path.join(path_folder, '{}{}01.s1p'.format("External" if extern else "", kind))
+                path.join(
+                    path_folder, "{}{}01.s1p".format("External" if extern else "", kind)
+                )
             )
 
     # o_sw_m, f = rc.s1p_read(path_folder + 'Open01.s1p')
@@ -357,31 +319,47 @@ def _read_data_and_corrections(root_dir, branch_dir):
     # l_ex, f = rc.s1p_read(path_folder + 'ExternalMatch01.s1p')
 
     # Standards assumed at the switch
-    sw = {'open': 1 * np.ones_like(f), 'short': -1 * np.ones_like(f), 'load': np.zeros_like(f)}
+    sw = {
+        "open": 1 * np.ones_like(f),
+        "short": -1 * np.ones_like(f),
+        "load": np.zeros_like(f),
+    }
     # Correction at the switch
     corrections = {}
     for kind in kinds:
         corrections[kind], xx1, xx2, xx3 = rc.de_embed(
-            sw['open'], sw['short'], sw['load'], data['Open']['sw'],
-            data['Short']['sw'], data['Match']['sw'], data[kind]['ex']
+            sw["open"],
+            sw["short"],
+            sw["load"],
+            data["Open"]["sw"],
+            data["Short"]["sw"],
+            data["Match"]["sw"],
+            data[kind]["ex"],
         )
 
     return data, corrections, sw, xx1, xx2, xx3, f
 
 
 def low_band_switch_correction_june_2016(
-        root_folder, ant_s11, f_in=np.zeros([0, 1]), flow=50,
-        fhigh=100, resistance_m=50.166):
+    root_folder, ant_s11, f_in=np.zeros([0, 1]), flow=50, fhigh=100, resistance_m=50.166
+):
     data, corrections, sw, xx1, xx2, xx3, f = _read_data_and_corrections(
-        root_folder, 'Receiver01_2018_01_08_040_to_200_MHz/25C/S11/InternalSwitch/'
+        root_folder, "Receiver01_2018_01_08_040_to_200_MHz/25C/S11/InternalSwitch/"
     )
     # Computation of S-parameters to the receiver input
     resistance_of_match = resistance_m  # 50.027 #50.177#50.124#male
     md = 1
     oa, sa, la = rc.agilent_85033E(f, resistance_of_match, md)
 
-    xx, s11, s12s21, s22 = rc.de_embed(oa, sa, la, corrections['Open'], corrections['Short'], corrections['Match'],
-                                       corrections['Open'])
+    xx, s11, s12s21, s22 = rc.de_embed(
+        oa,
+        sa,
+        la,
+        corrections["Open"],
+        corrections["Short"],
+        corrections["Match"],
+        corrections["Open"],
+    )
 
     # Polynomial fit of S-parameters from "f" to input frequency vector "f_in"
     # ------------------------------------------------------------------------
@@ -433,10 +411,11 @@ def low_band_switch_correction_june_2016(
     return rc.gamma_de_embed(fit_s11, fit_s12s21, fit_s22, ant_s11)
 
 
-def low_band_switch_correction_may_2019(root_dir, ant_s11, f_in=np.zeros([0, 1]),
-                                        flow=50, fhigh=100):
+def low_band_switch_correction_may_2019(
+    root_dir, ant_s11, f_in=np.zeros([0, 1]), flow=50, fhigh=100
+):
     data, corrections, sw, xx1, xx2, xx3, f = _read_data_and_corrections(
-        root_dir, 'Receiver02_2018_09_24_040_to_200_MHz/25C/S11/InternalSwitch01/'
+        root_dir, "Receiver02_2018_09_24_040_to_200_MHz/25C/S11/InternalSwitch01/"
     )
 
     # Computation of S-parameters to the receiver input
@@ -445,8 +424,13 @@ def low_band_switch_correction_may_2019(root_dir, ant_s11, f_in=np.zeros([0, 1])
     oa, sa, la = rc.agilent_85033E(f, resistance_of_match, md)
 
     xx, s11, s12s21, s22 = rc.de_embed(
-        oa, sa, la, corrections['open'], corrections['short'],
-        corrections['load'], corrections['open']
+        oa,
+        sa,
+        la,
+        corrections["open"],
+        corrections["short"],
+        corrections["load"],
+        corrections["open"],
     )
 
     # Polynomial fit of S-parameters from "f" to input frequency vector "f_in"

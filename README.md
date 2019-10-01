@@ -1,4 +1,4 @@
-# cal_coefficients
+# edges_cal
 
 This is the code to calculate the calibration coefficients of EDGES spectra.
 
@@ -19,7 +19,7 @@ Preferably, do this in an isolated python/conda environment.
 Most of the top-level functionality exists in the `cal_coefficients` module. To import:
 
 ```
-from calibrate import cal_coefficients as cc
+from edges_cal import cal_coefficients as cc
 ```
 
 To begin, we create an object that will encapsulate the spectra we are creating.

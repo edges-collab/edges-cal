@@ -16,19 +16,20 @@ def gamma_de_embed(s11, s12s21, s22, rp):
 def gamma_shifted(s11, s12s21, s22, r):
     return s11 + (s12s21 * r / (1 - s22 * r))
 
+
 def _get_kind(path_filename):
     # identifying the format
-    with open(path_filename, 'r') as d:
+    with open(path_filename, "r") as d:
         comment_rows = 0
         for line in d.readlines():
             # checking settings line
             if line.startswith("#"):
-                if 'DB' in line or 'dB' in line:
-                    flag = 'DB'
-                if 'MA' in line:
-                    flag = 'MA'
-                if 'RI' in line:
-                    flag = 'RI'
+                if "DB" in line or "dB" in line:
+                    flag = "DB"
+                if "MA" in line:
+                    flag = "MA"
+                if "RI" in line:
+                    flag = "RI"
 
                 comment_rows += 1
             elif line.startswith("!"):
@@ -38,20 +39,24 @@ def _get_kind(path_filename):
 
     #  loading data
     d = np.genfromtxt(path_filename, skip_header=comment_rows)
-    f = d[:, 0]
 
     return d, flag
+
 
 def s1p_read(path_filename):
 
     d, flag = _get_kind(path_filename)
     f = d[:, 0]
 
-    if flag == 'DB':
-        r = 10 ** (d[:, 1] / 20) * (np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2]))
-    elif flag == 'MA':
-        r = d[:, 1] * (np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2]))
-    elif flag == 'RI':
+    if flag == "DB":
+        r = 10 ** (d[:, 1] / 20) * (
+            np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2])
+        )
+    elif flag == "MA":
+        r = d[:, 1] * (
+            np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2])
+        )
+    elif flag == "RI":
         r = d[:, 1] + 1j * d[:, 2]
     else:
         raise Exception("file had no flags set!")
@@ -61,16 +66,19 @@ def s1p_read(path_filename):
 
 def s2p_read(path_filename):
 
-
     # loading data
     d, flag = _get_kind(path_filename)
     f = d[:, 0]
 
-    if flag == 'DB':
-        r = 10 ** (d[:, 1] / 20) * (np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2]))
-    if flag == 'MA':
-        r = d[:, 1] * (np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2]))
-    if flag == 'RI':
+    if flag == "DB":
+        r = 10 ** (d[:, 1] / 20) * (
+            np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2])
+        )
+    if flag == "MA":
+        r = d[:, 1] * (
+            np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2])
+        )
+    if flag == "RI":
         r = d[:, 1] + 1j * d[:, 2]
         r1 = d[:, 3] + 1j * d[:, 4]
         r2 = d[:, 5] + 1j * d[:, 6]
@@ -90,9 +98,13 @@ def de_embed(r1a, r2a, r3a, r1m, r2m, r3m, rp):
 
     for i in range(len(r1a)):
         b = np.array([r1m[i], r2m[i], r3m[i]])  # .reshape(-1,1)
-        A = np.array([[1, r1a[i], r1a[i] * r1m[i]],
-                      [1, r2a[i], r2a[i] * r2m[i]],
-                      [1, r3a[i], r3a[i] * r3m[i]]])
+        A = np.array(
+            [
+                [1, r1a[i], r1a[i] * r1m[i]],
+                [1, r2a[i], r2a[i] * r2m[i]],
+                [1, r3a[i], r3a[i] * r3m[i]],
+            ]
+        )
         x = np.linalg.lstsq(A, b)[0]
         s11[i] = x[0]
         s12s21[i] = x[1] + x[0] * x[2]
@@ -113,7 +125,9 @@ def fiducial_parameters_85033E(R, md=1, md_value_ps=38):
     open_C2 = 23.17e-36
     open_C3 = -0.1597e-45
 
-    op = np.array([open_off_Zo, open_off_delay, open_off_loss, open_C0, open_C1, open_C2, open_C3])
+    op = np.array(
+        [open_off_Zo, open_off_delay, open_off_loss, open_C0, open_C1, open_C2, open_C3]
+    )
 
     # Parameters of short
     short_off_Zo = 50
@@ -124,7 +138,17 @@ def fiducial_parameters_85033E(R, md=1, md_value_ps=38):
     short_L2 = 2.171e-33
     short_L3 = -0.01e-42
 
-    sp = np.array([short_off_Zo, short_off_delay, short_off_loss, short_L0, short_L1, short_L2, short_L3])
+    sp = np.array(
+        [
+            short_off_Zo,
+            short_off_delay,
+            short_off_loss,
+            short_L0,
+            short_L1,
+            short_L2,
+            short_L3,
+        ]
+    )
 
     # Parameters of match
     match_off_Zo = 50
@@ -160,8 +184,9 @@ def standard_open(f, par):
     Rt_open = impedance2gamma(Zt_open, 50)
 
     # Transmission line
-    Zc_open = (offset_Zo + (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)) - 1j * (
-                offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
+    Zc_open = (
+        offset_Zo + (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
+    ) - 1j * (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
     temp = ((offset_loss * offset_delay) / (2 * offset_Zo)) * np.sqrt(f / 1e9)
     gl_open = temp + 1j * ((2 * np.pi * f) * offset_delay + temp)
 
@@ -193,8 +218,9 @@ def standard_short(f, par):
     Rt_short = impedance2gamma(Zt_short, 50)
 
     # Transmission line %%%%
-    Zc_short = (offset_Zo + (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)) - 1j * (
-                offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
+    Zc_short = (
+        offset_Zo + (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
+    ) - 1j * (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
     temp = ((offset_loss * offset_delay) / (2 * offset_Zo)) * np.sqrt(f / 1e9)
     gl_short = temp + 1j * ((2 * np.pi * f) * offset_delay + temp)
 
@@ -202,7 +228,9 @@ def standard_short(f, par):
     R1 = impedance2gamma(Zc_short, 50)
     ex = np.exp(-2 * gl_short)
     Rt = Rt_short
-    Ri_short = (R1 * (1 - ex - R1 * Rt) + ex * Rt) / (1 - R1 * (ex * R1 + Rt * (1 - ex)))
+    Ri_short = (R1 * (1 - ex - R1 * Rt) + ex * Rt) / (
+        1 - R1 * (ex * R1 + Rt * (1 - ex))
+    )
 
     return Ri_short
 
@@ -222,8 +250,9 @@ def standard_match(f, par):
     Rt_match = impedance2gamma(Zt_match, 50)
 
     # Transmission line
-    Zc_match = (offset_Zo + (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)) - 1j * (
-                offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
+    Zc_match = (
+        offset_Zo + (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
+    ) - 1j * (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
     temp = ((offset_loss * offset_delay) / (2 * offset_Zo)) * np.sqrt(f / 1e9)
     gl_match = temp + 1j * ((2 * np.pi * f) * offset_delay + temp)
 
@@ -231,7 +260,9 @@ def standard_match(f, par):
     R1 = impedance2gamma(Zc_match, 50)
     ex = np.exp(-2 * gl_match)
     Rt = Rt_match
-    Ri_match = (R1 * (1 - ex - R1 * Rt) + ex * Rt) / (1 - R1 * (ex * R1 + Rt * (1 - ex)))
+    Ri_match = (R1 * (1 - ex - R1 * Rt) + ex * Rt) / (
+        1 - R1 * (ex * R1 + Rt * (1 - ex))
+    )
 
     return Ri_match
 
@@ -241,7 +272,9 @@ def agilent_85033E(f, resistance_of_match, m=1, md_value_ps=38):
     frequency in Hz
     """
 
-    op, sp, mp = fiducial_parameters_85033E(resistance_of_match, md=m, md_value_ps=md_value_ps)
+    op, sp, mp = fiducial_parameters_85033E(
+        resistance_of_match, md=m, md_value_ps=md_value_ps
+    )
     o = standard_open(f, op)
     s = standard_short(f, sp)
     m = standard_match(f, mp)
@@ -257,6 +290,10 @@ def input_impedance_transmission_line(Z0, gamma, length, Zload):
     Zload:  impedance of termination
     """
 
-    Zin = Z0 * (Zload + Z0 * np.tanh(gamma * length)) / (Zload * np.tanh(gamma * length) + Z0)
+    Zin = (
+        Z0
+        * (Zload + Z0 * np.tanh(gamma * length))
+        / (Zload * np.tanh(gamma * length) + Z0)
+    )
 
     return Zin
