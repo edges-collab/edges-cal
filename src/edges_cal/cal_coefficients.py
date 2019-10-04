@@ -488,7 +488,7 @@ class CalibrationObservation:
         )
         return scale, off, Tu, TC, TS
 
-    @lru_cache
+    @lru_cache()
     def calibrate(self, kind):
         scale, off, Tu, TC, TS = self.calibration_coefficients
 
