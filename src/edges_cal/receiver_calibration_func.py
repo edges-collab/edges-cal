@@ -23,7 +23,7 @@ def load_level1_MAT(file_name):
 
     Returns
     -------
-    ds: 2D spectra array
+    ds: 2D Spectra array
     dd: Nx6 date/time array
 
     Examples
@@ -76,7 +76,7 @@ class AverageCal:
     resistance_file: string, or list,
         Path and name of resistance file to process
     start_percent: float, optional
-        percentage of initial data to dismiss, for both spectra and resistance
+        percentage of initial data to dismiss, for both Spectra and resistance
 
     Returns
     -------
@@ -95,7 +95,7 @@ class AverageCal:
     def __init__(self, spectrum_files, resistance_file, start_percent=0):
         self.start_percent = start_percent
         self.ave_spectrum = self.read_spectrum(spectrum_files)
-        self.thermistor_temp = self.read_temperature(resistance_file)
+        self.thermistor_temp = self.read_thermistor_temp(resistance_file)
 
     @property
     def temp_ave(self):
@@ -126,30 +126,30 @@ class AverageCal:
         av_ta = np.mean(ta_sel, axis=1)
         return av_ta
 
-    def read_temperature(self, resistance_file):
+    @staticmethod
+    def read_thermistor_temp(resistance_file):
         if isinstance(resistance_file, list):
-            for i in range(len(resistance_file)):
-                if i == 0:
-                    resistance = np.genfromtxt(resistance_file[i])
-                else:
-                    resistance = np.concatenate(
-                        (resistance, np.genfromtxt(resistance_file[i])), axis=0
-                    )
+            if len(resistance_file) == 0:
+                raise ValueError("Empty list of resistance files")
+
+            resistance = np.genfromtxt(resistance_file[0])
+            for fl in resistance_file[1:]:
+                resistance = np.concatenate((resistance, np.genfromtxt(fl)), axis=0)
         else:
             resistance = np.genfromtxt(resistance_file)
 
         return temperature_thermistor(resistance)
 
 
-def frequency_edges(flow, fhigh):
+def frequency_edges(f_low, f_high):
     """
     Return the raw EDGES frequency array, in MHz.
 
     Parameters
     ----------
-    flow: float
+    f_low: float
         low-end limit of frequency range, in MHz
-    fhigh: float
+    f_high: float
         high-end limit of frequency range, in MHz
 
     Returns
@@ -172,16 +172,13 @@ def frequency_edges(flow, fhigh):
     freqs = np.arange(0, max_freq, fstep)
 
     # Indices of frequency limits
-    if flow < 0 or flow >= max(freqs) or fhigh < 0 or fhigh >= max(freqs):
+    if f_low < 0 or f_low >= max(freqs) or f_high < 0 or f_high >= max(freqs):
         raise ValueError("Limits are 0 MHz and " + str(max(freqs)) + " MHz")
 
-    for i in range(len(freqs) - 1):
-        if (freqs[i] <= flow) and (freqs[i + 1] >= flow):
-            index_flow = i
-        if (freqs[i] <= fhigh) and (freqs[i + 1] >= fhigh):
-            index_fhigh = i
+    lower_index = np.where(freqs >= f_low)[0] - 1
+    upper_index = np.where(freqs >= f_high)[0]
 
-    return freqs, index_flow, index_fhigh
+    return freqs, lower_index, upper_index
 
 
 def NWP_fit(flow, fhigh, f, rl, ro, rs, Toe, Tse, To, Ts, wterms):
@@ -269,7 +266,7 @@ def power_ratio(
     Parameters
     ----------
     freqs : array_like
-        Frequencies of the spectra.
+        Frequencies of the Spectra.
     temp_ant : array_like, shape (NFREQS,)
         Temperature of the antenna, or simulator.
     gamma_ant : array_like, shape (NFREQS,)

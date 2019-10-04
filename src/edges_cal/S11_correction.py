@@ -341,11 +341,32 @@ def _read_data_and_corrections(root_dir, branch_dir):
 
 
 def low_band_switch_correction_june_2016(
-    root_folder, ant_s11, f_in=np.zeros([0, 1]), flow=50, fhigh=100, resistance_m=50.166
+    root_folder, ant_s11, f_in=np.zeros([0, 1]), resistance_m=50.166
 ):
+    """
+    Compute the low band switch correction
+
+    Parameters
+    ----------
+    root_folder : str path
+        Path to root folder of the data set.
+    ant_s11 : array_like
+        Array of S11 measurements as a function of frequency
+    f_in
+    resistance_m
+
+    Returns
+    -------
+
+    """
     data, corrections, sw, xx1, xx2, xx3, f = _read_data_and_corrections(
         root_folder, "Receiver01_2018_01_08_040_to_200_MHz/25C/S11/InternalSwitch/"
     )
+
+    flow = f_in.min()
+    fhigh = f_in.max()
+    f_center = (fhigh - flow) / 2 + flow
+
     # Computation of S-parameters to the receiver input
     resistance_of_match = resistance_m  # 50.027 #50.177#50.124#male
     md = 1
@@ -365,14 +386,10 @@ def low_band_switch_correction_june_2016(
     # ------------------------------------------------------------------------
 
     # Frequency normalization
-
-    fn = f / (((fhigh - flow) / 2 + flow) * 10 ** 6)
+    fn = 1e-6 * f / f_center
 
     if len(f_in) > 10:
-        if f_in[0] > 1e5:
-            fn_in = f_in / (((fhigh - flow) / 2 + flow) * 10 ** 6)
-        elif f_in[-1] < 300:
-            fn_in = f_in / (((fhigh - flow) / 2 + flow))
+        fn_in = f_in / f_center
     else:
         fn_in = fn
 
