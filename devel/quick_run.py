@@ -21,7 +21,9 @@ obs.plot_calibrated_temps("ambient")
 obs.plot_calibrated_temps("hot_load")
 obs.plot_calibrated_temps("open")
 obs.plot_calibrated_temps("short")
-obs.plot_calibrated_temps("antsim")
+
+antsim = cc.LoadSpectrum("antsim", dataIn, f_low=50, f_high=190, run_num=2, percent=5)
+obs.plot_calibrated_temps(antsim)
 
 obs.write_coefficients()
 obs.plot_coefficients()
@@ -30,7 +32,7 @@ obs.write()
 # run1 = cc.spectra(dataOut, dataIn, 50, 190, 5.0, 2)
 #
 # cc.spec_read(run1)
-# run1.save()
+# run1.write()
 # fig = cc.spec_plot(run1)
 # fig.savefig("spec_plot.png")
 #

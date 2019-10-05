@@ -23,7 +23,7 @@ def load_level1_MAT(file_name):
 
     Returns
     -------
-    ds: 2D Spectra array
+    ds: 2D LoadSpectrum array
     dd: Nx6 date/time array
 
     Examples
@@ -76,7 +76,7 @@ class AverageCal:
     resistance_file: string, or list,
         Path and name of resistance file to process
     start_percent: float, optional
-        percentage of initial data to dismiss, for both Spectra and resistance
+        percentage of initial data to dismiss, for both LoadSpectrum and resistance
 
     Returns
     -------
@@ -266,7 +266,7 @@ def power_ratio(
     Parameters
     ----------
     freqs : array_like
-        Frequencies of the Spectra.
+        Frequencies of the LoadSpectrum.
     temp_ant : array_like, shape (NFREQS,)
         Temperature of the antenna, or simulator.
     gamma_ant : array_like, shape (NFREQS,)

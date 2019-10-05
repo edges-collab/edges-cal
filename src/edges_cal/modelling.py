@@ -131,21 +131,7 @@ def model_evaluate(model, par, xdata, center=False, **kwargs):
     return model(xdata, *par, **kwargs)
 
 
-def fit_polynomial_fourier(
-    model_type,
-    xdata,
-    ydata,
-    nterms,
-    Weights=1,
-    plot=False,
-    fr=150,
-    df=10,
-    zr=8,
-    dz=2,
-    z_alpha=0,
-    anastasia_model_number=0,
-    jordan_model_number=0,
-):
+def fit_polynomial_fourier(model_type, xdata, ydata, nterms, Weights=1):
     """
     This function computes a Least-Squares fit to data using the QR decomposition method.
     Two models are supported: 'polynomial', and 'fourier'.
@@ -168,7 +154,6 @@ def fit_polynomial_fourier(
     nterms: total number of fit coefficients for baseline
     W: matrix of weights, expressed as the inverse of a covariance matrix. It doesn't have to be
     normalized to anything in particular. Relative weights are OK.
-    plot: flag to plot measurements along with fit, and residuals. Use plot='yes' for plotting
 
     Returns
     -------

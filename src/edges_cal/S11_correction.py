@@ -306,17 +306,17 @@ def _read_data_and_corrections(root_dir, branch_dir):
         for extern in [False, True]:
             data[kind]["ex" if extern else "sw"], f = rc.s1p_read(
                 path.join(
-                    path_folder, "{}{}01.s1p".format("External" if extern else "", kind)
+                    path_folder, "{}{}01.VNA".format("External" if extern else "", kind)
                 )
             )
 
-    # o_sw_m, f = rc.s1p_read(path_folder + 'Open01.s1p')
-    # s_sw_m, f = rc.s1p_read(path_folder + 'Short01.s1p')
-    # l_sw_m, f = rc.s1p_read(path_folder + 'Match01.s1p')
+    # o_sw_m, f = rc.s1p_read(path_folder + 'Open01.VNA')
+    # s_sw_m, f = rc.s1p_read(path_folder + 'Short01.VNA')
+    # l_sw_m, f = rc.s1p_read(path_folder + 'Match01.VNA')
     #
-    # o_ex, f = rc.s1p_read(path_folder + 'ExternalOpen01.s1p')
-    # s_ex, f = rc.s1p_read(path_folder + 'ExternalShort01.s1p')
-    # l_ex, f = rc.s1p_read(path_folder + 'ExternalMatch01.s1p')
+    # o_ex, f = rc.s1p_read(path_folder + 'ExternalOpen01.VNA')
+    # s_ex, f = rc.s1p_read(path_folder + 'ExternalShort01.VNA')
+    # l_ex, f = rc.s1p_read(path_folder + 'ExternalMatch01.VNA')
 
     # Standards assumed at the switch
     sw = {
