@@ -15,6 +15,7 @@ import numpy as np
 from cached_property import cached_property
 
 from . import S11_correction as s11
+from . import io
 from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
@@ -46,7 +47,9 @@ class FrequencyRange:
 
     @cached_property
     def mask(self):
-        return self.freq_full >= self._f_low * self.freq_full <= self._f_high
+        return np.logical_and(
+            self.freq_full >= self._f_low, self.freq_full <= self._f_high
+        )
 
     @cached_property
     def freq(self):
@@ -114,14 +117,6 @@ class EdgesFrequencyRange(FrequencyRange):
 
 
 class VNA:
-    # _mapping = {
-    #     "open": "Open0",
-    #     "short": "Short0",
-    #     "match": "Match0",
-    #     "external": "External0",
-    #     "receiver": "ReceiverReading0",
-    # }
-
     def __init__(self, fname, f_low=None, f_high=None, run_num=None, switchval=None):
         self.fname = fname
         if run_num is None:
@@ -129,8 +124,9 @@ class VNA:
 
         self.load_name = os.path.splitext(os.path.basename(self.fname))[0][:-2]
 
-        f, spec = self._read(self.fname)
-        self.freq = FrequencyRange(f, f_low, f_high)
+        spec, f = self._read()
+
+        self.freq = FrequencyRange(f / 1e6, f_low, f_high)
         self.s11 = spec[self.freq.mask]
         self._switchval = switchval
 
@@ -140,38 +136,54 @@ class VNA:
     @cached_property
     def switchval(self):
         if self._switchval is not None:
-            return self._switchval * np.ones_like(self.freq)
+            return self._switchval * np.ones_like(self.freq.freq)
         else:
             return None
 
 
 class SwitchCorrection:
-    def __init__(self, base_path, f_low=None, f_high=None, run_num=0):
+    def __init__(
+        self,
+        load_name,
+        base_path,
+        correction_path,
+        f_low=None,
+        f_high=None,
+        run_num=1,
+        resistance=50.166,
+    ):
+        self.load_name = load_name
         self.base_path = base_path
+        self.correction_path = correction_path
         self.run_num = run_num
+        self.resistance = resistance
+
         self.open = VNA(
-            os.path.join(base_path, "Open{:.2d}".format(run_num)),
+            os.path.join(base_path, "Open{:02d}.s1p".format(run_num)),
             f_low=f_low,
             f_high=f_high,
             run_num=run_num,
             switchval=1,
         )
         self.short = VNA(
-            os.path.join(base_path, "Short{:.2d}".format(run_num)),
+            os.path.join(base_path, "Short{:02d}.s1p".format(run_num)),
             f_low=f_low,
             f_high=f_high,
             run_num=run_num,
             switchval=-1,
         )
         self.match = VNA(
-            os.path.join(base_path, "Match{:.2d}".format(run_num)),
+            os.path.join(base_path, "Match{:02d}.s1p".format(run_num)),
             f_low=f_low,
             f_high=f_high,
             run_num=run_num,
             switchval=0,
         )
 
-        if not (self.open.freq.freq == self.short.freq.freq == self.match.freq.freq):
+        if not (
+            np.all(self.open.freq.freq == self.short.freq.freq)
+            and np.all(self.open.freq.freq == self.match.freq.freq)
+        ):
             raise ValueError("S11 files do not match")
 
         # Expose one of the frequency objects
@@ -183,9 +195,9 @@ class SwitchCorrection:
         VNA S11 measurements for the load.
         """
         return VNA(
-            os.path.join(self.base_path, "External{:.2d}".format(self.run_num)),
-            f_low=self.freq.f_low,
-            f_high=self.freq.f_high,
+            os.path.join(self.base_path, "External{:02d}.s1p".format(self.run_num)),
+            f_low=self.freq.freq.min(),
+            f_high=self.freq.freq.max(),
             run_num=self.run_num,
         )
 
@@ -202,21 +214,20 @@ class SwitchCorrection:
             self.external.s11,
         )
 
-    @lru_cache()
-    def get_s11_correction(self, resistance_m=50.166):
+    @cached_property
+    def s11_correction(self):
         """
         Determine the correction required for the S11 due to the switch.
         """
         return s11.low_band_switch_correction_june_2016(
-            self.base_path,
+            self.correction_path,
             self.switch_corrections[0],
             f_in=self.freq.freq,
-            resistance_m=resistance_m,
+            resistance_m=self.resistance,
         )
 
-    def get_s11_correction_model(
-        self, nterms=None, load_name=None, resistance_m=50.166
-    ):
+    @lru_cache()
+    def get_s11_correction_model(self, nterms=None):
         kind_nterms = {
             "ambient": 37,
             "hot_load": 37,
@@ -225,17 +236,15 @@ class SwitchCorrection:
             "antsim": 55,
             "lna": 37,
         }
-        nterms = nterms or (kind_nterms[load_name] if load_name is not None else 105)
-
-        corr = self.get_s11_correction(resistance_m)
+        nterms = nterms or kind_nterms[self.load_name]
 
         def getmodel(mag):
             # Returns a callable function that will evaluate a model onto a set of
             # un-normalised frequencies.
             if mag:
-                d = np.abs(corr)
+                d = np.abs(self.s11_correction)
             else:
-                d = np.unwrap(np.angle(corr))
+                d = np.unwrap(np.angle(self.s11_correction))
 
             fit = mdl.fit_polynomial_fourier(
                 "fourier", self.freq.freq_recentred, d, nterms
@@ -251,45 +260,57 @@ class SwitchCorrection:
 
         return model
 
-    def plot_residuals(self, model, corr=None):
-        fig, ax = plt.subplots(4, 1, sharex=True, facecolor="w")
+    def plot_residuals(self):
+        fig, ax = plt.subplots(
+            4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="w"
+        )
         for axx in ax:
             axx.xaxis.set_ticks(
                 [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180], []
             )
             axx.grid(True)
-            axx.set_xlabel("Frequency [MHz]")
+        ax[-1].set_xlabel("Frequency [MHz]")
 
-        if corr is None:
-            corr = self.get_s11_correction()
+        corr = self.s11_correction
+        model = self.get_s11_correction_model()
+        model = model(self.freq.freq)
 
-        ax[0].plot(self.freq.freq, 20 * np.log10(np.abs(model(self.freq.freq))))
-        ax[0].set_ylabel("S11(mag)")
+        ax[0].plot(self.freq.freq, 20 * np.log10(np.abs(model)))
+        ax[0].set_ylabel(r"$|S_{11}|$")
 
-        ax[1].plot(self.freq.freq, np.abs(model(self.freq.freq)) - np.abs(corr), "g")
-        ax[1].set_ylabel("Delta S11(mag)")
+        ax[1].plot(self.freq.freq, np.abs(model) - np.abs(corr), "g")
+        ax[1].set_ylabel(r"\Delta $S_{11}$")
 
-        ax[2].plot(
-            self.freq.freq, np.unwrap(np.angle(model(self.freq.freq))) * 180 / np.pi
-        )
-        ax[2].set_ylabel(" S11(Ang)")
+        ax[2].plot(self.freq.freq, np.unwrap(np.angle(model)) * 180 / np.pi)
+        ax[2].set_ylabel(r"$\angle S_{11}$")
 
         ax[3].plot(
-            self.freq.freq,
-            np.unwrap(np.angle(model(self.freq.freq))) - np.unwrap(np.angle(corr)),
-            "g",
+            self.freq.freq, np.unwrap(np.angle(model)) - np.unwrap(np.angle(corr)), "g"
         )
-        ax[3].set_ylabel("Delta S11(Ang)")
+        ax[3].set_ylabel(r"$\Delta \angle S_{11}$")
 
+        fig.suptitle(f"{self.load_name} Reflection Coefficient Models", fontsize=14)
         return fig
 
 
 class LNA(SwitchCorrection):
     def __init__(
-        self, base_path, f_low=None, f_high=None, run_num=0, resistance_f=50.009
+        self,
+        base_path,
+        correction_path,
+        f_low=None,
+        f_high=None,
+        run_num=1,
+        resistance=50.009,
     ):
         super().__init__(
-            base_path=base_path, f_low=f_low, f_high=f_high, run_num=run_num
+            load_name="lna",
+            base_path=os.path.join(base_path, "ReceiverReading{:02d}".format(run_num)),
+            correction_path=correction_path,
+            f_low=f_low,
+            f_high=f_high,
+            run_num=run_num,
+            resistance=resistance,
         )
 
     @cached_property
@@ -298,36 +319,45 @@ class LNA(SwitchCorrection):
         VNA S11 measurements for the load.
         """
         return VNA(
-            os.path.join(self.base_path, "ReceiverReading{:.2d}".format(self.run_num)),
-            f_low=self.freq.f_low,
-            f_high=self.freq.f_high,
+            os.path.join(
+                self.base_path, "ReceiverReading{:02d}.s1p".format(self.run_num)
+            ),
+            f_low=self.freq.freq.min(),
+            f_high=self.freq.freq.max(),
             run_num=self.run_num,
         )
 
-    def switch_corrections(self, resistance_f=50.009):
+    @cached_property
+    def switch_corrections(self):
         # Models of standards
-        oa, sa, la = rc.agilent_85033E(self.freq.freq, resistance_f, m=1)
+        oa, sa, la = rc.agilent_85033E(self.freq.freq, self.resistance, m=1)
 
         # Correction at switch
         return rc.de_embed(
             oa, sa, la, self.open.s11, self.short.s11, self.match.s11, self.external.s11
         )[0]
 
-    @lru_cache()
-    def get_s11_correction(self, resistance_f=50.009):
+    @cached_property
+    def s11_correction(self):
         """
         Determine the correction required for the S11 due to the switch.
         """
-        return self.switch_corrections(resistance_f)
+        return self.switch_corrections
 
-    def get_s11_correction_model(self):
-        return super().get_s11_correction_model(
-            load_name="lna", resistance_m=self.resistance_f
-        )
+    @lru_cache()
+    def get_s11_correction_model(self, nterms=None):
+        return super().get_s11_correction_model(nterms=nterms)
 
 
 class LoadSpectrum:
     _kinds = {
+        "ambient": "Ambient",
+        "hot_load": "HotLoad",
+        "open": "LongCableOpen",
+        "short": "LongCableShorted",
+        "antsim": "AntSim",
+    }
+    _file_prefixes = {
         "ambient": "Ambient",
         "hot_load": "HotLoad",
         "open": "LongCableOpen",
@@ -340,10 +370,12 @@ class LoadSpectrum:
         load_name,
         path,
         switch_correction=None,
+        correction_path=None,
         f_low=None,
         f_high=None,
-        run_num=0,
+        run_num=1,
         percent=5,
+        resistance=50.166,
     ):
         self.load_name = load_name
         self.path = path
@@ -353,7 +385,13 @@ class LoadSpectrum:
 
         if switch_correction is None:
             self.switch_correction = SwitchCorrection(
-                self.path_s11, f_low=f_low, f_high=f_high, run_num=run_num
+                self.load_name,
+                self.path_s11,
+                correction_path,
+                f_low=f_low,
+                f_high=f_high,
+                run_num=run_num,
+                resistance=resistance,
             )
         else:
             self.switch_correction = switch_correction
@@ -364,27 +402,32 @@ class LoadSpectrum:
     @cached_property
     def averaged_spectrum(self):
         """
-        Normalised power, Q_p = (P_source - P_load)/(P_noise - P_load)
+        Normalised uncalibrated temperature,
+        T* = T_noise * (P_source - P_load)/(P_noise - P_load) + T_load
         """
         spec_files = glob.glob(
-            os.path.join(self.path_spec, self._kinds[self.load_name] + "*.mat")
+            os.path.join(self.path_spec, self._file_prefixes[self.load_name] + "*.mat")
         )
         if not spec_files:
-            raise FileNotFoundError("No .mat files found for {}".format(self.load_name))
+            raise FileNotFoundError(
+                "No .mat files found for {} in {}".format(
+                    self.load_name, self.path_spec
+                )
+            )
         return self._read_power(spec_files)[self.freq.mask]
 
     def _read_power(self, spectrum_files):
         """
-        Read a MAT file to get the normalised raw power, i.e.
+        Read a MAT file to get the corrected raw temperature, i.e.
 
-        Q_p = (P_source - P_load)/(P_noise - P_load)
+        T* = (P_source - P_load)/(P_noise - P_load)*T_noise + T_load
 
         Returns
         -------
-        ndarray : Q_p as a function of frequency.
+        ndarray : T* as a function of frequency.
         """
         for i, fl in enumerate(spectrum_files):
-            tai = rcf.load_level1_MAT(fl)
+            tai = io.load_level1_MAT(fl)
             if i == 0:
                 ta = tai
             else:
@@ -395,6 +438,9 @@ class LoadSpectrum:
         return np.mean(ta_sel, axis=1)
 
     def _read_thermistor_temp(self, resistance_file):
+        """
+        Read a resistance file and return the associated thermistor temperature in K.
+        """
         if type(resistance_file) == str:
             resistance_file = [resistance_file]
 
@@ -406,10 +452,13 @@ class LoadSpectrum:
             resistance = np.concatenate((resistance, np.genfromtxt(fl)), axis=0)
 
         temp_spectrum = rcf.temperature_thermistor(resistance)
-        return temp_spectrum[(self.percent / 100) * len(temp_spectrum)]
+        return temp_spectrum[int((self.percent / 100) * len(temp_spectrum)) :]
 
     @cached_property
     def thermistor_temp(self):
+        """
+        Temperature of the known noise source.
+        """
         res_files = glob.glob(
             os.path.join(self.path_res, self._kinds[self.load_name] + "*.txt")
         )
@@ -417,11 +466,14 @@ class LoadSpectrum:
         if not res_files:
             raise FileNotFoundError("No .txt files found for {}".format(self.load_name))
 
-        return self._read_thermistor_temp(res_files)[self.freq.mask]
+        temp = self._read_thermistor_temp(res_files)
+
+        # Can't just use mask, because the thermistor spectrum has different resolution.
+        return temp[int((self.percent / 100) * len(temp)) :]
 
     @cached_property
     def temp_ave(self):
-        """Average thermistor temperature"""
+        """Average thermistor temperature (over time and frequency)"""
         return np.mean(self.thermistor_temp)
 
     def write(self, direc):
@@ -433,19 +485,24 @@ class LoadSpectrum:
             fl["averaged_raw_spectrum"] = self.averaged_spectrum
             fl["temperature"] = self.thermistor_temp
 
-    def plot(self, temp=True, fig=None, ax=None, **kwargs):
+    def plot(
+        self, thermistor=False, fig=None, ax=None, xlabel=True, ylabel=True, **kwargs
+    ):
         if fig is None:
             fig, ax = plt.subplots(1, 1, facecolor=kwargs.get("facecolor", "white"))
 
-        if temp:
+        if thermistor:
             ax.plot(self.freq.freq, self.thermistor_temp)
-            ax.set_ylabel("Temperature [K]")
+            if ylabel:
+                ax.set_ylabel("Temperature [K]")
         else:
             ax.plot(self.freq.freq, self.averaged_spectrum)
-            ax.set_ylabel("Measured $Q_P$")
+            if ylabel:
+                ax.set_ylabel("$T^*$ [K]")
 
         ax.grid(True)
-        ax.set_xlabel("Frequency [MHz]")
+        if xlabel:
+            ax.set_xlabel("Frequency [MHz]")
 
 
 class HotLoadCorrection:
@@ -516,9 +573,10 @@ class CalibrationObservation:
     def __init__(
         self,
         path,
+        correction_path,
         f_low=None,
         f_high=None,
-        run_num=0,
+        run_num=1,
         resistance_f=50.009,
         resistance_m=50.166,
         percent=5,
@@ -527,34 +585,34 @@ class CalibrationObservation:
     ):
         self.path = path
 
-        self.ambient = LoadSpectrum(
-            "ambient",
-            path,
+        for source in self._sources:
+            setattr(
+                self,
+                source,
+                LoadSpectrum(
+                    source,
+                    path,
+                    correction_path=correction_path,
+                    f_low=f_low,
+                    f_high=f_high,
+                    run_num=run_num,
+                    percent=percent,
+                    resistance=resistance_m,
+                ),
+            )
+
+        self.hot_load_correction = HotLoadCorrection(
+            os.path.join(path, "S11"), f_low, f_high
+        )
+
+        self.lna_s11 = LNA(
+            os.path.join(path, "S11"),
+            correction_path=correction_path,
             f_low=f_low,
             f_high=f_high,
             run_num=run_num,
-            percent=percent,
+            resistance=resistance_f,
         )
-        self.hot_load = LoadSpectrum(
-            "hot_load",
-            path,
-            f_low=f_low,
-            f_high=f_high,
-            run_num=run_num,
-            percent=percent,
-        )
-        self.open = LoadSpectrum(
-            "open", path, f_low=f_low, f_high=f_high, run_num=run_num, percent=percent
-        )
-        self.short = LoadSpectrum(
-            "short", path, f_low=f_low, f_high=f_high, run_num=run_num, percent=percent
-        )
-
-        self.hot_load_correction = HotLoadCorrection(path, f_low, f_high)
-
-        self.lna_s11 = LNA(path, f_low=f_low, f_high=f_high)
-        self.resistance_m = resistance_m
-        self.resistance_f = resistance_f
 
         self.cterms = cterms
         self.wterms = wterms
@@ -562,24 +620,47 @@ class CalibrationObservation:
         # Expose a Frequency object
         self.freq = self.ambient.freq
 
+    def plot_raw_spectra(self, fig=None, ax=None):
+        """
+        Plot raw uncalibrated spectra for all calibrator sources.
+        """
+        if fig is None and ax is None:
+            fig, ax = plt.subplots(
+                len(self._sources), 1, sharex=True, gridspec_kw={"hspace": 0.05}
+            )
+
+        for i, source in enumerate(self._sources):
+            src = getattr(self, source)
+            src.plot(fig=fig, ax=ax[i], xlabel=(i == (len(self._sources) - 1)))
+            ax[i].set_title(source)
+
+        return fig
+
+    def plot_s11_models(self):
+        figs = {}
+        for source in self._sources:
+            src = getattr(self, source)
+            figs[source] = src.switch_correction.plot_residuals()
+        return figs
+
     @cached_property
     def hot_load_corrected_ave_temp(self):
-        hot_load_correction = self.switch_correction.get_s11_correction(
-            resistance_m=self.resistance_m
-        )
+        hot_load_correction = self.hot_load.switch_correction.get_s11_correction_model()
+        hot_load_correction = hot_load_correction(self.freq.freq)
+
         rht = rc.gamma_de_embed(
-            self.hot_load_correction.s11_model,
-            self.switch_correction.s12_model,
-            self.switch_correction.s22_model,
+            self.hot_load_correction.s11_model(self.freq.freq),
+            self.hot_load_correction.s12_model(self.freq.freq),
+            self.hot_load_correction.s22_model(self.freq.freq),
             hot_load_correction,
         )
 
         # inverting the direction of the s-parameters,
         # since the port labels have to be inverted to match those of Pozar eqn 10.25
-        s11_sr_rev = self.hot_load_correction.s11_model
+        s11_sr_rev = self.hot_load_correction.s11_model(self.freq.freq)
 
         # absolute value of S_21
-        abs_s21 = np.sqrt(np.abs(self.hot_load_correction.s12_model))
+        abs_s21 = np.sqrt(np.abs(self.hot_load_correction.s12_model(self.freq.freq)))
 
         # available power gain
         G = (
@@ -597,36 +678,50 @@ class CalibrationObservation:
     @cached_property
     def s11_correction_models(self):
         return {
-            k: getattr(self, k).switch_correction.get_s11_correction(self.resistance_m)
+            k: getattr(self, k).switch_correction.get_s11_correction_model()(
+                self.freq.freq
+            )
             for k in self._sources
         }
 
     @cached_property
     def calibration_coefficients(self):
-        scale, off, Tu, TC, TS = rcf.calibration_quantities(
-            self.freq.f_low,
-            self.freq.f_high,
-            self.freq.freq,
-            self.ambient.averaged_spectrum,
-            self.hot_load.averaged_spectrum,
-            self.open.averaged_spectrum,
-            self.short.averaged_spectrum,
-            self.lna_s11.get_s11_correction_model(self.resistance_f),
-            self.s11_correction_models["ambient"],
-            self.s11_correction_models["hot_load"],
-            self.s11_correction_models["open"],
-            self.s11_correction_models["short"],
-            self.ambient.temp_ave,
-            self.hot_load_corrected_ave_temp,
-            self.open.temp_ave,
-            self.short.temp_ave,
-            self.cterms,
-            self.wterms,
+        """
+        The calibration polynomials, C1, C2, Tunc, Tcos, Tsin, evaluated at `freq.freq`.
+        """
+        scale, off, Tu, TC, TS = rcf.get_calibration_quantities_iterative(
+            self.freq.freq_recentred,
+            T_raw={
+                k: getattr(getattr(self, k), "averaged_spectrum") for k in self._sources
+            },
+            gamma_rec=self.lna_s11.get_s11_correction_model()(self.freq.freq),
+            gamma_ant=self.s11_correction_models,
+            T_ant={
+                k: (
+                    self.hot_load_corrected_ave_temp
+                    if k == "hot_load"
+                    else getattr(self, k).temp_ave
+                )
+                for k in self._sources
+            },
+            cterms=self.cterms,
+            wterms=self.wterms,
         )
         return scale, off, Tu, TC, TS
 
-    @lru_cache()
     def calibrate(self, load):
+        """
+        Calibrate the temperature of a given load.
+
+        Parameters
+        ----------
+        load : :class:`LoadSpectrum` instance
+            The load to calibrate.
+
+        Returns
+        -------
+        array : calibrated antenna temperature in K, len(f).
+        """
         scale, off, Tu, TC, TS = self.calibration_coefficients
 
         if type(load) == str:
@@ -638,8 +733,8 @@ class CalibrationObservation:
                 )
         return rcf.calibrated_antenna_temperature(
             load.averaged_spectrum,
-            load.switch_correction.get_s11_correction(self.resistance_m),
-            self.lna_s11.get_s11_correction_model(self.resistance_f),
+            load.switch_correction.get_s11_correction_model()(self.freq.freq),
+            self.lna_s11.get_s11_correction_model()(self.freq.freq),
             scale,
             off,
             Tu,
@@ -648,13 +743,50 @@ class CalibrationObservation:
             Tamb_internal=300,
         )
 
-    def plot_calibrated_temps(self, kind, bins=64):
-        lim = len(self.edges_freq.f_edges)
+    def decalibrate(self, temp, s11):
+        """
+        Decalibrate a temperature spectrum, yielding Q_p
+
+        Parameters
+        ----------
+        temp : array_like
+            A temperature spectrum, with the same length as `freq.freq`.
+
+        Returns
+        -------
+        array_like : Q_p, the normalised raw power.
+        """
+        scale, off, Tu, TC, TS = self.calibration_coefficients
+
+        Q_p = rcf.power_ratio(
+            freqs=self.freq.freq,
+            temp_ant=temp,
+            gamma_ant=s11,
+            gamma_rec=self.lna_s11.get_s11_correction_model()(self.freq.freq),
+            scale=scale,
+            offset=off,
+            temp_unc=Tu,
+            temp_cos=TC,
+            temp_sin=TS,
+            temp_noise_source=400,
+            temp_load=300,
+            ref_freq=75.0,
+        )
+
+        return 400 * Q_p + 300
+
+    def plot_calibrated_temp(
+        self, kind, bins=64, fig=None, ax=None, xlabel=True, ylabel=True
+    ):
+        if fig is None and ax is None:
+            fig, ax = plt.subplots(1, 1, facecolor="w")
+
+        lim = len(self.freq.freq)
 
         # binning
         temp_calibrated = self.calibrate(kind)
         fact = lim / bins
-        fnew = np.linspace(self.edges_freq.f_low, self.edges_freq.f_high, bins)
+        f_new = np.linspace(self.freq.freq.min(), self.freq.freq.max(), bins)
 
         # TODO: this would probably be better using a convolution kernel
         freq_ave_cal = np.zeros(bins)
@@ -665,26 +797,55 @@ class CalibrationObservation:
 
         rms = np.sqrt(np.mean((freq_ave_cal - np.mean(freq_ave_cal)) ** 2))
 
-        plt.figure(facecolor="w")
-        plt.plot(fnew, freq_ave_cal, "b", label=f"Calibrated {kind}")
+        ax.plot(f_new, freq_ave_cal, label=f"Calibrated {kind} [RMS = {rms:.3f}]")
 
         if kind != "hot_load":
-            plt.axhline(getattr(self, kind).average_cal.temp_ave, color="r")
+            ax.axhline(
+                getattr(self, kind).temp_ave,
+                color="C2",
+                label="Average thermistor temp",
+            )
         else:
-            plt.plot(self.edges_freq.f_edges, self.Thd, color="r")
+            ax.plot(
+                self.freq.freq,
+                self.hot_load_corrected_ave_temp,
+                color="C2",
+                label="Average thermistor temp",
+            )
 
-        plt.text(
-            self.edges_freq.f_low + self.edges_freq.f_range / 6,
-            np.max(freq_ave_cal),
-            f"RMS={rms:.3f} [K]",
-        )
-        plt.ylim([np.min(freq_ave_cal), np.max(freq_ave_cal)])
-        plt.xlabel("Frequency [MHz]")
-        plt.ylabel("Temperature [K]")
+        ax.set_ylim([np.min(freq_ave_cal), np.max(freq_ave_cal)])
+        if xlabel:
+            ax.set_xlabel("Frequency [MHz]")
+
+        if ylabel:
+            ax.set_ylabel("Temperature [K]")
+
         plt.ticklabel_format(useOffset=False)
-        plt.grid()
+        ax.grid()
+        ax.legend()
 
         return plt.gcf()
+
+    def plot_calibrated_temps(self, bins=64):
+        fig, ax = plt.subplots(
+            len(self._sources),
+            1,
+            sharex=True,
+            gridspec_kw={"hspace": 0.05},
+            figsize=(10, 12),
+        )
+
+        for i, source in enumerate(self._sources):
+            self.plot_calibrated_temp(
+                kind=source,
+                bins=bins,
+                fig=fig,
+                ax=ax[i],
+                xlabel=i == (len(self._sources) - 1),
+            )
+
+        fig.suptitle("Calibrated Temperatures for Calibration Sources", fontsize=15)
+        return fig
 
     def write_coefficients(self, direc="."):
         scale, off, Tu, TC, TS = self.calibration_coefficients
@@ -692,35 +853,36 @@ class CalibrationObservation:
             os.path.join(
                 direc,
                 "All_cal-params_{}_{}_{}-{}_25C_s11alan.txt".format(
-                    self.edges_freq.f_low,
-                    self.edges_freq.f_high,
-                    self.cterms,
-                    self.wterms,
+                    self.freq.freq.min(), self.freq.freq.max(), self.cterms, self.wterms
                 ),
             ),
-            [self.edges_freq.f_edges, scale, off, Tu, TC, TS],
+            [self.freq.freq, scale, off, Tu, TC, TS],
         )
 
     def plot_coefficients(self, fig=None, ax=None):
         if fig is None or ax is None:
-            fig, ax = plt.subplots(1, 1, facecolor="w")
+            fig, ax = plt.subplots(
+                5, 1, facecolor="w", gridspec_kw={"hspace": 0.05}, figsize=(10, 9)
+            )
 
-        labels = ["Scale (C1)", "Offset (C2) [K]", "TU [K]", "TC [K]", "TS [K]"]
-        for soln, label in zip(self.calibration_coefficients, labels):
-            plt.plot(self.edges_freq.f_edges, soln)
-            plt.xlabel("Frequency [MHz]")
-            plt.ylabel(label)
-            plt.grid()
+        labels = [
+            "Scale ($C_1$)",
+            "Offset ($C_2$) [K]",
+            r"$T_{\rm unc}$ [K]",
+            r"$T_{\rm cos}$ [K]",
+            r"$T_{\rm sin}$ [K]",
+        ]
+        for i, (soln, label) in enumerate(zip(self.calibration_coefficients, labels)):
+            ax[i].plot(self.freq.freq, soln)
+            ax[i].set_ylabel(label, fontsize=13)
+            ax[i].grid()
             plt.ticklabel_format(useOffset=False)
 
+            if i == 4:
+                ax[i].set_xlabel("Frequency [MHz]", fontsize=13)
+
+        fig.suptitle("Calibration Parameters", fontsize=15)
         return fig
-
-        # plot calibrated temperature in K
-
-    #        for kind in ["ambient", "hot_load", "open", "short", "antsim"]:
-    #            figs.append(cal_plot(s, kind))
-
-    # Plot Thermistor temperatures in Celsius
 
     def write(self, direc="."):
         np.savetxt(os.path.join(direc, "fit_s11_LNA_mag.txt"), np.abs(self.lna.model))
@@ -730,15 +892,13 @@ class CalibrationObservation:
         )
 
         sources = tuple(self._sources)
-        if self.add_antsim:
-            sources = sources + ("antsim",)
 
         for source in sources:
             src = getattr(self, source)
             for part, fnc in zip(
                 ["mag", "ang"], [np.abs, lambda x: np.unwrap(np.angle(x))]
             ):
-                out = fnc(src.get_s11_correction_model(resistance_m=self.resistance_m))
+                out = fnc(src.get_s11_correction_model()(self.freq.freq))
                 key = "fit_s11_{}_{}".format(source, part)
                 np.savetxt(os.path.join(direc, key + ".txt"), out)
 

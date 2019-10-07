@@ -6,39 +6,28 @@ Created on Thu Feb 08 14:02:33 2018
 """
 import numpy as np
 import scipy as sp
-import scipy.io as sio
-
-
-def load_level1_MAT(file_name):
-    """
-    This function loads the antenna temperature and date/time from MAT files produced by
-    the MATLAB function acq2level1.m
-
-    Parameters
-    ----------
-    file_name: str
-        path and name of MAT file
-    plot: bool
-        flag for plotting spectrum data.
-
-    Returns
-    -------
-    ds: 2D LoadSpectrum array
-    dd: Nx6 date/time array
-
-    Examples
-    --------
-    >>> ds, dd = load_level1_MAT('/file.MAT', plot='yes')
-    """
-    # loading data and extracting main array
-    d = sio.loadmat(file_name)
-    if "ta" in d.keys():
-        return d["ta"]
-    elif "ant_temp" in d.keys():
-        return d["ant_temp"]
 
 
 def temperature_thermistor(resistance, coeffs="oven_industries_TR136_170", kelvin=True):
+    """
+    Convert a resistance measurement to a temperature, using a pre-defined set
+    of standard coefficients.
+
+    Parameters
+    ----------
+    resistance : float or array_like
+        The measured resistance (Ohms).
+    coeffs : str or len-3 iterable of floats, optional
+        If str, should be an identifier of a standard set of coefficients, otherwise,
+        should specify the coefficients.
+    kelvin : bool, optional
+        Whether to return the temperature in K or C.
+
+    Returns
+    -------
+    float or array_like
+        The temperature for each `resistance` given.
+    """
     # Steinhart-Hart coefficients
     _coeffs = {"oven_industries_TR136_170": [1.03514e-3, 2.33825e-4, 7.92467e-8]}
 
@@ -61,129 +50,31 @@ def temperature_thermistor(resistance, coeffs="oven_industries_TR136_170", kelvi
         return temp - 273.15
 
 
-class AverageCal:
+def NWP_fit(f_norm, rl, ro, rs, Toe, Tse, To, Ts, wterms):
     """
-    Load and average (in time) calibration data (ambient, hot, open,
-    shorted, simulators, etc.) in MAT format.
-
-    It also returns the average physical temperature of the corresponding calibrator,
-    measured with an Oven Industries TR136-170 thermistor.
+    Fit noise-wave polynomial parameters.
 
     Parameters
     ----------
-    spectrum_files: string, or list of strings,
-        Paths and names of spectrum files to process
-    resistance_file: string, or list,
-        Path and name of resistance file to process
-    start_percent: float, optional
-        percentage of initial data to dismiss, for both LoadSpectrum and resistance
+    f_norm : array_like
+        Normalized frequencies (arbitrarily normalised, but standard assumption is
+        that the centre is zero, and the scale is such that the range is (-1, 1))
+    rl
+    ro
+    rs
+    Toe
+    Tse
+    To
+    Ts
+    wterms : int
+        The number of polynomial terms to use for each of the noise-wave functions.
 
     Returns
     -------
-    av_ta: average spectrum at raw frequency resolution, starting at 0 Hz
-    av_temp: average physical temperature
-
-    Examples
-    --------
-    >>> spec_file1 = '/file1.mat'
-    >>> spec_file2 = '/file2.mat'
-    >>> spec_files = [spec_file1, spec_file2]
-    >>> res_file = 'res_file.txt'
-    >>> av_ta, av_temp = AverageCal(spec_files, res_file, start_percentage=10)
+    Tunc, Tcos, Tsin : array_like
+        The solutions to each of T_unc, T_cos and T_sin as functions of frequency.
     """
-
-    def __init__(self, spectrum_files, resistance_file, start_percent=0):
-        self.start_percent = start_percent
-        self.ave_spectrum = self.read_spectrum(spectrum_files)
-        self.thermistor_temp = self.read_thermistor_temp(resistance_file)
-
-    @property
-    def temp_ave(self):
-        """Average thermistor temperature"""
-        return np.mean(self.indexed_temp)
-
-    @property
-    def start_index(self):
-        """Starting index for useful measurements"""
-        return int((self.start_percent / 100) * len(self.thermistor_temp))
-
-    @property
-    def indexed_temp(self):
-        """A view of the thermistor temperatures beginning at the start index."""
-        return self.thermistor_temp[self.start_index :]
-
-    def read_spectrum(self, spectrum_files, start_percent=None):
-        start_percent = start_percent or self.start_percent
-        for i, fl in enumerate(spectrum_files):
-            tai = load_level1_MAT(fl)
-            if i == 0:
-                ta = tai
-            else:
-                ta = np.concatenate((ta, tai), axis=1)
-
-        index_start_spectra = int((start_percent / 100) * len(ta[0, :]))
-        ta_sel = ta[:, index_start_spectra::]
-        av_ta = np.mean(ta_sel, axis=1)
-        return av_ta
-
-    @staticmethod
-    def read_thermistor_temp(resistance_file):
-        if isinstance(resistance_file, list):
-            if len(resistance_file) == 0:
-                raise ValueError("Empty list of resistance files")
-
-            resistance = np.genfromtxt(resistance_file[0])
-            for fl in resistance_file[1:]:
-                resistance = np.concatenate((resistance, np.genfromtxt(fl)), axis=0)
-        else:
-            resistance = np.genfromtxt(resistance_file)
-
-        return temperature_thermistor(resistance)
-
-
-def frequency_edges(f_low, f_high):
-    """
-    Return the raw EDGES frequency array, in MHz.
-
-    Parameters
-    ----------
-    f_low: float
-        low-end limit of frequency range, in MHz
-    f_high: float
-        high-end limit of frequency range, in MHz
-
-    Returns
-    -------
-    freqs: 1D-array
-        full frequency array from 0 to 200 MHz, at raw resolution
-    index_flow: int
-        index of flow
-    index_fhigh: int
-        index of fhigh
-
-    Examples
-    --------
-    >>> freqs, index_flow, index_fhigh = frequency_edges(90, 190)
-    """
-    # Full frequency vector
-    nchannels = 16384 * 2
-    max_freq = 200.0
-    fstep = max_freq / nchannels
-    freqs = np.arange(0, max_freq, fstep)
-
-    # Indices of frequency limits
-    if f_low < 0 or f_low >= max(freqs) or f_high < 0 or f_high >= max(freqs):
-        raise ValueError("Limits are 0 MHz and " + str(max(freqs)) + " MHz")
-
-    lower_index = np.where(freqs >= f_low)[0] - 1
-    upper_index = np.where(freqs >= f_high)[0]
-
-    return freqs, lower_index, upper_index
-
-
-def NWP_fit(flow, fhigh, f, rl, ro, rs, Toe, Tse, To, Ts, wterms):
     # S11 quantities
-    fn = (f - ((fhigh - flow) / 2 + flow)) / ((fhigh - flow) / 2)
     Fo = np.sqrt(1 - np.abs(rl) ** 2) / (1 - ro * rl)
     Fs = np.sqrt(1 - np.abs(rl) ** 2) / (1 - rs * rl)
     PHIo = np.angle(ro * Fo)
@@ -201,33 +92,30 @@ def NWP_fit(flow, fhigh, f, rl, ro, rs, Toe, Tse, To, Ts, wterms):
     K4s = (np.abs(rs) * np.abs(Fs) / G) * np.sin(PHIs)
 
     # Matrices A and b
-    A = np.zeros((3 * wterms, 2 * len(fn)))
+    A = np.zeros((3 * wterms, 2 * len(f_norm)))
     for i in range(wterms):
-        A[i, :] = np.append(K2o * fn ** i, K2s * fn ** i)
-        A[i + 1 * wterms, :] = np.append(K3o * fn ** i, K3s * fn ** i)
-        A[i + 2 * wterms, :] = np.append(K4o * fn ** i, K4s * fn ** i)
+        A[i, :] = np.append(K2o * f_norm ** i, K2s * f_norm ** i)
+        A[i + 1 * wterms, :] = np.append(K3o * f_norm ** i, K3s * f_norm ** i)
+        A[i + 2 * wterms, :] = np.append(K4o * f_norm ** i, K4s * f_norm ** i)
     b = np.append((Toe - To * K1o), (Tse - Ts * K1s))
 
     # Transposing matrices so 'frequency' dimension is along columns
     M = A.T
     ydata = np.reshape(b, (-1, 1))
-    # print('Test Printouts')
-    # print(M) #toubleshooting - D
-    # print(ydata)
 
     # Solving system using 'short' QR decomposition (see R. Butt, Num. Anal. Using MATLAB)
     Q1, R1 = sp.linalg.qr(M, mode="economic")
     param = sp.linalg.solve(R1, np.dot(Q1.T, ydata))
 
     # Evaluating TU, TC, and TS
-    TU = np.zeros(len(fn))
-    TC = np.zeros(len(fn))
-    TS = np.zeros(len(fn))
+    TU = np.zeros(len(f_norm))
+    TC = np.zeros(len(f_norm))
+    TS = np.zeros(len(f_norm))
 
     for i in range(wterms):
-        TU = TU + param[i, 0] * fn ** i
-        TC = TC + param[i + 1 * wterms, 0] * fn ** i
-        TS = TS + param[i + 2 * wterms, 0] * fn ** i
+        TU = TU + param[i, 0] * f_norm ** i
+        TC = TC + param[i + 1 * wterms, 0] * f_norm ** i
+        TS = TS + param[i + 2 * wterms, 0] * f_norm ** i
 
     return TU, TC, TS
 
@@ -243,18 +131,17 @@ def get_alpha(gamma_rec, gamma_ant):
 
 
 def power_ratio(
-    freqs,
     temp_ant,
     gamma_ant,
     gamma_rec,
-    c1_poly,
-    c2_poly,
-    temp_unc_poly,
-    temp_cos_poly,
-    temp_sin_poly,
+    scale,
+    offset,
+    temp_unc,
+    temp_cos,
+    temp_sin,
     temp_noise_source,
     temp_load,
-    ref_freq=75.0,
+    return_terms=False,
 ):
     """
     Compute the ratio of raw powers from the three-position switch.
@@ -273,23 +160,22 @@ def power_ratio(
         S11 of the antenna (or simulator)
     gamma_rec : array_like, shape (NFREQS,)
         S11 of the receiver.
-    c1_poly : :class:`np.poly1d`
+    scale : :class:`np.poly1d`
         A polynomial representing the C_1 term.
-    c2_poly : :class:`np.poly1d`
+    offset : :class:`np.poly1d`
         A polynomial representing the C_2 term
-    temp_unc_poly : :class:`np.poly1d`
+    temp_unc : :class:`np.poly1d`
         A polynomial representing the uncorrelated noise-wave parameter
-    temp_cos_poly : :class:`np.poly1d`
+    temp_cos : :class:`np.poly1d`
         A polynomial representing the cosine noise-wave parameter
-    temp_sin_poly : :class:`np.poly1d`
+    temp_sin : :class:`np.poly1d`
         A polynomial representing the sine noise-wave parameter
     temp_noise_source : array_like, shape (NFREQS,)
-        Temperature of the internal noise source
+        Temperature of the internal noise source.
     temp_load : array_like, shape (NFREQS,)
         Temperature of the internal load
-    ref_freq : float, optional
-        A reference frequency around which to expand the polynomials.
-
+    return_terms : bool, optional
+        If True, return the terms of Qp, rather than the sum of them._
     Returns
     -------
     array_like : the quantity Q_P as a function of frequency.
@@ -297,97 +183,118 @@ def power_ratio(
     F = get_F(gamma_rec, gamma_ant)
     alpha = get_alpha(gamma_rec, gamma_ant)
 
-    f = freqs / ref_freq
+    terms = [
+        temp_ant * (1 - np.abs(gamma_ant) ** 2) * np.abs(F) ** 2,
+        temp_unc * np.abs(gamma_ant) ** 2 * np.abs(F) ** 2,
+        np.abs(gamma_ant) * np.abs(F) * temp_cos * np.cos(alpha),
+        np.abs(gamma_ant) * np.abs(F) * temp_sin * np.sin(alpha),
+        (offset - temp_load),
+        scale * temp_noise_source * (1 - np.abs(gamma_rec) ** 2),
+    ]
 
-    return (
-        temp_ant * (1 - np.abs(gamma_ant) ** 2) * np.abs(F) ** 2
-        + temp_unc_poly(f) * np.abs(gamma_ant) ** 2 * np.abs(F) ** 2
-        + np.abs(gamma_ant)
-        * np.abs(F)
-        * (temp_cos_poly(f) * np.cos(alpha) + temp_sin_poly(f) * np.sin(alpha))
-        + (c2_poly(f) - temp_load)
-    ) / (c1_poly(f) * temp_noise_source * (1 - np.abs(gamma_rec) ** 2))
+    if return_terms:
+        return terms
+    else:
+        return sum(terms[:5]) / terms[5]
 
 
-def calibration_quantities(
-    flow,
-    fhigh,
-    f,
-    Tae,
-    The,
-    Toe,
-    Tse,
-    rl,
-    ra,
-    rh,
-    ro,
-    rs,
-    Ta,
-    Th,
-    To,
-    Ts,
-    cterms,
-    wterms,
-    Tamb_internal=300,
+def get_calibration_quantities_iterative(
+    f_norm, T_raw, gamma_rec, gamma_ant, T_ant, cterms, wterms, Tamb_internal=300
 ):
-    # S11 quantities
-    Fa = np.sqrt(1 - np.abs(rl) ** 2) / (1 - ra * rl)
-    Fh = np.sqrt(1 - np.abs(rl) ** 2) / (1 - rh * rl)
+    """
+    Derive calibration parameters {C1, C2, Tunc, Tcos, Tsin} using the scheme laid
+    out in Monsalve (2017) [arxiv:1602.08065].
 
-    PHIa = np.angle(ra * Fa)
-    PHIh = np.angle(rh * Fh)
+    All equation numbers and symbol names come from M17.
 
-    G = 1 - np.abs(rl) ** 2
+    Parameters
+    ----------
+    f_norm : array_like
+        Normalized frequencies (arbitrarily normalised, but standard assumption is
+        that the centre is zero, and the scale is such that the range is (-1, 1))
+    T_raw : dict
+        Dictionary of antenna uncalibrated temperatures, with keys
+        'ambient', 'hot_load, 'short' and 'open'. Each value is an array with the same
+        length as f_norm.
+    gamma_rec : float array
+        Receiver S11 as a function of frequency.
+    gamma_ant : dict
+        Dictionary of antenna S11, with keys 'ambient', 'hot_load, 'short'
+        and 'open'. Each value is an array with the same length as f_norm.
+    T_ant : dict
+        Dictionary like `gamma_ant`, except that the values are modelled/smoothed
+        thermistor temperatures for each source load.
+    cterms : int
+        Number of polynomial terms for the C_i
+    wterms : int
+        Number of polynonmial temrs for the T_i
+    Tamb_internal : float
+        The ambient internal temperature, interpreted as T_L.
+        Note: this must be the same as the T_L used to generate T*.
 
-    K1a = (1 - np.abs(ra) ** 2) * np.abs(Fa) ** 2 / G
-    K1h = (1 - np.abs(rh) ** 2) * np.abs(Fh) ** 2 / G
 
-    K2a = (np.abs(ra) ** 2) * (np.abs(Fa) ** 2) / G
-    K2h = (np.abs(rh) ** 2) * (np.abs(Fh) ** 2) / G
+    Returns
+    -------
 
-    K3a = (np.abs(ra) * np.abs(Fa) / G) * np.cos(PHIa)
-    K3h = (np.abs(rh) * np.abs(Fh) / G) * np.cos(PHIh)
+    """
+    # Get F and alpha for each load (Eqs. 3 and 4)
+    F = {k: get_F(gamma_rec, v) for k, v in gamma_ant.items()}
+    alpha = {k: get_alpha(gamma_rec, v) for k, v in gamma_ant.items()}
 
-    K4a = (np.abs(ra) * np.abs(Fa) / G) * np.sin(PHIa)
-    K4h = (np.abs(rh) * np.abs(Fh) / G) * np.sin(PHIh)
+    # The denominator of each term in Eq. 7
+    G = 1 - np.abs(gamma_rec) ** 2
+
+    K1, K2, K3, K4 = {}, {}, {}, {}
+    for k, gamma_a in gamma_ant.items():
+        K1[k] = (1 - np.abs(gamma_a) ** 2) * np.abs(F[k]) ** 2 / G
+        K2[k] = (np.abs(gamma_a) ** 2) * (np.abs(F[k]) ** 2) / G
+        K3[k] = (np.abs(gamma_a) * np.abs(F[k]) / G) * np.cos(alpha[k])
+        K4[k] = (np.abs(gamma_a) * np.abs(F[k]) / G) * np.sin(alpha[k])
 
     # Initializing arrays
     niter = 4
-    Ta_iter = np.zeros((niter, len(f)))
-    Th_iter = np.zeros((niter, len(f)))
+    Ta_iter = np.zeros((niter, len(f_norm)))
+    Th_iter = np.zeros((niter, len(f_norm)))
 
-    sca = np.zeros((niter, len(f)))
-    off = np.zeros((niter, len(f)))
+    sca = np.zeros((niter, len(f_norm)))
+    off = np.zeros((niter, len(f_norm)))
 
-    Tae_iter = np.zeros((niter, len(f)))
-    The_iter = np.zeros((niter, len(f)))
-    Toe_iter = np.zeros((niter, len(f)))
-    Tse_iter = np.zeros((niter, len(f)))
+    # Calibrated temperature iterations
+    T_cal_iter = {k: np.zeros((niter, len(f_norm))) for k in T_ant}
 
-    TU = np.zeros((niter, len(f)))
-    TC = np.zeros((niter, len(f)))
-    TS = np.zeros((niter, len(f)))
-    fn = (f - ((fhigh - flow) / 2 + flow)) / ((fhigh - flow) / 2)
+    TU = np.zeros((niter, len(f_norm)))
+    TC = np.zeros((niter, len(f_norm)))
+    TS = np.zeros((niter, len(f_norm)))
 
     # Calibration loop
     for i in range(niter):
         # Step 1: approximate physical temperature
         if i == 0:
-            Ta_iter[i, :] = Tae / K1a
-            Th_iter[i, :] = The / K1h
+            Ta_iter[i, :] = T_raw["ambient"] / K1["ambient"]
+            Th_iter[i, :] = T_raw["hot_load"] / K1["hot_load"]
 
         if i > 0:
-            NWPa = TU[i - 1, :] * K2a + TC[i - 1, :] * K3a + TS[i - 1, :] * K4a
-            NWPh = TU[i - 1, :] * K2h + TC[i - 1, :] * K3h + TS[i - 1, :] * K4h
+            NWPa = (
+                TU[i - 1, :] * K2["ambient"]
+                + TC[i - 1, :] * K3["ambient"]
+                + TS[i - 1, :] * K4["ambient"]
+            )
+            NWPh = (
+                TU[i - 1, :] * K2["hot_load"]
+                + TC[i - 1, :] * K3["hot_load"]
+                + TS[i - 1, :] * K4["hot_load"]
+            )
 
-            Ta_iter[i, :] = (Tae_iter[i - 1, :] - NWPa) / K1a
-            Th_iter[i, :] = (The_iter[i - 1, :] - NWPh) / K1h
+            Ta_iter[i, :] = (T_cal_iter["ambient"][i - 1, :] - NWPa) / K1["ambient"]
+            Th_iter[i, :] = (T_cal_iter["hot_load"][i - 1, :] - NWPh) / K1["hot_load"]
 
         # Step 2: scale and offset
 
         # Updating scale and offset
-        sca_new = (Th - Ta) / (Th_iter[i, :] - Ta_iter[i, :])
-        off_new = Ta_iter[i, :] - Ta
+        sca_new = (T_ant["hot_load"] - T_ant["ambient"]) / (
+            Th_iter[i, :] - Ta_iter[i, :]
+        )
+        off_new = Ta_iter[i, :] - T_ant["ambient"]
 
         if i == 0:
             sca_raw = sca_new
@@ -397,25 +304,30 @@ def calibration_quantities(
             off_raw = off[i - 1, :] + off_new
 
         # Modeling scale
-        p_sca = np.polyfit(fn, sca_raw, cterms - 1)
-        m_sca = np.polyval(p_sca, fn)
+        p_sca = np.polyfit(f_norm, sca_raw, cterms - 1)
+        m_sca = np.polyval(p_sca, f_norm)
         sca[i, :] = m_sca
 
         # Modeling offset
-        p_off = np.polyfit(fn, off_raw, cterms - 1)
-        m_off = np.polyval(p_off, fn)
+        p_off = np.polyfit(f_norm, off_raw, cterms - 1)
+        m_off = np.polyval(p_off, f_norm)
         off[i, :] = m_off
 
         # Step 3: corrected "uncalibrated spectrum" of cable
-
-        Tae_iter[i, :] = (Tae - Tamb_internal) * sca[i, :] + Tamb_internal - off[i, :]
-        The_iter[i, :] = (The - Tamb_internal) * sca[i, :] + Tamb_internal - off[i, :]
-        Toe_iter[i, :] = (Toe - Tamb_internal) * sca[i, :] + Tamb_internal - off[i, :]
-        Tse_iter[i, :] = (Tse - Tamb_internal) * sca[i, :] + Tamb_internal - off[i, :]
+        for k, v in T_cal_iter.items():
+            v[i, :] = (T_raw[k] - Tamb_internal) * sca[i, :] + Tamb_internal - off[i, :]
 
         # Step 4: computing NWP
         TU[i, :], TC[i, :], TS[i, :] = NWP_fit(
-            flow, fhigh, f, rl, ro, rs, Toe_iter[i, :], Tse_iter[i, :], To, Ts, wterms
+            f_norm,
+            gamma_rec,
+            gamma_ant["open"],
+            gamma_ant["short"],
+            T_cal_iter["open"][i, :],
+            T_cal_iter["short"][i, :],
+            T_ant["open"],
+            T_ant["short"],
+            wterms,
         )
 
     return sca[-1, :], off[-1, :], TU[-1, :], TC[-1, :], TS[-1, :]

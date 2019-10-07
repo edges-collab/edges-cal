@@ -105,7 +105,7 @@ def de_embed(r1a, r2a, r3a, r1m, r2m, r3m, rp):
                 [1, r3a[i], r3a[i] * r3m[i]],
             ]
         )
-        x = np.linalg.lstsq(A, b)[0]
+        x = np.linalg.lstsq(A, b, rcond=None)[0]
         s11[i] = x[0]
         s12s21[i] = x[1] + x[0] * x[2]
         s22[i] = x[2]

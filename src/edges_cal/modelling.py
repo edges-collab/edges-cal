@@ -66,7 +66,9 @@ def loglog(x, *par, f_center=F_CENTER):
     return sum([p * (x / f_center) ** i for i, p in enumerate(par)])
 
 
-polynomial = loglog
+@flexible_model
+def polynomial(x, *par, f_center=1):
+    return loglog(x, *par, f_center=f_center)
 
 
 @flexible_model
@@ -89,6 +91,18 @@ def linlog(x, *par, f_center=F_CENTER):
 @flexible_model
 def edges_polynomial(x, *par, f_center=F_CENTER):
     return sum([p * (x / f_center) ** (-2.5 + i) for i, p in enumerate(par)])
+
+
+@flexible_model
+def fourier(x, *par, f_center=F_CENTER):
+    summ = par[0]
+
+    n_cos_sin = int((len(par) - 1) / 2)
+    for i in range(n_cos_sin):
+        icos = 2 * i + 1
+        isin = 2 * i + 2
+        summ = summ + par[icos] * np.cos((i + 1) * x) + par[isin] * np.sin((i + 1) * x)
+    return summ
 
 
 def model_evaluate(model, par, xdata, center=False, **kwargs):
