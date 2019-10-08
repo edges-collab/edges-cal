@@ -355,14 +355,14 @@ class LoadSpectrum:
         "hot_load": "HotLoad",
         "open": "LongCableOpen",
         "short": "LongCableShorted",
-        "antsim": "AntSim",
+        "antsim": "AntSim4",
     }
     _file_prefixes = {
         "ambient": "Ambient",
         "hot_load": "HotLoad",
         "open": "LongCableOpen",
         "short": "LongCableShort",
-        "antsim": "AntSim",
+        "antsim": "AntSim4",
     }
 
     def __init__(
@@ -776,7 +776,7 @@ class CalibrationObservation:
         return 400 * Q_p + 300
 
     def plot_calibrated_temp(
-        self, kind, bins=64, fig=None, ax=None, xlabel=True, ylabel=True
+        self, load, bins=64, fig=None, ax=None, xlabel=True, ylabel=True
     ):
         if fig is None and ax is None:
             fig, ax = plt.subplots(1, 1, facecolor="w")
@@ -784,7 +784,7 @@ class CalibrationObservation:
         lim = len(self.freq.freq)
 
         # binning
-        temp_calibrated = self.calibrate(kind)
+        temp_calibrated = self.calibrate(load)
         fact = lim / bins
         f_new = np.linspace(self.freq.freq.min(), self.freq.freq.max(), bins)
 
@@ -797,14 +797,12 @@ class CalibrationObservation:
 
         rms = np.sqrt(np.mean((freq_ave_cal - np.mean(freq_ave_cal)) ** 2))
 
-        ax.plot(f_new, freq_ave_cal, label=f"Calibrated {kind} [RMS = {rms:.3f}]")
+        ax.plot(
+            f_new, freq_ave_cal, label=f"Calibrated {load.load_name} [RMS = {rms:.3f}]"
+        )
 
-        if kind != "hot_load":
-            ax.axhline(
-                getattr(self, kind).temp_ave,
-                color="C2",
-                label="Average thermistor temp",
-            )
+        if load.load_name != "hot_load":
+            ax.axhline(load.temp_ave, color="C2", label="Average thermistor temp")
         else:
             ax.plot(
                 self.freq.freq,
@@ -837,7 +835,7 @@ class CalibrationObservation:
 
         for i, source in enumerate(self._sources):
             self.plot_calibrated_temp(
-                kind=source,
+                getattr(self, source),
                 bins=bins,
                 fig=fig,
                 ax=ax[i],
@@ -885,10 +883,10 @@ class CalibrationObservation:
         return fig
 
     def write(self, direc="."):
-        np.savetxt(os.path.join(direc, "fit_s11_LNA_mag.txt"), np.abs(self.lna.model))
+        lnas11 = self.lna_s11.get_s11_correction_model()(self.freq.freq)
+        np.savetxt(os.path.join(direc, "fit_s11_LNA_mag.txt"), np.abs(lnas11))
         np.savetxt(
-            os.path.join(direc, "fit_s11_LNA_ang.txt"),
-            np.unwrap(np.angle(self.lna.model)),
+            os.path.join(direc, "fit_s11_LNA_ang.txt"), np.unwrap(np.angle(lnas11))
         )
 
         sources = tuple(self._sources)
@@ -898,7 +896,9 @@ class CalibrationObservation:
             for part, fnc in zip(
                 ["mag", "ang"], [np.abs, lambda x: np.unwrap(np.angle(x))]
             ):
-                out = fnc(src.get_s11_correction_model()(self.freq.freq))
+                out = fnc(
+                    src.switch_correction.get_s11_correction_model()(self.freq.freq)
+                )
                 key = "fit_s11_{}_{}".format(source, part)
                 np.savetxt(os.path.join(direc, key + ".txt"), out)
 

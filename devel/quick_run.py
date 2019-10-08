@@ -7,6 +7,7 @@ dataOut = path.expanduser("~/output/")
 
 obs = cc.CalibrationObservation(
     path=dataIn,
+    correction_path="/data5/edges/data",
     f_low=50,
     f_high=190,
     run_num=2,
