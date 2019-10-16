@@ -352,7 +352,7 @@ def low_band_switch_correction_june_2016(
 
     """
     data, corrections, sw, xx1, xx2, xx3, f = _read_data_and_corrections(
-        root_folder, "Receiver01_2018_01_08_040_to_200_MHz/25C/S11/InternalSwitch/"
+        root_folder, "InternalSwitch"
     )
 
     flow = f_in.min()
