@@ -50,7 +50,17 @@ def temperature_thermistor(resistance, coeffs="oven_industries_TR136_170", kelvi
         return temp - 273.15
 
 
-def NWP_fit(f_norm, rl, ro, rs, Toe, Tse, To, Ts, wterms):
+def NWP_fit(
+    f_norm,
+    gamma_rec,
+    gamma_open,
+    gamma_short,
+    T_raw_open,
+    T_raw_short,
+    T_thermistor_open,
+    T_thermistor_short,
+    wterms,
+):
     """
     Fit noise-wave polynomial parameters.
 
@@ -59,13 +69,13 @@ def NWP_fit(f_norm, rl, ro, rs, Toe, Tse, To, Ts, wterms):
     f_norm : array_like
         Normalized frequencies (arbitrarily normalised, but standard assumption is
         that the centre is zero, and the scale is such that the range is (-1, 1))
-    rl
-    ro
-    rs
-    Toe
-    Tse
-    To
-    Ts
+    gamma_rec
+    gamma_open
+    gamma_short
+    T_raw_open
+    T_raw_short
+    T_thermistor_open
+    T_thermistor_short
     wterms : int
         The number of polynomial terms to use for each of the noise-wave functions.
 
@@ -75,21 +85,22 @@ def NWP_fit(f_norm, rl, ro, rs, Toe, Tse, To, Ts, wterms):
         The solutions to each of T_unc, T_cos and T_sin as functions of frequency.
     """
     # S11 quantities
-    Fo = np.sqrt(1 - np.abs(rl) ** 2) / (1 - ro * rl)
-    Fs = np.sqrt(1 - np.abs(rl) ** 2) / (1 - rs * rl)
-    PHIo = np.angle(ro * Fo)
-    PHIs = np.angle(rs * Fs)
-    G = 1 - np.abs(rl) ** 2
-    K1o = (1 - np.abs(ro) ** 2) * (np.abs(Fo) ** 2) / G
-    K1s = (1 - np.abs(rs) ** 2) * (np.abs(Fs) ** 2) / G
+    Fo = get_F(gamma_rec, gamma_open)
+    Fs = get_F(gamma_rec, gamma_short)
+    alpha_open = get_alpha(gamma_rec, gamma_open)
+    alpha_short = get_alpha(gamma_rec, gamma_short)
 
-    K2o = (np.abs(ro) ** 2) * (np.abs(Fo) ** 2) / G
-    K2s = (np.abs(rs) ** 2) * (np.abs(Fs) ** 2) / G
+    G = 1 - np.abs(gamma_rec) ** 2
+    K1o = (1 - np.abs(gamma_open) ** 2) * (np.abs(Fo) ** 2) / G
+    K1s = (1 - np.abs(gamma_short) ** 2) * (np.abs(Fs) ** 2) / G
 
-    K3o = (np.abs(ro) * np.abs(Fo) / G) * np.cos(PHIo)
-    K3s = (np.abs(rs) * np.abs(Fs) / G) * np.cos(PHIs)
-    K4o = (np.abs(ro) * np.abs(Fo) / G) * np.sin(PHIo)
-    K4s = (np.abs(rs) * np.abs(Fs) / G) * np.sin(PHIs)
+    K2o = (np.abs(gamma_open) ** 2) * (np.abs(Fo) ** 2) / G
+    K2s = (np.abs(gamma_short) ** 2) * (np.abs(Fs) ** 2) / G
+
+    K3o = (np.abs(gamma_open) * np.abs(Fo) / G) * np.cos(alpha_open)
+    K3s = (np.abs(gamma_short) * np.abs(Fs) / G) * np.cos(alpha_short)
+    K4o = (np.abs(gamma_open) * np.abs(Fo) / G) * np.sin(alpha_open)
+    K4s = (np.abs(gamma_short) * np.abs(Fs) / G) * np.sin(alpha_short)
 
     # Matrices A and b
     A = np.zeros((3 * wterms, 2 * len(f_norm)))
@@ -97,7 +108,9 @@ def NWP_fit(f_norm, rl, ro, rs, Toe, Tse, To, Ts, wterms):
         A[i, :] = np.append(K2o * f_norm ** i, K2s * f_norm ** i)
         A[i + 1 * wterms, :] = np.append(K3o * f_norm ** i, K3s * f_norm ** i)
         A[i + 2 * wterms, :] = np.append(K4o * f_norm ** i, K4s * f_norm ** i)
-    b = np.append((Toe - To * K1o), (Tse - Ts * K1s))
+    b = np.append(
+        (T_raw_open - T_thermistor_open * K1o), (T_raw_short - T_thermistor_short * K1s)
+    )
 
     # Transposing matrices so 'frequency' dimension is along columns
     M = A.T
@@ -105,19 +118,25 @@ def NWP_fit(f_norm, rl, ro, rs, Toe, Tse, To, Ts, wterms):
 
     # Solving system using 'short' QR decomposition (see R. Butt, Num. Anal. Using MATLAB)
     Q1, R1 = sp.linalg.qr(M, mode="economic")
-    param = sp.linalg.solve(R1, np.dot(Q1.T, ydata))
+    param = sp.linalg.solve(R1, np.dot(Q1.T, ydata)).flatten()
 
-    # Evaluating TU, TC, and TS
-    TU = np.zeros(len(f_norm))
-    TC = np.zeros(len(f_norm))
-    TS = np.zeros(len(f_norm))
-
-    for i in range(wterms):
-        TU = TU + param[i, 0] * f_norm ** i
-        TC = TC + param[i + 1 * wterms, 0] * f_norm ** i
-        TS = TS + param[i + 2 * wterms, 0] * f_norm ** i
+    TU = np.poly1d(param[:wterms][::-1])
+    TC = np.poly1d(param[wterms : 2 * wterms][::-1])
+    TS = np.poly1d(param[2 * wterms : 3 * wterms][::-1])
 
     return TU, TC, TS
+
+    # # Evaluating TU, TC, and TS
+    # TU = np.zeros(len(f_norm))
+    # TC = np.zeros(len(f_norm))
+    # TS = np.zeros(len(f_norm))
+    #
+    # for i in range(wterms):
+    #     TU = TU + param[i, 0] * f_norm ** i
+    #     TC = TC + param[i + 1 * wterms, 0] * f_norm ** i
+    #     TS = TS + param[i + 2 * wterms, 0] * f_norm ** i
+
+    # return TU, TC, TS
 
 
 def get_F(gamma_rec, gamma_ant):
@@ -180,22 +199,58 @@ def power_ratio(
     -------
     array_like : the quantity Q_P as a function of frequency.
     """
-    F = get_F(gamma_rec, gamma_ant)
-    alpha = get_alpha(gamma_rec, gamma_ant)
+    K = get_K(gamma_rec, gamma_ant)
 
-    terms = [
-        temp_ant * (1 - np.abs(gamma_ant) ** 2) * np.abs(F) ** 2,
-        temp_unc * np.abs(gamma_ant) ** 2 * np.abs(F) ** 2,
-        np.abs(gamma_ant) * np.abs(F) * temp_cos * np.cos(alpha),
-        np.abs(gamma_ant) * np.abs(F) * temp_sin * np.sin(alpha),
+    terms = [t * k for t, k in zip([temp_ant, temp_unc, temp_cos, temp_sin], K)] + [
         (offset - temp_load),
-        scale * temp_noise_source * (1 - np.abs(gamma_rec) ** 2),
+        scale * temp_noise_source,
     ]
 
     if return_terms:
         return terms
     else:
         return sum(terms[:5]) / terms[5]
+
+
+def get_K(gamma_rec, gamma_ant, F=None, alpha=None, G=None):
+    """
+    Determine the S11-dependent factors for each term in Eq. 7 (Monsalve 2017).
+
+    Parameters
+    ----------
+    gamma_rec : array_like
+        Receiver S11
+    gamma_ant : array_like
+        Antenna (or load) S11.
+    F : array_like, optional
+        The F factor (Eq. 3 of Monsalve 2017). Computed if not given.
+    alpha : array_like, optional
+        The alpha factor (Eq. 4 of Monsalve, 2017). Computed if not given.
+    G : array_like, optional
+        The transmission function, (1 - Gamma_rec^2). Computed if not given.
+
+    Returns
+    -------
+    K0, K1, K2, K3: array_like
+        Factors corresponding to T_ant, T_unc, T_cos, T_sin respectively.
+    """
+    # Get F and alpha for each load (Eqs. 3 and 4)
+    if F is None:
+        F = get_F(gamma_rec=gamma_rec, gamma_ant=gamma_ant)
+
+    if alpha is None:
+        alpha = get_alpha(gamma_rec=gamma_rec, gamma_ant=gamma_ant)
+
+    # The denominator of each term in Eq. 7
+    if G is None:
+        G = 1 - np.abs(gamma_rec) ** 2
+
+    K1 = (1 - np.abs(gamma_ant) ** 2) * np.abs(F) ** 2 / G
+    K2 = (np.abs(gamma_ant) ** 2) * (np.abs(F) ** 2) / G
+    K3 = (np.abs(gamma_ant) * np.abs(F) / G) * np.cos(alpha)
+    K4 = (np.abs(gamma_ant) * np.abs(F) / G) * np.sin(alpha)
+
+    return K1, K2, K3, K4
 
 
 def get_calibration_quantities_iterative(
@@ -246,10 +301,9 @@ def get_calibration_quantities_iterative(
 
     K1, K2, K3, K4 = {}, {}, {}, {}
     for k, gamma_a in gamma_ant.items():
-        K1[k] = (1 - np.abs(gamma_a) ** 2) * np.abs(F[k]) ** 2 / G
-        K2[k] = (np.abs(gamma_a) ** 2) * (np.abs(F[k]) ** 2) / G
-        K3[k] = (np.abs(gamma_a) * np.abs(F[k]) / G) * np.cos(alpha[k])
-        K4[k] = (np.abs(gamma_a) * np.abs(F[k]) / G) * np.sin(alpha[k])
+        K1[k], K2[k], K3[k], K4[k] = get_K(
+            gamma_rec, gamma_a, F=F[k], G=G, alpha=alpha[k]
+        )
 
     # Initializing arrays
     niter = 4
@@ -318,7 +372,7 @@ def get_calibration_quantities_iterative(
             v[i, :] = (T_raw[k] - Tamb_internal) * sca[i, :] + Tamb_internal - off[i, :]
 
         # Step 4: computing NWP
-        TU[i, :], TC[i, :], TS[i, :] = NWP_fit(
+        tu, tc, ts = NWP_fit(
             f_norm,
             gamma_rec,
             gamma_ant["open"],
@@ -330,69 +384,148 @@ def get_calibration_quantities_iterative(
             wterms,
         )
 
-    return sca[-1, :], off[-1, :], TU[-1, :], TC[-1, :], TS[-1, :]
+        TU[i] = tu(f_norm)
+        TC[i] = tc(f_norm)
+        TS[i] = ts(f_norm)
+
+    return (
+        np.poly1d(p_sca),
+        np.poly1d(p_off),
+        tu,
+        tc,
+        ts,
+    )  # sca[-1, :], off[-1, :], TU[-1, :],
+    # TC[-1, :], TS[-1, :]
+
+
+def get_linear_coefficients(gamma_ant, gamma_rec, sca, off, TU, TC, TS, T_load=300):
+    """
+    Use Monsalve (2017) Eq. 7 to determine a and b, such that T = aT* + b.
+
+    Parameters
+    ----------
+    gamma_ant : array_like
+        S11 of the antenna/load.
+    gamma_rec : array_like
+        S11 of the receiver.
+    sca,off : array_like
+        Scale and offset calibration parameters (i.e. C1 and C2). These are in the form
+        of arrays over frequency (i.e. it is not the polynomial coefficients).
+    TU, TC, TS : array_like
+        Noise-wave calibration parameters (uncorrelated, cosine, sine). These are in the
+        form of arrays over frequency (i.e. not the polynomial coefficients).
+    T_load : float, optional
+        The nominal temperature of the internal ambient load. This *must match* the
+        value used to derive the calibration parameters in the first place.
+    """
+    K = get_K(gamma_rec, gamma_ant)
+
+    # Noise wave contribution
+    noise_wave_terms = TU * K[1] + TC * K[2] + TS * K[3]
+
+    return sca / K[0], (T_load - off - noise_wave_terms - T_load * sca) / K[0]
 
 
 def calibrated_antenna_temperature(
-    Tde, rd, rl, sca, off, TU, TC, TS, Tamb_internal=300
+    temp_raw, gamma_ant, gamma_rec, sca, off, TU, TC, TS, T_load=300
 ):
     """
-    Function for equation (7)
-    rd - refelection coefficient of the load
-    rl - reflection coefficient of the receiver
-    Td - temperature of the device under test
-    TU ,Tc,Ts - noise wave parameters
-    Tamb_internal - noise temperature of the load
+    Use Monsalve (2017) Eq. 7 to determine calibrated (or "true") temperature
+    from an uncalibrated temperature.
+
+    Parameters
+    ----------
+    temp_raw : array_like
+        The raw (uncalibrated) temperature spectrum, T*.
+    gamma_ant : array_like
+        S11 of the antenna/load.
+    gamma_rec : array_like
+        S11 of the receiver.
+    sca,off : array_like
+        Scale and offset calibration parameters (i.e. C1 and C2). These are in the form
+        of arrays over frequency (i.e. it is not the polynomial coefficients).
+    TU, TC, TS : array_like
+        Noise-wave calibration parameters (uncorrelated, cosine, sine). These are in the
+        form of arrays over frequency (i.e. not the polynomial coefficients).
+    T_load : float, optional
+        The nominal temperature of the internal ambient load. This *must match* the
+        value used to derive the calibration parameters in the first place.
     """
+    a, b = get_linear_coefficients(gamma_ant, gamma_rec, sca, off, TU, TC, TS, T_load)
+    print(gamma_ant[0], gamma_rec[0], sca[0], off[0], TU[0], TC[0], TS[0])
 
-    # S11 quantities
-    Fd = np.sqrt(1 - np.abs(rl) ** 2) / (1 - rd * rl)
-    PHId = np.angle(rd * Fd)
-    G = 1 - np.abs(rl) ** 2
-    K1d = (1 - np.abs(rd) ** 2) * np.abs(Fd) ** 2 / G
-    K2d = (np.abs(rd) ** 2) * (np.abs(Fd) ** 2) / G
-    K3d = (np.abs(rd) * np.abs(Fd) / G) * np.cos(PHId)
-    K4d = (np.abs(rd) * np.abs(Fd) / G) * np.sin(PHId)
-
-    # Applying scale and offset to raw spectrum
-    Tde_corrected = (Tde - Tamb_internal) * sca + Tamb_internal - off
-
-    # Noise wave contribution
-    NWPd = TU * K2d + TC * K3d + TS * K4d
-
-    # Antenna temperature
-    Td = (Tde_corrected - NWPd) / K1d
-
-    return Td
+    return temp_raw * a + b
+    # K = get_K(gamma_rec, gamma_ant)
+    #
+    # # # S11 quantities
+    # # Fd = np.sqrt(1 - np.abs(gamma_rec) ** 2) / (1 - gamma_ant * gamma_rec)
+    # # PHId = np.angle(gamma_ant * Fd)
+    # # G = 1 - np.abs(gamma_rec) ** 2
+    # # K1d = (1 - np.abs(gamma_ant) ** 2) * np.abs(Fd) ** 2 / G
+    # # K2d = (np.abs(gamma_ant) ** 2) * (np.abs(Fd) ** 2) / G
+    # # K3d = (np.abs(gamma_ant) * np.abs(Fd) / G) * np.cos(PHId)
+    # # K4d = (np.abs(gamma_ant) * np.abs(Fd) / G) * np.sin(PHId)
+    #
+    # # Applying scale and offset to raw spectrum
+    # # Gives the LHS of Eq. 7
+    # temp_corrected = (temp_raw - T_load) * sca + T_load - off
+    #
+    # # Noise wave contribution
+    # noise_wave_terms = TU * K[1] + TC * K[2] + TS * K[3]
+    #
+    # print(sca/K[0], (T_load-off - noise_wave_terms - T_load*sca)/K[0])
+    #
+    # # Antenna temperature
+    # return (temp_corrected - noise_wave_terms) / K[0]
 
 
 def uncalibrated_antenna_temperature(
-    Td, rd, rl, sca, off, TU, TC, TS, Tamb_internal=300
+    temp, gamma_ant, gamma_rec, sca, off, TU, TC, TS, T_load=300
 ):
     """
-    Function for equation (7)
-    rd - refelection coefficient of the load
-    rl - reflection coefficient of the receiver
-    Td - temperature of the device under test
-    TU ,Tc,Ts - noise wave parameters
-    Tamb_internal - noise temperature of the load
+    Use Monsalve (2017) Eq. 7 to determine calibrated (or "true") temperature
+    from an uncalibrated temperature.
+
+    Parameters
+    ----------
+    temp : array_like
+        The true (or calibrated) temperature spectrum.
+    gamma_ant : array_like
+        S11 of the antenna/load.
+    gamma_rec : array_like
+        S11 of the receiver.
+    sca,off : array_like
+        Scale and offset calibration parameters (i.e. C1 and C2). These are in the form
+        of arrays over frequency (i.e. it is not the polynomial coefficients).
+    TU, TC, TS : array_like
+        Noise-wave calibration parameters (uncorrelated, cosine, sine). These are in the
+        form of arrays over frequency (i.e. not the polynomial coefficients).
+    T_load : float, optional
+        The nominal temperature of the internal ambient load. This *must match* the
+        value used to derive the calibration parameters in the first place.
     """
-    # S11 quantities
-    Fd = np.sqrt(1 - np.abs(rl) ** 2) / (1 - rd * rl)
-    PHId = np.angle(rd * Fd)
-    G = 1 - np.abs(rl) ** 2
-    K1d = (1 - np.abs(rd) ** 2) * np.abs(Fd) ** 2 / G
-    K2d = (np.abs(rd) ** 2) * (np.abs(Fd) ** 2) / G
-    K3d = (np.abs(rd) * np.abs(Fd) / G) * np.cos(PHId)
-    K4d = (np.abs(rd) * np.abs(Fd) / G) * np.sin(PHId)
+    a, b = get_linear_coefficients(gamma_ant, gamma_rec, sca, off, TU, TC, TS, T_load)
+    print(gamma_ant[0], gamma_rec[0], sca[0], off[0], TU[0], TC[0], TS[0])
+    print(temp, a, b)
+    return (temp - b) / a
 
-    # Noise wave contribution
-    NWPd = TU * K2d + TC * K3d + TS * K4d
-
-    # Scaled and offset spectrum
-    Tde_corrected = Td * K1d + NWPd
-
-    # Removing scale and offset
-    Tde = Tamb_internal + (Tde_corrected - Tamb_internal + off) / sca
-
-    return Tde
+    # K = get_K(gamma_rec, gamma_ant)
+    #
+    # # # S11 quantities
+    # # Fd = np.sqrt(1 - np.abs(rl) ** 2) / (1 - rd * rl)
+    # # PHId = np.angle(rd * Fd)
+    # # G = 1 - np.abs(rl) ** 2
+    # # K1d = (1 - np.abs(rd) ** 2) * np.abs(Fd) ** 2 / G
+    # # K2d = (np.abs(rd) ** 2) * (np.abs(Fd) ** 2) / G
+    # # K3d = (np.abs(rd) * np.abs(Fd) / G) * np.cos(PHId)
+    # # K4d = (np.abs(rd) * np.abs(Fd) / G) * np.sin(PHId)
+    #
+    # # Noise wave contribution
+    # noise_wave_terms = TU * K[1] + TC * K[2] + TS * K[3]
+    #
+    # # Scaled and offset spectrum
+    # # This is the full RHS of Eq. 7
+    # Tde_corrected = temp * K[0] + noise_wave_terms
+    #
+    # # Removing scale and offset
+    # return T_load + (Tde_corrected - T_load + off) / sca
