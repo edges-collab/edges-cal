@@ -147,7 +147,7 @@ class SwitchCorrection:
         self,
         load_name,
         base_path,
-        correction_path,
+        correction_path=None,
         f_low=None,
         f_high=None,
         run_num=1,
@@ -155,7 +155,7 @@ class SwitchCorrection:
     ):
         self.load_name = load_name
         self.base_path = base_path
-        self.correction_path = correction_path
+        self.correction_path = correction_path or base_path
         self.run_num = run_num
         self.resistance = resistance
 
@@ -298,7 +298,7 @@ class LNA(SwitchCorrection):
     def __init__(
         self,
         base_path,
-        correction_path,
+        correction_path=None,
         f_low=None,
         f_high=None,
         run_num=1,
