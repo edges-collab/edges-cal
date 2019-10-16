@@ -7,6 +7,7 @@ Edited by: David Lewis, Steven Murray
 """
 import glob
 import os
+import warnings
 from functools import lru_cache
 
 import h5py
@@ -376,12 +377,14 @@ class LoadSpectrum:
         run_num=1,
         percent=5,
         resistance=50.166,
+        s11_model_nterms=None,
     ):
         self.load_name = load_name
         self.path = path
         self.path_s11 = os.path.join(path, "S11", self._kinds[self.load_name])
         self.path_res = os.path.join(path, "Resistance")
         self.path_spec = os.path.join(path, "Spectra", "mat_files")
+        self.s11_model_nterms = s11_model_nterms
 
         if switch_correction is None:
             self.switch_correction = SwitchCorrection(
@@ -405,27 +408,32 @@ class LoadSpectrum:
         Normalised uncalibrated temperature,
         T* = T_noise * (P_source - P_load)/(P_noise - P_load) + T_load
         """
-        spec_files = glob.glob(
-            os.path.join(self.path_spec, self._file_prefixes[self.load_name] + "*.mat")
-        )
-        if not spec_files:
-            raise FileNotFoundError(
-                "No .mat files found for {} in {}".format(
-                    self.load_name, self.path_spec
-                )
-            )
-        return self._read_power(spec_files)[self.freq.mask]
+        return np.mean(self._read_power(), axis=1)[self.freq.mask]
 
-    def _read_power(self, spectrum_files):
+    def _read_power(self, spectrum_files=None):
         """
         Read a MAT file to get the corrected raw temperature, i.e.
 
-        T* = (P_source - P_load)/(P_noise - P_load)*T_noise + T_load
+        T* = <(P_source - P_load)/(P_noise - P_load)>*T_noise + T_load
 
         Returns
         -------
         ndarray : T* as a function of frequency.
         """
+        if spectrum_files is None:
+            spectrum_files = glob.glob(
+                os.path.join(
+                    self.path_spec, self._file_prefixes[self.load_name] + "*.mat"
+                )
+            )
+
+        if not spectrum_files:
+            raise FileNotFoundError(
+                "No .mat files found for {} in {}".format(
+                    self.load_name, self.path_spec
+                )
+            )
+
         for i, fl in enumerate(spectrum_files):
             tai = io.load_level1_MAT(fl)
             if i == 0:
@@ -434,8 +442,7 @@ class LoadSpectrum:
                 ta = np.concatenate((ta, tai), axis=1)
 
         index_start_spectra = int((self.percent / 100) * len(ta[0, :]))
-        ta_sel = ta[:, index_start_spectra:]
-        return np.mean(ta_sel, axis=1)
+        return ta[:, index_start_spectra:]
 
     def _read_thermistor_temp(self, resistance_file):
         """
@@ -470,6 +477,15 @@ class LoadSpectrum:
 
         # Can't just use mask, because the thermistor spectrum has different resolution.
         return temp[int((self.percent / 100) * len(temp)) :]
+
+    @cached_property
+    def s11_model(self):
+        """
+        The S11 model of the load evaluated at `freq.freq`.
+        """
+        return self.switch_correction.get_s11_correction_model(
+            nterms=self.s11_model_nterms
+        )(self.freq.freq)
 
     @cached_property
     def temp_ave(self):
@@ -645,8 +661,7 @@ class CalibrationObservation:
 
     @cached_property
     def hot_load_corrected_ave_temp(self):
-        hot_load_correction = self.hot_load.switch_correction.get_s11_correction_model()
-        hot_load_correction = hot_load_correction(self.freq.freq)
+        hot_load_correction = self.hot_load.s11_model
 
         rht = rc.gamma_de_embed(
             self.hot_load_correction.s11_model(self.freq.freq),
@@ -677,15 +692,10 @@ class CalibrationObservation:
 
     @cached_property
     def s11_correction_models(self):
-        return {
-            k: getattr(self, k).switch_correction.get_s11_correction_model()(
-                self.freq.freq
-            )
-            for k in self._sources
-        }
+        return {k: getattr(self, k).s11_model for k in self._sources}
 
     @cached_property
-    def calibration_coefficients(self):
+    def _calibration_coefficients(self):
         """
         The calibration polynomials, C1, C2, Tunc, Tcos, Tsin, evaluated at `freq.freq`.
         """
@@ -707,7 +717,130 @@ class CalibrationObservation:
             cterms=self.cterms,
             wterms=self.wterms,
         )
-        return scale, off, Tu, TC, TS
+        return (scale, off, Tu, TC, TS)
+
+    @cached_property
+    def C1_poly(self):
+        """`np.poly1d` object describing the Scaling calibration coefficient C1.
+
+        The polynomial is defined to act on normalized frequencies such that `freq.min`
+        and `freq.max` map to -1 and 1 respectively. Use :func:`~C1` as a direct function
+        on frequency.
+        """
+        return self._calibration_coefficients[0]
+
+    @cached_property
+    def C2_poly(self):
+        """`np.poly1d` object describing the offset calibration coefficient C2.
+
+        The polynomial is defined to act on normalized frequencies such that `freq.min`
+        and `freq.max` map to -1 and 1 respectively. Use :func:`~C2` as a direct function
+        on frequency.
+        """
+        return self._calibration_coefficients[1]
+
+    @cached_property
+    def Tunc_poly(self):
+        """`np.poly1d` object describing the uncorrelated noise-wave parameter, Tunc.
+
+        The polynomial is defined to act on normalized frequencies such that `freq.min`
+        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tunc` as a direct function
+        on frequency.
+        """
+        return self._calibration_coefficients[2]
+
+    @cached_property
+    def Tcos_poly(self):
+        """`np.poly1d` object describing the cosine noise-wave parameter, Tcos.
+
+        The polynomial is defined to act on normalized frequencies such that `freq.min`
+        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tcos` as a direct function
+        on frequency.
+        """
+        return self._calibration_coefficients[3]
+
+    @cached_property
+    def Tsin_poly(self):
+        """`np.poly1d` object describing the sine noise-wave parameter, Tsin.
+
+        The polynomial is defined to act on normalized frequencies such that `freq.min`
+        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tsin` as a direct function
+        on frequency.
+        """
+        return self._calibration_coefficients[4]
+
+    def C1(self, f=None):
+        """
+        Scaling calibration parameter.
+        """
+        if f is None:
+            fnorm = self.freq.freq_recentred
+        else:
+            fnorm = self.freq.normalize(f)
+        return self.C1_poly(fnorm)
+
+    def C2(self, f=None):
+        """
+        Offset calibration parameter.
+        """
+        if f is None:
+            fnorm = self.freq.freq_recentred
+        else:
+            fnorm = self.freq.normalize(f)
+        return self.C2_poly(fnorm)
+
+    def Tunc(self, f=None):
+        """
+        Uncorrelated noise-wave parameter
+        """
+        if f is None:
+            fnorm = self.freq.freq_recentred
+        else:
+            fnorm = self.freq.normalize(f)
+        return self.Tunc_poly(fnorm)
+
+    def Tcos(self, f=None):
+        """
+        Cosine noise-wave parameter
+        """
+        if f is None:
+            fnorm = self.freq.freq_recentred
+        else:
+            fnorm = self.freq.normalize(f)
+        return self.Tcos_poly(fnorm)
+
+    def Tsin(self, f=None):
+        """
+        Sine noise-wave parameter
+        """
+        if f is None:
+            fnorm = self.freq.freq_recentred
+        else:
+            fnorm = self.freq.normalize(f)
+        return self.Tsin_poly(fnorm)
+
+    def get_linear_coefficients(self, s11):
+        """
+        Calibration coefficients a,b such that T = aT* + b (derived from Eq. 7)
+        """
+        if type(s11) == str:
+            try:
+                s11 = getattr(self, s11).s11_model
+            except AttributeError:
+                raise AttributeError(
+                    "s11 must be a LoadSpectrum or a string (one of {ambient,hot_load,open,short}"
+                )
+
+        return rcf.get_linear_coefficients(
+            s11,
+            self.lna_s11.get_s11_correction_model()(self.freq.freq),
+            self.C1(self.freq.freq),
+            self.C2(self.freq.freq),
+            self.Tunc(self.freq.freq),
+            self.Tcos(self.freq.freq),
+            self.Tsin(self.freq.freq),
+            T_load=300,
+        )
 
     def calibrate(self, load):
         """
@@ -722,30 +855,12 @@ class CalibrationObservation:
         -------
         array : calibrated antenna temperature in K, len(f).
         """
-        scale, off, Tu, TC, TS = self.calibration_coefficients
+        a, b = self.get_linear_coefficients(load.s11_model)
+        return a * load.averaged_spectrum + b
 
-        if type(load) == str:
-            try:
-                load = getattr(self, load)
-            except AttributeError:
-                raise AttributeError(
-                    "load must be a LoadSpectrum or a string (one of {ambient,hot_load,open,short}"
-                )
-        return rcf.calibrated_antenna_temperature(
-            load.averaged_spectrum,
-            load.switch_correction.get_s11_correction_model()(self.freq.freq),
-            self.lna_s11.get_s11_correction_model()(self.freq.freq),
-            scale,
-            off,
-            Tu,
-            TC,
-            TS,
-            Tamb_internal=300,
-        )
-
-    def decalibrate(self, temp, s11):
+    def decalibrate(self, temp, s11, freq=None):
         """
-        Decalibrate a temperature spectrum, yielding Q_p
+        Decalibrate a temperature spectrum, yielding uncalibrated T*.
 
         Parameters
         ----------
@@ -754,26 +869,27 @@ class CalibrationObservation:
 
         Returns
         -------
-        array_like : Q_p, the normalised raw power.
+        array_like : T*, the normalised uncalibrated temperature.
         """
-        scale, off, Tu, TC, TS = self.calibration_coefficients
+        if freq is None:
+            freq = self.freq.freq
 
-        Q_p = rcf.power_ratio(
-            freqs=self.freq.freq,
-            temp_ant=temp,
-            gamma_ant=s11,
-            gamma_rec=self.lna_s11.get_s11_correction_model()(self.freq.freq),
-            scale=scale,
-            offset=off,
-            temp_unc=Tu,
-            temp_cos=TC,
-            temp_sin=TS,
-            temp_noise_source=400,
-            temp_load=300,
-            ref_freq=75.0,
-        )
+        if freq.min() < self.freq.freq.min():
+            warnings.warn(
+                "The minimum frequency is outside the calibrated range ({} - {} MHz)".format(
+                    self.freq.freq.min(), self.freq.freq.max()
+                )
+            )
 
-        return 400 * Q_p + 300
+        if freq.min() > self.freq.freq.max():
+            warnings.warn(
+                "The maximum frequency is outside the calibrated range ({} - {} MHz)".format(
+                    self.freq.freq.min(), self.freq.freq.max()
+                )
+            )
+
+        a, b = self.get_linear_coefficients(s11)
+        return (temp - b) / a
 
     def plot_calibrated_temp(
         self, load, bins=64, fig=None, ax=None, xlabel=True, ylabel=True
@@ -846,7 +962,6 @@ class CalibrationObservation:
         return fig
 
     def write_coefficients(self, direc="."):
-        scale, off, Tu, TC, TS = self.calibration_coefficients
         np.savetxt(
             os.path.join(
                 direc,
@@ -854,7 +969,14 @@ class CalibrationObservation:
                     self.freq.freq.min(), self.freq.freq.max(), self.cterms, self.wterms
                 ),
             ),
-            [self.freq.freq, scale, off, Tu, TC, TS],
+            [
+                self.freq.freq,
+                self.C1(),
+                self.C1(),
+                self.Tunc(),
+                self.Tcos(),
+                self.Tsin(),
+            ],
         )
 
     def plot_coefficients(self, fig=None, ax=None):
@@ -870,8 +992,10 @@ class CalibrationObservation:
             r"$T_{\rm cos}$ [K]",
             r"$T_{\rm sin}$ [K]",
         ]
-        for i, (soln, label) in enumerate(zip(self.calibration_coefficients, labels)):
-            ax[i].plot(self.freq.freq, soln)
+        for i, (kind, label) in enumerate(
+            zip(["C1", "C2", "Tunc", "Tcos", "Tsin"], labels)
+        ):
+            ax[i].plot(self.freq.freq, getattr(self, kind)())
             ax[i].set_ylabel(label, fontsize=13)
             ax[i].grid()
             plt.ticklabel_format(useOffset=False)
@@ -896,9 +1020,7 @@ class CalibrationObservation:
             for part, fnc in zip(
                 ["mag", "ang"], [np.abs, lambda x: np.unwrap(np.angle(x))]
             ):
-                out = fnc(
-                    src.switch_correction.get_s11_correction_model()(self.freq.freq)
-                )
+                out = fnc(src.s11_model())
                 key = "fit_s11_{}_{}".format(source, part)
                 np.savetxt(os.path.join(direc, key + ".txt"), out)
 
