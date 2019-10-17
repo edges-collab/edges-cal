@@ -43,8 +43,16 @@ class FrequencyRange:
         self._f_high = f_high or f.max()
         self._f_low = f_low or f.min()
 
-        if f_low >= f_high:
+        if self._f_low >= self._f_high:
             raise ValueError("Cannot create frequency range: f_low >= f_high")
+
+    @cached_property
+    def min(self):
+        return self.freq.min()
+
+    @cached_property
+    def max(self):
+        return self.freq.max()
 
     @cached_property
     def mask(self):
@@ -58,7 +66,7 @@ class FrequencyRange:
 
     @cached_property
     def range(self):
-        return self.freq.max() - self.freq.min()
+        return self.max - self.min
 
     @cached_property
     def center(self):
