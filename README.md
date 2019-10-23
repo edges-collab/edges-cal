@@ -15,60 +15,62 @@ Preferably, do this in an isolated python/conda environment.
 
 ## Usage
 
-### Imports and Reading Data
-Most of the top-level functionality exists in the `cal_coefficients` module. To import:
+### CLI
+There is a very basic CLI set up for running a full calibration pipeline over a set of
+data. To use it, do
 
 ```
-from edges_cal import cal_coefficients as cc
+$ edges-cal run --help
 ```
 
-To begin, we create an object that will encapsulate the LoadSpectrum we are creating.
-This step defines the data locations for input and output, low and high frequencies,
-the percentage of initial time ignored, and the run number.
+Multiple options exist, but the only one required is `PATH`, which should point to
+a directory in which exists `S11`, `Resistance` and `Spectra` folders. Thus:
 
 ```
-LoadSpectrum = cc.LoadSpectrum(dataOut, dataIn, freqlow, freqhigh, percent, runNum)
+$ edges-cal run .
 ```
 
-We can then make an initial reading of our LoadSpectrum. It will go through the the four
-calibration loads (ambient, hot, open, short) as well as the antenna simulator.
-It will try to find these files by default, but the user can pass in a list of `.mat`
-and `.txt` files to use (still with matching load names) instead of the ones in the
-data folder:
+will work if you are in such a directory.
+
+### Using the Library
+To import:
 
 ```
-cc.spec_read(LoadSpectrum, specFiles, resFiles)
+import edges_cal as ec
 ```
 
-### Initial plotting
+Most of the functionality is highly object-oriented, and objects exist for each kind
+of data/measurement. However, there is a container object for all of these, which
+manages them. Thus you will typically use
 
-Generate plots of the initials uncalibrated data read in by the previous step:
 ```
-cc.spec_plot(LoadSpectrum)
-```
-
-### S11 Modeling
-
-This will model the S11 after reading in the receiver parameters measured previously
-(`s11_path`). Resistances for the male and female standards can be specified, if not
-then default values will be used:
-```
-cc.s11_model(LoadSpectrum, s11_path, resistance_f, resistance_m)
+>>> calobs = ec.CalibrationObservation(path="path/to/top/level")
 ```
 
-### S11 Calibration
+Several other options exist, and they have documentation that you can access interactively
+by using
 
-Use the S11 models to calculate the calibration coefficients for the Spectra.
-Specify the number of polynomial terms in both parts, if not specified then
-`cterms = 5` and `wterms = 7`:
 ```
-cc.s11_cal(LoadSpectrum, cterms, wterms)
+>>> help(ec.CalibrationObservation)
 ```
 
-### Final plotting
+The most relevant attributes are the (lazily-evaluated) calibration coefficient models:
 
-Generate the calibrated plots for the LoadSpectrum, displaying the S11 and calibrated
-temperatures as well as the coefficients.
 ```
-cc.s11_plot(LoadSpectrum)
+>>> plt.plot(calobs.freq.freq, calobs.C1())
 ```
+
+the various plotting routines, eg.
+
+```
+>>> calobs.plot_coefficients()
+```
+
+and the calibrate/decalibrate methods:
+
+```
+>>> calibrated_temp = calobs.calibrate("ambient")
+```
+
+Note that this final method can be applied to any `LoadSpectrum` -- i.e. you can pass
+in field observations, or an antenna simulator.

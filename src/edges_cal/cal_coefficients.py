@@ -4,7 +4,10 @@ Created on Thu June 20 2019
 Original author: Nivedita Mahesh
 Edited by: David Lewis, Steven Murray
 
+This is the main module of `cal_coefficients`. It contains wrappers around lower-level
+functions in other modules.
 """
+
 import glob
 import os
 import warnings
@@ -34,7 +37,7 @@ class FrequencyRange:
         An array of frequencies defining a given spectrum.
     f_low : float, optional
         A minimum frequency to keep in the array. Default is min(f).
-    f_higih : float, optional
+    f_high : float, optional
         A minimum frequency to keep in the array. Default is min(f).
     """
 
@@ -48,38 +51,45 @@ class FrequencyRange:
 
     @cached_property
     def min(self):
+        """Minimum frequency in the array"""
         return self.freq.min()
 
     @cached_property
     def max(self):
+        """Maximum frequency in the array"""
         return self.freq.max()
 
     @cached_property
     def mask(self):
+        """Mask used to take input frequencies to output frequencies"""
         return np.logical_and(
             self.freq_full >= self._f_low, self.freq_full <= self._f_high
         )
 
     @cached_property
     def freq(self):
+        """The frequency array"""
         return self.freq_full[self.mask]
 
     @cached_property
     def range(self):
+        """Total range (float) of the frequencies"""
         return self.max - self.min
 
     @cached_property
     def center(self):
+        """The center of the frequency array"""
         return self.freq.min() + self.range / 2.0
 
     @cached_property
     def freq_recentred(self):
+        """The frequency array re-centred so that it extends from -1 to 1"""
         return self.normalize(self.freq)
 
     def normalize(self, f):
         """
-        Normalise a set of frequencies such that -1 aligns with f_low and
-        +1 aligns with f_high.
+        Normalise a set of frequencies such that -1 aligns with `min` and
+        +1 aligns with `max`.
 
         Parameters
         ----------
@@ -103,7 +113,8 @@ class EdgesFrequencyRange(FrequencyRange):
         f = self.get_edges_freqs(nchannels, max_freq)
         super().__init__(f, f_low, f_high)
 
-    def get_edges_freqs(self, nchannels=16384 * 2, max_freq=200.0):
+    @staticmethod
+    def get_edges_freqs(nchannels=16384 * 2, max_freq=200.0):
         """
         Return the raw EDGES frequency array, in MHz.
 
@@ -126,6 +137,26 @@ class EdgesFrequencyRange(FrequencyRange):
 
 
 class VNA:
+    """
+    An object representing the measurements of a VNA.
+
+    The measurements are read in via a .s1p file
+
+    Parameters
+    ----------
+    fname : str
+        The path to a valid .s1p file containing VNA measurements.
+    f_low : float, optional
+        The minimum frequency to keep.
+    f_high : float, optional
+        The maximum frequency to keep.
+    run_num : int, optional
+        An integer identifier for the measurement. In general, it is assumed that it forms
+        the last two digits of the filename before its extension.
+    switchval : int, optional
+        The standard value of the switch for the component.
+    """
+
     def __init__(self, fname, f_low=None, f_high=None, run_num=None, switchval=None):
         self.fname = fname
         if run_num is None:
@@ -140,10 +171,12 @@ class VNA:
         self._switchval = switchval
 
     def _read(self):
+        """Read the s1p file"""
         return rc.s1p_read(self.fname)
 
     @cached_property
     def switchval(self):
+        """The standard value of the switch for the component"""
         if self._switchval is not None:
             return self._switchval * np.ones_like(self.freq.freq)
         else:
@@ -161,6 +194,29 @@ class SwitchCorrection:
         run_num=1,
         resistance=50.166,
     ):
+        """
+        A class representing relevant switch corrections for a load.
+
+        Parameters
+        ----------
+        load_name : str
+            The name of the load. Affects default values for the S11 correction modeling.
+        base_path : str
+            The path to the directory in which the s1p files reside for the load.
+            Three files must exist there -- open, short and match.
+        correction_path : str, optional
+            The path to S11 switch correction measurements. If not given, defaults to
+            `base_path`.
+        f_low : float, optional
+            Minimum frequency to use. Default is all frequencies.
+        f_high : float, optional
+            Maximum frequency to use. Default is all frequencies.
+        run_num : int, optional
+            If multiple VNA measurements are present, they should be in files named
+            eg. Open01.s1p, Open02.s1p.... `run_num` specifies which file to read in.
+        resistance : float, optional
+            The resistance of the switch (in Ohms).
+        """
         self.load_name = load_name
         self.base_path = base_path
         self.correction_path = correction_path or base_path
@@ -212,7 +268,7 @@ class SwitchCorrection:
 
     @cached_property
     def switch_corrections(self):
-        # Correction at switch
+        """The corrections at the switch"""
         return rc.de_embed(
             self.open.switchval,
             self.short.switchval,
@@ -226,7 +282,7 @@ class SwitchCorrection:
     @cached_property
     def s11_correction(self):
         """
-        Determine the correction required for the S11 due to the switch.
+        The correction required for the S11 due to the switch.
         """
         return s11.low_band_switch_correction_june_2016(
             self.correction_path,
@@ -237,6 +293,23 @@ class SwitchCorrection:
 
     @lru_cache()
     def get_s11_correction_model(self, nterms=None):
+        """
+        Generate a callable model for the S11 correction.
+
+        This should closely match :method:`s11_correction`.
+
+        Parameters
+        ----------
+        nterms : int, optional
+            Number of terms used in the fourier-based model. Not necessary if `load_name`
+            is specified in the class.
+
+        Returns
+        -------
+        callable :
+            A function of one argument, f, which should be a frequency in the same units
+            as `self.freq.freq`.
+        """
         kind_nterms = {
             "ambient": 37,
             "hot_load": 37,
@@ -247,7 +320,14 @@ class SwitchCorrection:
         }
         nterms = nterms or kind_nterms[self.load_name]
 
-        def getmodel(mag):
+        if not isinstance(nterms, int):
+            raise ValueError(
+                "nterms must be an integer or the load_name must be in {}".format(
+                    kind_nterms.keys()
+                )
+            )
+
+        def get_model(mag):
             # Returns a callable function that will evaluate a model onto a set of
             # un-normalised frequencies.
             if mag:
@@ -260,8 +340,8 @@ class SwitchCorrection:
             )[0]
             return lambda x: mdl.model_evaluate("fourier", fit, x)
 
-        mag = getmodel(True)
-        ang = getmodel(False)
+        mag = get_model(True)
+        ang = get_model(False)
 
         def model(f):
             ff = self.freq.normalize(f)
@@ -269,7 +349,22 @@ class SwitchCorrection:
 
         return model
 
-    def plot_residuals(self):
+    def plot_residuals(self, nterms=None):
+        """
+        Make a plot of the residuals of the S11 model (gotten via
+        :func:`get_s11_correction_model`) and the correction data.
+
+        Parameters
+        ----------
+        nterms : int, optional
+            Number of terms used in the fourier-based model. Not necessary if `load_name`
+            is specified in the class.
+
+        Returns
+        -------
+        fig :
+            Matplotlib Figure handle.
+        """
         fig, ax = plt.subplots(
             4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="w"
         )
@@ -303,23 +398,17 @@ class SwitchCorrection:
 
 
 class LNA(SwitchCorrection):
-    def __init__(
-        self,
-        base_path,
-        correction_path=None,
-        f_low=None,
-        f_high=None,
-        run_num=1,
-        resistance=50.009,
-    ):
+    def __init__(self, base_path, resistance=50.009, **kwargs):
+        """
+        A special case of :class:`SwitchCorrection` for the LNA.
+        """
         super().__init__(
             load_name="lna",
-            base_path=os.path.join(base_path, "ReceiverReading{:02d}".format(run_num)),
-            correction_path=correction_path,
-            f_low=f_low,
-            f_high=f_high,
-            run_num=run_num,
+            base_path=os.path.join(
+                base_path, "ReceiverReading{:02d}".format(kwargs.get("run_num", 1))
+            ),
             resistance=resistance,
+            **kwargs,
         )
 
     @cached_property
@@ -348,14 +437,7 @@ class LNA(SwitchCorrection):
 
     @cached_property
     def s11_correction(self):
-        """
-        Determine the correction required for the S11 due to the switch.
-        """
         return self.switch_corrections
-
-    @lru_cache()
-    def get_s11_correction_model(self, nterms=None):
-        return super().get_s11_correction_model(nterms=nterms)
 
 
 class LoadSpectrum:
@@ -387,6 +469,35 @@ class LoadSpectrum:
         resistance=50.166,
         s11_model_nterms=None,
     ):
+        """
+        A class representing a measured spectrum from some Load.
+
+        Parameters
+        ----------
+        load_name : str
+            Name of the load
+        path : str
+            Path to the directory containing all relevant measurements. It is assumed
+            that in this directory is an `S11`, `Resistance` and `Spectra` directory.
+        switch_correction : :class:`SwitchCorrection`, optional
+            A `SwitchCorrection` for this particular load. If not given, will be
+            constructed automatically.
+        correction_path : str, optional
+            A path to switch corrections, if different from base path.
+        f_low : float, optional
+            Minimum frequency to keep.
+        f_high : float, optional
+            Maximum frequency to keep.
+        run_num : int, optional
+            Identifier for the measurement files to read.
+        percent : float, optional
+            Must be between 0 and 100. Number of time-samples in a file to reject
+            from the start of the file.
+        resistance : float, optional
+            Resistance of the switch.
+        s11_model_nterms : int, optional
+            Number of terms to use in modelling the S11.
+        """
         self.load_name = load_name
         self.path = path
         self.path_s11 = os.path.join(path, "S11", self._kinds[self.load_name])
@@ -416,9 +527,9 @@ class LoadSpectrum:
         Normalised uncalibrated temperature,
         T* = T_noise * (P_source - P_load)/(P_noise - P_load) + T_load
         """
-        return np.mean(self._read_power(), axis=1)[self.freq.mask]
+        return np.mean(self._read_spectrum(), axis=1)[self.freq.mask]
 
-    def _read_power(self, spectrum_files=None):
+    def _read_spectrum(self, spectrum_files=None):
         """
         Read a MAT file to get the corrected raw temperature, i.e.
 
@@ -501,6 +612,15 @@ class LoadSpectrum:
         return np.mean(self.thermistor_temp)
 
     def write(self, direc):
+        """
+        Write a HDF5 file containing the contents of the LoadSpectrum.
+
+        Parameters
+        ----------
+        direc : str
+            Directory into which to save the file. Filename will be
+            <load_name>_averaged_spectrum.h5
+        """
         with h5py.File(
             os.path.join(direc, self.load_name + "_averaged_spectrum.h5")
         ) as fl:
@@ -512,8 +632,28 @@ class LoadSpectrum:
     def plot(
         self, thermistor=False, fig=None, ax=None, xlabel=True, ylabel=True, **kwargs
     ):
+        """
+        Make a plot of the averaged uncalibrated spectrum associated with this load.
+
+        Parameters
+        ----------
+        thermistor : bool, optional
+            Whether to plot the thermistor temperature on the same axis.
+        fig : Figure, optional
+            Optionally, pass a matplotlib figure handle which will be used to plot.
+        ax : Axis, optional
+            Optional, pass a matplotlib Axis handle which will be added to.
+        xlabel : bool, optional
+            Whether to make an x-axis label.
+        ylabel : bool, optional
+            Whether to plot the y-axis label
+        kwargs :
+            All other arguments are passed to `plt.subplots()`.
+        """
         if fig is None:
-            fig, ax = plt.subplots(1, 1, facecolor=kwargs.get("facecolor", "white"))
+            fig, ax = plt.subplots(
+                1, 1, facecolor=kwargs.pop("facecolor", "white"), **kwargs
+            )
 
         if thermistor:
             ax.plot(self.freq.freq, self.thermistor_temp)
@@ -530,6 +670,11 @@ class LoadSpectrum:
 
 
 class HotLoadCorrection:
+    """
+    Class representing measurements required to define the HotLoad temperature,
+    from Monsalve et al. (2017), Eq. 8+9.
+    """
+
     _kinds = {"s11": 1, "s12": 3, "s22": 5}
 
     def __init__(self, path, f_low=None, f_high=None):
@@ -607,6 +752,36 @@ class CalibrationObservation:
         cterms=5,
         wterms=7,
     ):
+        """
+        An composite object representing a full Calibration Observation.
+
+        This includes spectra of all calibrators, and methods to find the calibration
+        parameters. It strictly follows Monsalve et al. (2017) in its formalism.
+
+        Parameters
+        ----------
+        path : str
+            Path to the directory containing all relevant measurements. It is assumed
+            that in this directory is an `S11`, `Resistance` and `Spectra` directory.
+        correction_path : str, optional
+            A path to switch corrections, if different from base path.
+        f_low : float, optional
+            Minimum frequency to keep.
+        f_high : float, optional
+            Maximum frequency to keep.
+        run_num : int, optional
+            Identifier for the measurement files to read.
+        resistance_f : float, optional
+            Female resistance (Ohms)
+        resistance_m : float, optional
+            Male resistance (Ohms)
+        percent : float, optional
+            Percent of time samples to reject from start of spectrum files.
+        cterms : int, optional
+            Number of terms used in the polynomial model for C1 and C2.
+        wterms : int, optional
+            Number of terms used in the polynomial models for Tunc, Tcos and Tsin.
+        """
         self.path = path
 
         for source in self._sources:
@@ -661,6 +836,14 @@ class CalibrationObservation:
         return fig
 
     def plot_s11_models(self):
+        """
+        Plot residuals of S11 models for all sources
+
+        Returns
+        -------
+        dict:
+            Each entry has a key of the source name, and the value is a matplotlib figure.
+        """
         figs = {}
         for source in self._sources:
             src = getattr(self, source)
@@ -669,6 +852,7 @@ class CalibrationObservation:
 
     @cached_property
     def hot_load_corrected_ave_temp(self):
+        """The hot-load averaged temperature, as a function of frequency"""
         hot_load_correction = self.hot_load.s11_model
 
         rht = rc.gamma_de_embed(
@@ -700,6 +884,7 @@ class CalibrationObservation:
 
     @cached_property
     def s11_correction_models(self):
+        """Dictionary of S11 correction models, one for each source"""
         return {k: getattr(self, k).s11_model for k in self._sources}
 
     @cached_property
@@ -863,6 +1048,9 @@ class CalibrationObservation:
         -------
         array : calibrated antenna temperature in K, len(f).
         """
+        if type(load) == str:
+            load = getattr(self, load)
+
         a, b = self.get_linear_coefficients(load.s11_model)
         return a * load.averaged_spectrum + b
 
@@ -902,6 +1090,29 @@ class CalibrationObservation:
     def plot_calibrated_temp(
         self, load, bins=64, fig=None, ax=None, xlabel=True, ylabel=True
     ):
+        """
+        Make a plot of calibrated temperature for a given source.
+
+        Parameters
+        ----------
+        load : str
+            Source to plot.
+        bins : int, optional
+            Number of bins to smooth over.
+        fig : Figure, optional
+            Optionally provide a matplotlib figure to add to.
+        ax : Axis, optional
+            Optionally provide a matplotlib Axis to add to.
+        xlabel : bool, optional
+            Whether to write the x-axis label
+        ylabel : bool, optional
+            Whether to write the y-axis label
+
+        Returns
+        -------
+        fig :
+            The matplotlib figure that was created.
+        """
         if fig is None and ax is None:
             fig, ax = plt.subplots(1, 1, facecolor="w")
 
@@ -949,6 +1160,19 @@ class CalibrationObservation:
         return plt.gcf()
 
     def plot_calibrated_temps(self, bins=64):
+        """
+        Plot all calibrated temperatures in a single figure.
+
+        Parameters
+        ----------
+        bins : int, optional
+            Number of bins in the smoothed spectrum
+
+        Returns
+        -------
+        fig :
+            Matplotlib figure that was created.
+        """
         fig, ax = plt.subplots(
             len(self._sources),
             1,
@@ -970,6 +1194,15 @@ class CalibrationObservation:
         return fig
 
     def write_coefficients(self, direc="."):
+        """
+        Save a text file with the derived calibration co-efficients.
+
+        Parameters
+        ----------
+        direc : str
+            Directory in which to write the file. The filename starts with `All_cal-params`
+            and includes parameters of the class in the filename.
+        """
         np.savetxt(
             os.path.join(
                 direc,
@@ -988,6 +1221,16 @@ class CalibrationObservation:
         )
 
     def plot_coefficients(self, fig=None, ax=None):
+        """
+        Make a plot of the calibration models, C1, C2, Tunc, Tcos and Tsin.
+
+        Parameters
+        ----------
+        fig : Figure, optional
+            Optionally pass a matplotlib figure to add to.
+        ax : Axis, optional
+            Optionally pass a matplotlib axis to pass to. Must have 5 axes.
+        """
         if fig is None or ax is None:
             fig, ax = plt.subplots(
                 5, 1, facecolor="w", gridspec_kw={"hspace": 0.05}, figsize=(10, 9)
@@ -1015,6 +1258,7 @@ class CalibrationObservation:
         return fig
 
     def write(self, direc="."):
+        # TODO: this is a bad function
         lnas11 = self.lna_s11.get_s11_correction_model()(self.freq.freq)
         np.savetxt(os.path.join(direc, "fit_s11_LNA_mag.txt"), np.abs(lnas11))
         np.savetxt(
