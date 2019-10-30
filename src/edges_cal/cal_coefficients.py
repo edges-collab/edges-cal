@@ -527,7 +527,7 @@ class LoadSpectrum:
         Normalised uncalibrated temperature,
         T* = T_noise * (P_source - P_load)/(P_noise - P_load) + T_load
         """
-        return np.mean(self._read_spectrum(), axis=1)[self.freq.mask]
+        return np.nanmean(self._read_spectrum(), axis=1)[self.freq.mask]
 
     def _read_spectrum(self, spectrum_files=None):
         """
@@ -742,7 +742,7 @@ class CalibrationObservation:
     def __init__(
         self,
         path,
-        correction_path,
+        correction_path=None,
         f_low=None,
         f_high=None,
         run_num=1,
