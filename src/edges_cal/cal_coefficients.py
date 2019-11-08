@@ -554,7 +554,7 @@ class LoadSpectrum:
             )
 
         for i, fl in enumerate(spectrum_files):
-            tai = io.load_level1_MAT(fl)
+            tai = io.load_level1_MAT(fl, kind=kind)
             if i == 0:
                 ta = tai
             else:
