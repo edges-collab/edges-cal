@@ -527,9 +527,9 @@ class LoadSpectrum:
         Normalised uncalibrated temperature,
         T* = T_noise * (P_source - P_load)/(P_noise - P_load) + T_load
         """
-        return np.nanmean(self._read_spectrum(), axis=1)[self.freq.mask]
+        return np.nanmean(self._read_spectrum(), axis=1)
 
-    def _read_spectrum(self, spectrum_files=None):
+    def _read_spectrum(self, spectrum_files=None, kind="temp"):
         """
         Read a MAT file to get the corrected raw temperature, i.e.
 
@@ -561,7 +561,7 @@ class LoadSpectrum:
                 ta = np.concatenate((ta, tai), axis=1)
 
         index_start_spectra = int((self.percent / 100) * len(ta[0, :]))
-        return ta[:, index_start_spectra:]
+        return ta[self.freq.mask, index_start_spectra:]
 
     def _read_thermistor_temp(self, resistance_file):
         """

@@ -1,7 +1,7 @@
 from scipy import io as sio
 
 
-def load_level1_MAT(file_name):
+def load_level1_MAT(file_name, kind="temp"):
     """
     This function loads the antenna temperature and date/time from MAT files produced by
     the MATLAB function acq2level1.m
@@ -10,13 +10,10 @@ def load_level1_MAT(file_name):
     ----------
     file_name: str
         path and name of MAT file
-    plot: bool
-        flag for plotting spectrum data.
 
     Returns
     -------
-    ds: 2D LoadSpectrum array
-    dd: Nx6 date/time array
+    2D Uncalibrated Temperature array
 
     Examples
     --------
@@ -24,7 +21,10 @@ def load_level1_MAT(file_name):
     """
     # loading data and extracting main array
     d = sio.loadmat(file_name)
-    if "ta" in d.keys():
-        return d["ta"]
-    elif "ant_temp" in d.keys():
-        return d["ant_temp"]
+    if kind == "temp":
+        if "ta" in d.keys():
+            return d["ta"]
+        elif "ant_temp" in d.keys():
+            return d["ant_temp"]
+    else:
+        return d[kind]
