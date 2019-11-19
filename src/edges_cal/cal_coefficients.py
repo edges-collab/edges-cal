@@ -735,6 +735,35 @@ class HotLoadCorrection:
     def s22_model(self):
         return self._get_model_kind("s22")
 
+    def power_gain(self, hot_load):
+        """Define Eq. 9 from M17"""
+        hot_load_correction = hot_load.s11_model
+
+        rht = rc.gamma_de_embed(
+            self.s11_model(self.freq.freq),
+            self.s12_model(self.freq.freq),
+            self.s22_model(self.freq.freq),
+            hot_load_correction,
+        )
+
+        # inverting the direction of the s-parameters,
+        # since the port labels have to be inverted to match those of Pozar eqn 10.25
+        s11_sr_rev = self.s11_model(self.freq.freq)
+
+        # absolute value of S_21
+        abs_s21 = np.sqrt(np.abs(self.s12_model(self.freq.freq)))
+
+        # available power gain
+        G = (
+            (abs_s21 ** 2)
+            * (1 - np.abs(rht) ** 2)
+            / (
+                (np.abs(1 - s11_sr_rev * rht)) ** 2
+                * (1 - (np.abs(hot_load_correction)) ** 2)
+            )
+        )
+        return G
+
 
 class CalibrationObservation:
     _sources = ["ambient", "hot_load", "open", "short"]
@@ -853,31 +882,7 @@ class CalibrationObservation:
     @cached_property
     def hot_load_corrected_ave_temp(self):
         """The hot-load averaged temperature, as a function of frequency"""
-        hot_load_correction = self.hot_load.s11_model
-
-        rht = rc.gamma_de_embed(
-            self.hot_load_correction.s11_model(self.freq.freq),
-            self.hot_load_correction.s12_model(self.freq.freq),
-            self.hot_load_correction.s22_model(self.freq.freq),
-            hot_load_correction,
-        )
-
-        # inverting the direction of the s-parameters,
-        # since the port labels have to be inverted to match those of Pozar eqn 10.25
-        s11_sr_rev = self.hot_load_correction.s11_model(self.freq.freq)
-
-        # absolute value of S_21
-        abs_s21 = np.sqrt(np.abs(self.hot_load_correction.s12_model(self.freq.freq)))
-
-        # available power gain
-        G = (
-            (abs_s21 ** 2)
-            * (1 - np.abs(rht) ** 2)
-            / (
-                (np.abs(1 - s11_sr_rev * rht)) ** 2
-                * (1 - (np.abs(hot_load_correction)) ** 2)
-            )
-        )
+        G = self.hot_load_correction.power_gain(self.hot_load)
 
         # temperature
         return G * self.hot_load.temp_ave + (1 - G) * self.ambient.temp_ave
