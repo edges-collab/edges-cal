@@ -2,7 +2,7 @@ import warnings
 
 import numpy as np
 from astropy.convolution import convolve
-from scipy.signal import medfilt2d
+from scipy.signal import medfilt, medfilt2d
 
 
 def _check_convolve_dims(data, K1=None, K2=None):
@@ -135,6 +135,38 @@ def detrend_medfilt(data, Kt=8, Kf=8):
     return out[Kt:-Kt, Kf:-Kf]
 
 
+def detrend_medfilt_1d(data, K=8):
+    """Detrend array using a median filter.
+
+    .. note:: ripped from here: https://github.com/HERA-Team/hera_qm/blob/master/hera_qm/xrfi.py
+
+    Parameters
+    ----------
+    data : array
+        2D data array to detrend.
+    K : int, optional
+        The box size to apply medfilt over. Default is 8 pixels.
+
+    Returns
+    -------
+    out : array
+        An array containing the outlier significance metric. Same type and size as d.
+    """
+
+    K = _check_convolve_dims(data, K)
+    data = np.concatenate([data[K - 1 :: -1], data, data[: -K - 1 : -1]])
+
+    d_sm = medfilt(data, kernel_size=2 * K + 1)
+
+    d_rs = data - d_sm
+    d_sq = np.abs(d_rs) ** 2
+    # Factor of .456 is to put mod-z scores on same scale as standard deviation.
+    sig = np.sqrt(medfilt(d_sq, kernel_size=2 * K + 1) / 0.456)
+    # don't divide by zero, instead turn those entries into +inf
+    out = robust_divide(d_rs, sig)
+    return out[K:-K]
+
+
 def detrend_meanfilt(data, flags=None, Kt=8, Kf=8):
     """Detrend array using a mean filter.
     Parameters
@@ -178,12 +210,57 @@ def detrend_meanfilt(data, flags=None, Kt=8, Kf=8):
     return out[Kt:-Kt, Kf:-Kf]
 
 
+def detrend_meanfilt_1d(data, flags=None, K=8):
+    """Detrend array using a mean filter.
+
+    Parameters
+    ----------
+    data : array
+        1D data array to detrend.
+    flags : array, optional
+        1D flag array to be interpretted as mask for d.
+    K : int, optional
+        The box size  apply medfilt over. Default is 8 pixels.
+
+    Returns
+    -------
+    out : array
+        An array containing the outlier significance metric. Same type and size as d.
+    """
+
+    K = _check_convolve_dims(data, K)
+    kernel = np.ones(2 * K + 1)
+
+    # do a mirror extend, like in scipy's convolve, which astropy doesn't support
+    data = np.concatenate([data[K - 1 :: -1], data, data[: -K - 1 : -1]])
+
+    if flags is not None:
+        flags = np.concatenate([flags[K - 1 :: -1], flags, flags[: -K - 1 : -1]])
+
+    d_sm = convolve(data, kernel, mask=flags, boundary="extend")
+    d_rs = data - d_sm
+    d_sq = np.abs(d_rs) ** 2
+    sig = np.sqrt(convolve(d_sq, kernel, mask=flags))
+    # don't divide by zero, instead turn those entries into +inf
+    out = robust_divide(d_rs, sig)
+    return out[K:-K]
+
+
 def remove_rfi(spectrum):
     """Spectrum should have shape (NFREQS, NTIMES)"""
-    significance = detrend_medfilt(spectrum.T, Kt=8, Kf=17)
+    if spectrum.dim == 2:
+        significance = detrend_medfilt(spectrum.T, Kt=8, Kf=17)
 
-    flags = np.abs(significance) > 5  # worse than 5 sigma!
+        flags = np.abs(significance) > 5  # worse than 5 sigma!
 
-    significance = detrend_meanfilt(spectrum.T, flags, Kt=8, Kf=17)
-    spectrum.T[np.abs(significance) > 5] = np.nan
-    return spectrum
+        significance = detrend_meanfilt(spectrum.T, flags, Kt=8, Kf=17)
+        spectrum.T[np.abs(significance) > 5] = np.nan
+        return spectrum
+    elif spectrum.dim == 1:
+        significance = detrend_medfilt_1d(spectrum, K=8)
+
+        flags = np.abs(significance) > 5  # worse than 5 sigma!
+
+        significance = detrend_meanfilt_1d(spectrum, flags, K=8)
+        spectrum[np.abs(significance) > 5] = np.nan
+        return spectrum

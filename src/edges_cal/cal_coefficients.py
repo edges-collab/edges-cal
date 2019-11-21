@@ -469,6 +469,7 @@ class LoadSpectrum:
         percent=5,
         resistance=50.166,
         s11_model_nterms=None,
+        rfi_removal="1D",
     ):
         """
         A class representing a measured spectrum from some Load.
@@ -498,6 +499,10 @@ class LoadSpectrum:
             Resistance of the switch.
         s11_model_nterms : int, optional
             Number of terms to use in modelling the S11.
+        rfi_removal : str, optional, {'1D', '2D'}
+            If given, will perform median and mean-filtered xRFI over either the
+            2D waterfall, or integrated 1D spectrum. The latter is usually reasonable
+            for calibration sources, while the former is good for field data.
         """
         self.load_name = load_name
         self.path = path
@@ -505,6 +510,15 @@ class LoadSpectrum:
         self.path_res = os.path.join(path, "Resistance")
         self.path_spec = os.path.join(path, "Spectra", "mat_files")
         self.s11_model_nterms = s11_model_nterms
+
+        assert rfi_removal in [
+            "1D",
+            "2D",
+            False,
+            None,
+        ], "rfi_removal must be either '1D', '2D' or False/None"
+
+        self.rfi_removal = rfi_removal
 
         if switch_correction is None:
             self.switch_correction = SwitchCorrection(
@@ -529,18 +543,24 @@ class LoadSpectrum:
         T* = T_noise * (P_source - P_load)/(P_noise - P_load) + T_load
         """
         # TODO: should also get weights!
-        return np.nanmean(self.get_detrended_spectrum(), axis=1)
+        spec = self.get_spectrum()
+        spec = np.nanmean(spec, axis=1)
+        if self.rfi_removal == "1D":
+            spec = xrfi.remove_rfi(spec)
+        return spec
 
-    def get_detrended_spectrum(self, kind="temp"):
+    def get_spectrum(self, kind="temp"):
         spec = self._read_spectrum()
 
-        # Need to set nans and zeros to inf so that median/mean detrending can work.
-        spec[np.isnan(spec)] = np.inf
+        if self.rfi_removal == "2D":
+            # Need to set nans and zeros to inf so that median/mean detrending can work.
+            spec[np.isnan(spec)] = np.inf
 
-        if kind != "temp":
-            spec[spec == 0] = np.inf
+            if kind != "temp":
+                spec[spec == 0] = np.inf
 
-        return xrfi.remove_rfi(spec)
+            spec = xrfi.remove_rfi(spec)
+        return spec
 
     def _read_spectrum(self, spectrum_files=None, kind="temp"):
         """
@@ -794,6 +814,7 @@ class CalibrationObservation:
         percent=5,
         cterms=5,
         wterms=7,
+        rfi_removal="1D",
     ):
         """
         An composite object representing a full Calibration Observation.
@@ -824,6 +845,10 @@ class CalibrationObservation:
             Number of terms used in the polynomial model for C1 and C2.
         wterms : int, optional
             Number of terms used in the polynomial models for Tunc, Tcos and Tsin.
+        rfi_removal : str, optional, {'1D', '2D'}
+            If given, will perform median and mean-filtered xRFI over either the
+            2D waterfall, or integrated 1D spectrum. The latter is usually reasonable
+            for calibration sources, while the former is good for field data.
         """
         self.path = path
 
@@ -840,6 +865,7 @@ class CalibrationObservation:
                     run_num=run_num,
                     percent=percent,
                     resistance=resistance_m,
+                    rfi_removal=rfi_removal,
                 ),
             )
 
