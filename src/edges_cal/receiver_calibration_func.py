@@ -300,7 +300,7 @@ def get_calibration_quantities_iterative(
     )
     fmask = f_norm[mask]
     print(len(fmask), len(mask))
-    T_ant = {key: value[mask] for key, value in T_ant.items()}
+    # T_ant = {key: value[mask] for key, value in T_ant.items()}
     gamma_ant = {key: value[mask] for key, value in gamma_ant.items()}
     T_raw = {key: value[mask] for key, value in T_raw.items()}
     gamma_rec = gamma_rec[mask]
