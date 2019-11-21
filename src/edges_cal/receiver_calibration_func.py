@@ -357,13 +357,16 @@ def get_calibration_quantities_iterative(
             sca_raw = sca[i - 1, :] * sca_new
             off_raw = off[i - 1, :] + off_new
 
+        mask = ~np.isnan(off_raw)
+
         # Modeling scale
-        p_sca = np.polyfit(f_norm, sca_raw, cterms - 1)
+        p_sca = np.polyfit(f_norm[mask], sca_raw[mask], cterms - 1)
         m_sca = np.polyval(p_sca, f_norm)
         sca[i, :] = m_sca
 
         # Modeling offset
-        p_off = np.polyfit(f_norm, off_raw, cterms - 1)
+
+        p_off = np.polyfit(f_norm[mask], off_raw[mask], cterms - 1)
         m_off = np.polyval(p_off, f_norm)
         off[i, :] = m_off
 
@@ -373,14 +376,14 @@ def get_calibration_quantities_iterative(
 
         # Step 4: computing NWP
         tu, tc, ts = NWP_fit(
-            f_norm,
-            gamma_rec,
-            gamma_ant["open"],
-            gamma_ant["short"],
-            T_cal_iter["open"][i, :],
-            T_cal_iter["short"][i, :],
-            T_ant["open"],
-            T_ant["short"],
+            f_norm[mask],
+            gamma_rec[mask],
+            gamma_ant["open"][mask],
+            gamma_ant["short"][mask],
+            T_cal_iter["open"][i, mask],
+            T_cal_iter["short"][i, mask],
+            T_ant["open"][mask],
+            T_ant["short"][mask],
             wterms,
         )
 
