@@ -292,6 +292,19 @@ def get_calibration_quantities_iterative(
     -------
 
     """
+    mask = (
+        (~np.isnan(T_raw["short"]))
+        * (~np.isnan(T_raw["ambient"]))
+        * (~np.isnan(T_raw["hot_load"]))
+        * ~np.isnan(T_raw["open"])
+    )
+    fmask = f_norm[mask]
+    print(len(fmask), len(mask))
+    T_ant = {key: value[mask] for key, value in T_ant.items()}
+    gamma_ant = {key: value[mask] for key, value in gamma_ant.items()}
+    T_raw = {key: value[mask] for key, value in T_raw.items()}
+    gamma_rec = gamma_rec[mask]
+
     # Get F and alpha for each load (Eqs. 3 and 4)
     F = {k: get_F(gamma_rec, v) for k, v in gamma_ant.items()}
     alpha = {k: get_alpha(gamma_rec, v) for k, v in gamma_ant.items()}
@@ -307,18 +320,18 @@ def get_calibration_quantities_iterative(
 
     # Initializing arrays
     niter = 4
-    Ta_iter = np.zeros((niter, len(f_norm)))
-    Th_iter = np.zeros((niter, len(f_norm)))
+    Ta_iter = np.zeros((niter, len(fmask)))
+    Th_iter = np.zeros((niter, len(fmask)))
 
-    sca = np.zeros((niter, len(f_norm)))
-    off = np.zeros((niter, len(f_norm)))
+    sca = np.zeros((niter, len(fmask)))
+    off = np.zeros((niter, len(fmask)))
 
     # Calibrated temperature iterations
-    T_cal_iter = {k: np.zeros((niter, len(f_norm))) for k in T_ant}
+    T_cal_iter = {k: np.zeros((niter, len(fmask))) for k in T_ant}
 
-    TU = np.zeros((niter, len(f_norm)))
-    TC = np.zeros((niter, len(f_norm)))
-    TS = np.zeros((niter, len(f_norm)))
+    TU = np.zeros((niter, len(fmask)))
+    TC = np.zeros((niter, len(fmask)))
+    TS = np.zeros((niter, len(fmask)))
 
     # Calibration loop
     for i in range(niter):
@@ -357,10 +370,8 @@ def get_calibration_quantities_iterative(
             sca_raw = sca[i - 1, :] * sca_new
             off_raw = off[i - 1, :] + off_new
 
-        mask = ~np.isnan(off_raw)
-
         # Modeling scale
-        p_sca = np.polyfit(f_norm[mask], sca_raw[mask], cterms - 1)
+        p_sca = np.polyfit(f_norm, sca_raw, cterms - 1)
         m_sca = np.polyval(p_sca, f_norm)
         sca[i, :] = m_sca
 
@@ -376,20 +387,20 @@ def get_calibration_quantities_iterative(
 
         # Step 4: computing NWP
         tu, tc, ts = NWP_fit(
-            f_norm[mask],
-            gamma_rec[mask],
-            gamma_ant["open"][mask],
-            gamma_ant["short"][mask],
-            T_cal_iter["open"][i, mask],
-            T_cal_iter["short"][i, mask],
-            T_ant["open"][mask],
-            T_ant["short"][mask],
+            fmask,
+            gamma_rec,
+            gamma_ant["open"],
+            gamma_ant["short"],
+            T_cal_iter["open"][i, :],
+            T_cal_iter["short"][i, :],
+            T_ant["open"],
+            T_ant["short"],
             wterms,
         )
 
-        TU[i] = tu(f_norm)
-        TC[i] = tc(f_norm)
-        TS[i] = ts(f_norm)
+        TU[i] = tu(fmask)
+        TC[i] = tc(fmask)
+        TS[i] = ts(fmask)
 
     return (
         np.poly1d(p_sca),
