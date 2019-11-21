@@ -23,6 +23,7 @@ from . import io
 from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
+from . import xrfi
 
 
 class FrequencyRange:
@@ -527,7 +528,19 @@ class LoadSpectrum:
         Normalised uncalibrated temperature,
         T* = T_noise * (P_source - P_load)/(P_noise - P_load) + T_load
         """
-        return np.nanmean(self._read_spectrum(), axis=1)
+        # TODO: should also get weights!
+        return np.nanmean(self.get_detrended_spectrum(), axis=1)
+
+    def get_detrended_spectrum(self, kind="temp"):
+        spec = self._read_spectrum()
+
+        # Need to set nans and zeros to inf so that median/mean detrending can work.
+        spec[np.isnan(spec)] = np.inf
+
+        if kind != "temp":
+            spec[spec == 0] = np.inf
+
+        return xrfi.remove_rfi(spec)
 
     def _read_spectrum(self, spectrum_files=None, kind="temp"):
         """
@@ -690,6 +703,7 @@ class HotLoadCorrection:
     def _get_model_part(self, kind, mag=True):
         """
         Compute an evaluated S11 model, having fit to the data.
+
         Parameters
         ----------
         mag : bool, optional
