@@ -246,7 +246,7 @@ def detrend_meanfilt_1d(data, flags=None, K=8):
     return out[K:-K]
 
 
-def remove_rfi(spectrum, threshold=6, Kt=16, Kf=16):
+def remove_rfi(spectrum, threshold=6, Kt=16, Kf=16, copy=True):
     """Spectrum should have shape (NFREQS, NTIMES)"""
     if spectrum.ndim == 2:
         significance = detrend_medfilt(spectrum.T, Kt=Kt, Kf=Kf)
@@ -254,6 +254,9 @@ def remove_rfi(spectrum, threshold=6, Kt=16, Kf=16):
         flags = np.abs(significance) > threshold  # worse than 5 sigma!
 
         significance = detrend_meanfilt(spectrum.T, flags, Kt=Kt, Kf=Kf)
+        if copy:
+            spectrum = np.copy(spectrum)
+
         spectrum.T[np.abs(significance) > threshold] = np.nan
         return spectrum
     elif spectrum.ndim == 1:
@@ -262,5 +265,8 @@ def remove_rfi(spectrum, threshold=6, Kt=16, Kf=16):
         flags = np.abs(significance) > threshold  # worse than 5 sigma!
 
         significance = detrend_meanfilt_1d(spectrum, flags, K=Kf)
+        if copy:
+            spectrum = np.copy(spectrum)
+
         spectrum[np.abs(significance) > threshold] = np.nan
         return spectrum
