@@ -367,8 +367,8 @@ def get_calibration_quantities_iterative(
         sca[i, :] = np.polyval(p_sca, fmask)
 
         # Modeling offset
-        p_off = np.polyfit(fmask, off_raw[mask], cterms - 1)
-        off[i, :] = np.polyval(p_off, f_norm)
+        p_off = np.polyfit(fmask, off_raw, cterms - 1)
+        off[i, :] = np.polyval(p_off, fmask)
 
         # Step 3: corrected "uncalibrated spectrum" of cable
         for k, v in T_cal_iter.items():
