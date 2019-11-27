@@ -583,9 +583,10 @@ class LoadSpectrum:
         var = np.nanvar(spec, axis=1)
 
         if self.rfi_removal == "1D2D":
+            nsample = np.sum(~np.isnan(spec), axis=1)
             varfilt = xrfi.medfilt(var, kernel_size=self.rfi_kernel_width_freq)
             resid = mean - xrfi.medfilt(mean, kernel_size=self.rfi_kernel_width_freq)
-            flags = resid > self.rfi_threshold * np.sqrt(varfilt)
+            flags = resid > self.rfi_threshold * np.sqrt(varfilt / nsample)
             mean[flags] = np.nan
             var[flags] = np.nan
 
