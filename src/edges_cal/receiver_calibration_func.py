@@ -338,21 +338,14 @@ def get_calibration_quantities_iterative(
         if i == 0:
             Ta_iter[i, :] = T_raw["ambient"] / K1["ambient"]
             Th_iter[i, :] = T_raw["hot_load"] / K1["hot_load"]
-
-        if i > 0:
-            NWPa = (
-                TU[i - 1, :] * K2["ambient"]
-                + TC[i - 1, :] * K3["ambient"]
-                + TS[i - 1, :] * K4["ambient"]
-            )
-            NWPh = (
-                TU[i - 1, :] * K2["hot_load"]
-                + TC[i - 1, :] * K3["hot_load"]
-                + TS[i - 1, :] * K4["hot_load"]
-            )
-
-            Ta_iter[i, :] = (T_cal_iter["ambient"][i - 1, :] - NWPa) / K1["ambient"]
-            Th_iter[i, :] = (T_cal_iter["hot_load"][i - 1, :] - NWPh) / K1["hot_load"]
+        else:
+            for load, arry in zip(["ambient", "hot_load"], (Ta_iter, Th_iter)):
+                noise_wave_param = (
+                    TU[i - 1, :] * K2[load]
+                    + TC[i - 1, :] * K3[load]
+                    + TS[i - 1, :] * K4[load]
+                )
+                arry[i, :] = (T_cal_iter[load][i - 1, :] - noise_wave_param) / K1[load]
 
         # Step 2: scale and offset
 
@@ -365,20 +358,17 @@ def get_calibration_quantities_iterative(
         if i == 0:
             sca_raw = sca_new
             off_raw = off_new
-        if i > 0:
+        else:
             sca_raw = sca[i - 1, :] * sca_new
             off_raw = off[i - 1, :] + off_new
 
         # Modeling scale
-        p_sca = np.polyfit(f_norm, sca_raw, cterms - 1)
-        m_sca = np.polyval(p_sca, f_norm)
-        sca[i, :] = m_sca
+        p_sca = np.polyfit(fmask, sca_raw, cterms - 1)
+        sca[i, :] = np.polyval(p_sca, fmask)
 
         # Modeling offset
-
-        p_off = np.polyfit(f_norm[mask], off_raw[mask], cterms - 1)
-        m_off = np.polyval(p_off, f_norm)
-        off[i, :] = m_off
+        p_off = np.polyfit(fmask, off_raw[mask], cterms - 1)
+        off[i, :] = np.polyval(p_off, f_norm)
 
         # Step 3: corrected "uncalibrated spectrum" of cable
         for k, v in T_cal_iter.items():
@@ -401,14 +391,7 @@ def get_calibration_quantities_iterative(
         TC[i] = tc(fmask)
         TS[i] = ts(fmask)
 
-    return (
-        np.poly1d(p_sca),
-        np.poly1d(p_off),
-        tu,
-        tc,
-        ts,
-    )  # sca[-1, :], off[-1, :], TU[-1, :],
-    # TC[-1, :], TS[-1, :]
+    return (np.poly1d(p_sca), np.poly1d(p_off), tu, tc, ts)
 
 
 def get_linear_coefficients(gamma_ant, gamma_rec, sca, off, TU, TC, TS, T_load=300):
