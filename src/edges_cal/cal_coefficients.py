@@ -471,6 +471,9 @@ class LoadSpectrum:
         resistance=50.166,
         s11_model_nterms=None,
         rfi_removal="1D",
+        rfi_kernel_width_time=16,
+        rfi_kernel_width_freq=16,
+        rfi_threshold=6,
     ):
         """
         A class representing a measured spectrum from some Load.
@@ -504,6 +507,15 @@ class LoadSpectrum:
             If given, will perform median and mean-filtered xRFI over either the
             2D waterfall, or integrated 1D spectrum. The latter is usually reasonable
             for calibration sources, while the former is good for field data.
+        rfi_kernel_width_time : int, optional
+            The kernel width for the detrending of data for
+            RFI removal in the time dimension (only used if `rfi_removal` is "2D").
+        rfi_kernel_width_freq : int, optional
+            The kernel width for the detrending of data for
+            RFI removal in the frequency dimension.
+        rfi_threshold : float, optional
+            The threshold (in equivalent standard deviation units) above which to
+            flag data as RFI.
         """
         self.load_name = load_name
         self.path = path
@@ -511,6 +523,9 @@ class LoadSpectrum:
         self.path_res = os.path.join(path, "Resistance")
         self.path_spec = os.path.join(path, "Spectra", "mat_files")
         self.s11_model_nterms = s11_model_nterms
+        self.rfi_kernel_width_time = rfi_kernel_width_time
+        self.rfi_kernel_width_freq = rfi_kernel_width_freq
+        self.rfi_threshold = rfi_threshold
 
         assert rfi_removal in [
             "1D",
@@ -547,7 +562,9 @@ class LoadSpectrum:
         spec = self.get_spectrum()
         spec = np.nanmean(spec, axis=1)
         if self.rfi_removal == "1D":
-            spec = xrfi.remove_rfi(spec)
+            spec = xrfi.remove_rfi(
+                spec, threshold=self.rfi_threshold, Kf=self.rfi_kernel_width_freq
+            )
         return spec
 
     def get_spectrum(self, kind="temp"):
@@ -560,7 +577,12 @@ class LoadSpectrum:
             if kind != "temp":
                 spec[spec == 0] = np.inf
 
-            spec = xrfi.remove_rfi(spec)
+            spec = xrfi.remove_rfi(
+                spec,
+                threshold=self.rfi_threshold,
+                Kt=self.rfi_kernel_width_time,
+                Kf=self.rfi_kernel_width_freq,
+            )
         return spec
 
     def _read_spectrum(self, spectrum_files=None, kind="temp"):
