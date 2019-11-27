@@ -532,6 +532,7 @@ class LoadSpectrum:
         assert rfi_removal in [
             "1D",
             "2D",
+            "1D2D",
             False,
             None,
         ], "rfi_removal must be either '1D', '2D' or False/None"
