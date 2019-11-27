@@ -1167,7 +1167,11 @@ class CalibrationObservation:
         #        f_new = np.linspace(self.freq.freq.min(), self.freq.freq.max(), bins)
 
         # TODO: this would probably be better using a convolution kernel
-        freq_ave_cal = convolve(temp_calibrated, Gaussian1DKernel(x_size=bins))
+        if bins > 0:
+            freq_ave_cal = convolve(temp_calibrated, Gaussian1DKernel(stddev=bins))
+        else:
+            freq_ave_cal = temp_calibrated
+
         # np.zeros(bins)
         # for i in range(bins):
         #     freq_ave_cal[i] = np.average(
