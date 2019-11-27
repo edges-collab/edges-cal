@@ -470,7 +470,7 @@ class LoadSpectrum:
         percent=5,
         resistance=50.166,
         s11_model_nterms=None,
-        rfi_removal="1D",
+        rfi_removal="1D2D",
         rfi_kernel_width_time=16,
         rfi_kernel_width_freq=16,
         rfi_threshold=6,
@@ -503,10 +503,12 @@ class LoadSpectrum:
             Resistance of the switch.
         s11_model_nterms : int, optional
             Number of terms to use in modelling the S11.
-        rfi_removal : str, optional, {'1D', '2D'}
+        rfi_removal : str, optional, {'1D', '2D', '1D2D'}
             If given, will perform median and mean-filtered xRFI over either the
             2D waterfall, or integrated 1D spectrum. The latter is usually reasonable
-            for calibration sources, while the former is good for field data.
+            for calibration sources, while the former is good for field data. "1D2D"
+            is a hybrid approach in which the variance per-frequency is determined
+            from the 2D data, but filtering occurs only over frequency.
         rfi_kernel_width_time : int, optional
             The kernel width for the detrending of data for
             RFI removal in the time dimension (only used if `rfi_removal` is "2D").
@@ -559,13 +561,34 @@ class LoadSpectrum:
         T* = T_noise * (P_source - P_load)/(P_noise - P_load) + T_load
         """
         # TODO: should also get weights!
-        spec = self.get_spectrum()
-        spec = np.nanmean(spec, axis=1)
+        spec = self._ave_and_var_spec[0]
+
         if self.rfi_removal == "1D":
             spec = xrfi.remove_rfi(
                 spec, threshold=self.rfi_threshold, Kf=self.rfi_kernel_width_freq
             )
         return spec
+
+    @cached_property
+    def variance_spectrum(self):
+        """Variance of spectrum across time"""
+        return self._ave_and_var_spec[1]
+
+    @cached_property
+    def _ave_and_var_spec(self):
+        """Get the mean and variance of the spectrum"""
+        spec = self.get_spectrum()
+        mean = np.nanmean(spec, axis=1)
+        var = np.nanvar(spec, axis=1)
+
+        if self.rfi_removal == "1D2D":
+            varfilt = xrfi.medfilt(var, kernel_size=self.rfi_kernel_width_freq)
+            resid = mean - xrfi.medfilt(mean, kernel_size=self.rfi_kernel_width_freq)
+            flags = resid > self.rfi_threshold * np.sqrt(varfilt)
+            mean[flags] = np.nan
+            var[flags] = np.nan
+
+        return mean, var
 
     def get_spectrum(self, kind="temp"):
         spec = self._read_spectrum()
