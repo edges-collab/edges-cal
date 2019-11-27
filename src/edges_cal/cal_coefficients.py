@@ -16,6 +16,7 @@ from functools import lru_cache
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
+from astropy.convolution import Box1DKernel, Gaussian1DKernel, convolve
 from cached_property import cached_property
 
 from . import S11_correction as s11
@@ -1133,17 +1134,17 @@ class CalibrationObservation:
         return (temp - b) / a
 
     def plot_calibrated_temp(
-        self, load, bins=64, fig=None, ax=None, xlabel=True, ylabel=True
+        self, load, bins=2, fig=None, ax=None, xlabel=True, ylabel=True
     ):
         """
         Make a plot of calibrated temperature for a given source.
 
         Parameters
         ----------
-        load : str
+        load : :class:`~LoadSpectrum` instance
             Source to plot.
         bins : int, optional
-            Number of bins to smooth over.
+            Number of bins to smooth over (std of Gaussian kernel)
         fig : Figure, optional
             Optionally provide a matplotlib figure to add to.
         ax : Axis, optional
@@ -1161,24 +1162,24 @@ class CalibrationObservation:
         if fig is None and ax is None:
             fig, ax = plt.subplots(1, 1, facecolor="w")
 
-        lim = len(self.freq.freq)
-
         # binning
         temp_calibrated = self.calibrate(load)
-        fact = lim / bins
-        f_new = np.linspace(self.freq.freq.min(), self.freq.freq.max(), bins)
+        #        f_new = np.linspace(self.freq.freq.min(), self.freq.freq.max(), bins)
 
         # TODO: this would probably be better using a convolution kernel
-        freq_ave_cal = np.zeros(bins)
-        for i in range(bins):
-            freq_ave_cal[i] = np.average(
-                temp_calibrated[int(i * fact) : int((i + 1) * fact)]
-            )
+        freq_ave_cal = convolve(temp_calibrated, Gaussian1DKernel(x_size=bins))
+        # np.zeros(bins)
+        # for i in range(bins):
+        #     freq_ave_cal[i] = np.average(
+        #         temp_calibrated[int(i * fact) : int((i + 1) * fact)]
+        #     )
 
         rms = np.sqrt(np.mean((freq_ave_cal - np.mean(freq_ave_cal)) ** 2))
 
         ax.plot(
-            f_new, freq_ave_cal, label=f"Calibrated {load.load_name} [RMS = {rms:.3f}]"
+            self.freq.freq,
+            freq_ave_cal,
+            label=f"Calibrated {load.load_name} [RMS = {rms:.3f}]",
         )
 
         if load.load_name != "hot_load":
