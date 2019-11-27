@@ -93,7 +93,9 @@ def robust_divide(num, den):
     out = np.where(
         np.logical_and(np.abs(den) > thresh, np.abs(num) > thresh), out, np.inf
     )
-    out = np.where(np.logical_and(np.abs(den) > thresh, np.abs(num) <= thresh), out, 0)
+
+    # If numerator is also small, set to zero (better for smooth stuff)
+    out = np.where(np.logical_and(np.abs(den) <= thresh, np.abs(num) <= thresh), 0, out)
     return out
 
 
