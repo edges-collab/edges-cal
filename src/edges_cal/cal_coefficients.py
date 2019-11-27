@@ -1234,7 +1234,9 @@ class CalibrationObservation:
 
         # TODO: this would probably be better using a convolution kernel
         if bins > 0:
-            freq_ave_cal = convolve(temp_calibrated, Gaussian1DKernel(stddev=bins))
+            freq_ave_cal = convolve(
+                temp_calibrated, Gaussian1DKernel(stddev=bins), boundary="extend"
+            )
         else:
             freq_ave_cal = temp_calibrated
 
