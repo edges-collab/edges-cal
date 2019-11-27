@@ -261,6 +261,6 @@ def remove_rfi(spectrum, threshold=6, Kt=16, Kf=16):
 
         flags = np.abs(significance) > threshold  # worse than 5 sigma!
 
-        significance = detrend_meanfilt_1d(spectrum, flags, Kf=Kf)
+        significance = detrend_meanfilt_1d(spectrum, flags, K=Kf)
         spectrum[np.abs(significance) > threshold] = np.nan
         return spectrum
