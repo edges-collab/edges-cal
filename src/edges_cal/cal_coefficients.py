@@ -860,7 +860,10 @@ class CalibrationObservation:
         percent=5,
         cterms=5,
         wterms=7,
-        rfi_removal="1D",
+        rfi_removal="1D2D",
+        rfi_kernel_width_time=16,
+        rfi_kernel_width_freq=16,
+        rfi_threshold=6,
     ):
         """
         An composite object representing a full Calibration Observation.
@@ -891,10 +894,21 @@ class CalibrationObservation:
             Number of terms used in the polynomial model for C1 and C2.
         wterms : int, optional
             Number of terms used in the polynomial models for Tunc, Tcos and Tsin.
-        rfi_removal : str, optional, {'1D', '2D'}
+        rfi_removal : str, optional, {'1D', '2D', '1D2D'}
             If given, will perform median and mean-filtered xRFI over either the
             2D waterfall, or integrated 1D spectrum. The latter is usually reasonable
-            for calibration sources, while the former is good for field data.
+            for calibration sources, while the former is good for field data. "1D2D"
+            is a hybrid approach in which the variance per-frequency is determined
+            from the 2D data, but filtering occurs only over frequency.
+        rfi_kernel_width_time : int, optional
+            The kernel width for the detrending of data for
+            RFI removal in the time dimension (only used if `rfi_removal` is "2D").
+        rfi_kernel_width_freq : int, optional
+            The kernel width for the detrending of data for
+            RFI removal in the frequency dimension.
+        rfi_threshold : float, optional
+            The threshold (in equivalent standard deviation units) above which to
+            flag data as RFI.
         """
         self.path = path
 
@@ -912,6 +926,9 @@ class CalibrationObservation:
                     percent=percent,
                     resistance=resistance_m,
                     rfi_removal=rfi_removal,
+                    rfi_kernel_width_freq=rfi_kernel_width_freq,
+                    rfi_kernel_width_time=rfi_kernel_width_time,
+                    rfi_threshold=rfi_threshold,
                 ),
             )
 
