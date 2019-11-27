@@ -90,7 +90,10 @@ def robust_divide(num, den):
     """
     thresh = np.finfo(den.dtype).eps
     out = np.true_divide(num, den, where=(np.abs(den) > thresh))
-    out = np.where(np.abs(den) > thresh, out, np.inf)
+    out = np.where(
+        np.logical_and(np.abs(den) > thresh, np.abs(num) > thresh), out, np.inf
+    )
+    out = np.where(np.logical_and(np.abs(den) > thresh, np.abs(num) <= thresh), out, 0)
     return out
 
 
