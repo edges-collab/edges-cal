@@ -12,6 +12,7 @@ import glob
 import os
 import warnings
 from functools import lru_cache
+from hashlib import md5
 
 import h5py
 import matplotlib.pyplot as plt
@@ -562,7 +563,7 @@ class LoadSpectrum:
         T* = T_noise * (P_source - P_load)/(P_noise - P_load) + T_load
         """
         # TODO: should also get weights!
-        spec = self._ave_and_var_spec[0]
+        spec = self._ave_and_var_spec[0]["ant_temp"]
 
         if self.rfi_removal == "1D":
             spec = xrfi.remove_rfi(
@@ -573,46 +574,118 @@ class LoadSpectrum:
     @cached_property
     def variance_spectrum(self):
         """Variance of spectrum across time"""
-        return self._ave_and_var_spec[1]
+        return self._ave_and_var_spec[1]["ant_temp"]
+
+    @cached_property
+    def averaged_p0(self):
+        return self._ave_and_var_spec[0]["p0"]
+
+    @cached_property
+    def averaged_p1(self):
+        return self._ave_and_var_spec[0]["p1"]
+
+    @cached_property
+    def averaged_p2(self):
+        return self._ave_and_var_spec[0]["p2"]
+
+    @cached_property
+    def variance_p0(self):
+        return self._ave_and_var_spec[1]["p0"]
+
+    @cached_property
+    def variance_p1(self):
+        return self._ave_and_var_spec[1]["p1"]
+
+    @cached_property
+    def variance_p2(self):
+        return self._ave_and_var_spec[1]["p2"]
+
+    def _get_integrated_filename(self):
+        """Determine the relevant unique filename for the reduced data (averaged over time)
+        for this instance"""
+        params = (
+            self.rfi_threshold,
+            self.rfi_kernel_width_time,
+            self.rfi_kernel_width_freq,
+            self.rfi_removal,
+            self.percent,
+            self.freq.min,
+            self.freq.max,
+        )
+        hsh = md5(str(params).encode()).hexdigest()
+
+        return os.path.join(
+            self.path_spec, self._file_prefixes[self.load_name] + hsh + ".h5"
+        )
 
     @cached_property
     def _ave_and_var_spec(self):
-        """Get the mean and variance of the spectrum"""
-        spec = self.get_spectrum()
-        mean = np.nanmean(spec, axis=1)
-        var = np.nanvar(spec, axis=1)
+        """Get the mean and variance of the spectra"""
+        fname = self._get_integrated_filename()
+        kinds = ["p0", "p1", "p2", "ant_temp"]
+        if os.path.exists(fname):
+            print("Reading in previously-created integrated spectra...")
+            means = {}
+            vars = {}
+            with h5py.File(fname, "r") as fl:
+                for kind in kinds:
+                    means[kind] = fl[kind + "_mean"][...]
+                    vars[kind] = fl[kind + "_var"][...]
+            return means, vars
 
-        if self.rfi_removal == "1D2D":
-            nsample = np.sum(~np.isnan(spec), axis=1)
-            varfilt = xrfi.medfilt(var, kernel_size=2 * self.rfi_kernel_width_freq + 1)
-            resid = mean - xrfi.medfilt(
-                mean, kernel_size=2 * self.rfi_kernel_width_freq + 1
-            )
-            flags = resid > self.rfi_threshold * np.sqrt(varfilt / nsample)
-            mean[flags] = np.nan
-            var[flags] = np.nan
+        print("Reducing spectra...")
+        spectra = self.get_spectra()
 
-        return mean, var
+        means = {}
+        vars = {}
+        for key, spec in spectra.items():
+            mean = np.nanmean(spec, axis=1)
+            var = np.nanvar(spec, axis=1)
 
-    def get_spectrum(self, kind="temp"):
+            if self.rfi_removal == "1D2D":
+                nsample = np.sum(~np.isnan(spec), axis=1)
+                varfilt = xrfi.medfilt(
+                    var, kernel_size=2 * self.rfi_kernel_width_freq + 1
+                )
+                resid = mean - xrfi.medfilt(
+                    mean, kernel_size=2 * self.rfi_kernel_width_freq + 1
+                )
+                flags = resid > self.rfi_threshold * np.sqrt(varfilt / nsample)
+                mean[flags] = np.nan
+                var[flags] = np.nan
+
+            means[key] = mean
+            vars[key] = var
+
+        with h5py.File(fname, "w") as fl:
+            print("Saving reduced spectra to cache at {}".format(fname))
+            for kind in kinds:
+                fl[kind + "_mean"] = means[kind]
+                fl[kind + "_var"] = vars[kind]
+
+        return means, vars
+
+    def get_spectra(self):
         spec = self._read_spectrum()
 
         if self.rfi_removal == "2D":
-            # Need to set nans and zeros to inf so that median/mean detrending can work.
-            spec[np.isnan(spec)] = np.inf
+            for key, val in spec.items():
+                # Need to set nans and zeros to inf so that median/mean detrending can work.
+                val[np.isnan(val)] = np.inf
 
-            if kind != "temp":
-                spec[spec == 0] = np.inf
+                if key != "ant_temp":
+                    val[val == 0] = np.inf
 
-            spec = xrfi.remove_rfi(
-                spec,
-                threshold=self.rfi_threshold,
-                Kt=self.rfi_kernel_width_time,
-                Kf=self.rfi_kernel_width_freq,
-            )
+                val = xrfi.remove_rfi(
+                    val,
+                    threshold=self.rfi_threshold,
+                    Kt=self.rfi_kernel_width_time,
+                    Kf=self.rfi_kernel_width_freq,
+                )
+                spec[key] = val
         return spec
 
-    def _read_spectrum(self, spectrum_files=None, kind="temp"):
+    def _read_spectrum(self, spectrum_files=None, kind=None):
         """
         Read a MAT file to get the corrected raw temperature, i.e.
 
@@ -636,15 +709,25 @@ class LoadSpectrum:
                 )
             )
 
+        out = {}
+        keys = ["p0", "p1", "p2", "ant_temp"]
         for i, fl in enumerate(spectrum_files):
             tai = io.load_level1_MAT(fl, kind=kind)
-            if i == 0:
-                ta = tai
-            else:
-                ta = np.concatenate((ta, tai), axis=1)
 
-        index_start_spectra = int((self.percent / 100) * len(ta[0, :]))
-        return ta[self.freq.mask, index_start_spectra:]
+            for key in keys:
+                if key not in out:
+                    out[key] = tai
+                else:
+                    out[key] = np.concatenate((out[key], tai), axis=1)
+
+        for key in keys:
+            index_start_spectra = int((self.percent / 100) * len(out[key][0, :]))
+            out[key] = out[key][self.freq.mask, index_start_spectra:]
+
+        if kind:
+            return out[kind]
+        else:
+            return out
 
     def _read_thermistor_temp(self, resistance_file):
         """
