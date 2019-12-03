@@ -475,6 +475,7 @@ class LoadSpectrum:
         rfi_kernel_width_time=16,
         rfi_kernel_width_freq=16,
         rfi_threshold=6,
+        cache_dir=None,
     ):
         """
         A class representing a measured spectrum from some Load.
@@ -519,12 +520,21 @@ class LoadSpectrum:
         rfi_threshold : float, optional
             The threshold (in equivalent standard deviation units) above which to
             flag data as RFI.
+        cache_dir : str path, optional
+            An alternative directory in which to load/save cached reduced files. By
+            default, the same as the path to the .mat files. If you don't have
+            write permission there, it may be useful to use an alternative path.
         """
         self.load_name = load_name
         self.path = path
         self.path_s11 = os.path.join(path, "S11", self._kinds[self.load_name])
         self.path_res = os.path.join(path, "Resistance")
         self.path_spec = os.path.join(path, "Spectra", "mat_files")
+        if cache_dir is None:
+            self.cache_dir = self.path_spec
+        else:
+            self.cache_dir = os.path.join(cache_dir, os.path.dirname(self.path))
+
         self.s11_model_nterms = s11_model_nterms
         self.rfi_kernel_width_time = rfi_kernel_width_time
         self.rfi_kernel_width_freq = rfi_kernel_width_freq
@@ -615,7 +625,7 @@ class LoadSpectrum:
         hsh = md5(str(params).encode()).hexdigest()
 
         return os.path.join(
-            self.path_spec, self._file_prefixes[self.load_name] + "_" + hsh + ".h5"
+            self.cache_dir, self._file_prefixes[self.load_name] + "_" + hsh + ".h5"
         )
 
     @cached_property
@@ -955,6 +965,7 @@ class CalibrationObservation:
         rfi_kernel_width_time=16,
         rfi_kernel_width_freq=16,
         rfi_threshold=6,
+        cache_dir=None,
     ):
         """
         An composite object representing a full Calibration Observation.
@@ -1023,6 +1034,7 @@ class CalibrationObservation:
                     rfi_kernel_width_freq=rfi_kernel_width_freq,
                     rfi_kernel_width_time=rfi_kernel_width_time,
                     rfi_threshold=rfi_threshold,
+                    cache_dir=cache_dir,
                 ),
             )
 
