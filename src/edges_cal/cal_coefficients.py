@@ -615,7 +615,7 @@ class LoadSpectrum:
         hsh = md5(str(params).encode()).hexdigest()
 
         return os.path.join(
-            self.path_spec, self._file_prefixes[self.load_name] + hsh + ".h5"
+            self.path_spec, self._file_prefixes[self.load_name] + "_" + hsh + ".h5"
         )
 
     @cached_property
@@ -624,7 +624,11 @@ class LoadSpectrum:
         fname = self._get_integrated_filename()
         kinds = ["p0", "p1", "p2", "ant_temp"]
         if os.path.exists(fname):
-            print("Reading in previously-created integrated spectra...")
+            print(
+                "Reading in previously-created integrated {} spectra...".format(
+                    self.load_name
+                )
+            )
             means = {}
             vars = {}
             with h5py.File(fname, "r") as fl:
@@ -633,7 +637,7 @@ class LoadSpectrum:
                     vars[kind] = fl[kind + "_var"][...]
             return means, vars
 
-        print("Reducing spectra...")
+        print("Reducing {} spectra...".format(self.load_name))
         spectra = self.get_spectra()
 
         means = {}
@@ -716,9 +720,9 @@ class LoadSpectrum:
 
             for key in keys:
                 if key not in out:
-                    out[key] = tai
+                    out[key] = tai[key]
                 else:
-                    out[key] = np.concatenate((out[key], tai), axis=1)
+                    out[key] = np.concatenate((out[key], tai[key]), axis=1)
 
         for key in keys:
             index_start_spectra = int((self.percent / 100) * len(out[key][0, :]))
@@ -998,6 +1002,9 @@ class CalibrationObservation:
             flag data as RFI.
         """
         self.path = path
+
+        if correction_path is None:
+            correction_path = path
 
         for source in self._sources:
             setattr(
