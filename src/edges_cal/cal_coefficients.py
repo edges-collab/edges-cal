@@ -530,9 +530,11 @@ class LoadSpectrum:
         self.path_s11 = os.path.join(path, "S11", self._kinds[self.load_name])
         self.path_res = os.path.join(path, "Resistance")
         self.path_spec = os.path.join(path, "Spectra", "mat_files")
+
         if cache_dir is None:
             self.cache_dir = self.path_spec
         else:
+            print(cache_dir)
             self.cache_dir = os.path.join(cache_dir, os.path.dirname(self.path))
 
         self.s11_model_nterms = s11_model_nterms
