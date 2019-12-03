@@ -534,8 +534,9 @@ class LoadSpectrum:
         if cache_dir is None:
             self.cache_dir = self.path_spec
         else:
-            print(cache_dir)
-            self.cache_dir = os.path.join(cache_dir, os.path.dirname(self.path))
+            self.cache_dir = os.path.join(
+                cache_dir, os.path.basename(os.path.normpath(self.path))
+            )
 
         self.s11_model_nterms = s11_model_nterms
         self.rfi_kernel_width_time = rfi_kernel_width_time
@@ -672,6 +673,9 @@ class LoadSpectrum:
 
             means[key] = mean
             vars[key] = var
+
+        if not os.path.exists(self.cache_dir):
+            os.mkdir(self.cache_dir)
 
         with h5py.File(fname, "w") as fl:
             print("Saving reduced spectra to cache at {}".format(fname))
