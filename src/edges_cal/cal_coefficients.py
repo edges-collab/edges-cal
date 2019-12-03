@@ -534,9 +534,7 @@ class LoadSpectrum:
         if cache_dir is None:
             self.cache_dir = self.path_spec
         else:
-            self.cache_dir = os.path.join(
-                cache_dir, os.path.basename(os.path.normpath(self.path))
-            )
+            self.cache_dir = cache_dir
 
         self.s11_model_nterms = s11_model_nterms
         self.rfi_kernel_width_time = rfi_kernel_width_time
@@ -624,6 +622,7 @@ class LoadSpectrum:
             self.percent,
             self.freq.min,
             self.freq.max,
+            self._get_spec_filenames(),
         )
         hsh = md5(str(params).encode()).hexdigest()
 
@@ -705,6 +704,12 @@ class LoadSpectrum:
                 spec[key] = val
         return spec
 
+    def _get_spec_filenames(self):
+        spectrum_files = glob.glob(
+            os.path.join(self.path_spec, self._file_prefixes[self.load_name] + "*.mat")
+        )
+        return spectrum_files
+
     def _read_spectrum(self, spectrum_files=None, kind=None):
         """
         Read a MAT file to get the corrected raw temperature, i.e.
@@ -716,11 +721,7 @@ class LoadSpectrum:
         ndarray : T* as a function of frequency.
         """
         if spectrum_files is None:
-            spectrum_files = glob.glob(
-                os.path.join(
-                    self.path_spec, self._file_prefixes[self.load_name] + "*.mat"
-                )
-            )
+            spectrum_files = self._get_spec_filenames()
 
         if not spectrum_files:
             raise FileNotFoundError(
