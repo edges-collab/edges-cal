@@ -296,7 +296,7 @@ def low_band_switch_correction(root_path, ant_s11, temp_sw, f_in=np.zeros([0, 1]
     return corr_ant_s11, fit_s11, fit_s12s21, fit_s22
 
 
-def _read_data_and_corrections(root_dir, branch_dir):
+def _read_data_and_corrections(root_dir, branch_dir, run_num):
     path_folder = path.join(root_dir, branch_dir)
     kinds = ["Open", "Short", "Match"]
 
@@ -306,7 +306,7 @@ def _read_data_and_corrections(root_dir, branch_dir):
         for extern in [False, True]:
             data[kind]["ex" if extern else "sw"], f = rc.s1p_read(
                 path.join(
-                    path_folder, "{}{}01.s1p".format("External" if extern else "", kind)
+                    path_folder, "{}{}{:02d}.s1p".format("External" if extern else "", kind, run_num)
                 )
             )
 
@@ -333,7 +333,7 @@ def _read_data_and_corrections(root_dir, branch_dir):
 
 
 def low_band_switch_correction_june_2016(
-    root_folder, ant_s11, f_in=np.zeros([0, 1]), resistance_m=50.166
+    root_folder, ant_s11, f_in=np.zeros([0, 1]), resistance_m=50.166, run_num=None
 ):
     """
     Compute the low band switch correction
@@ -351,8 +351,9 @@ def low_band_switch_correction_june_2016(
     -------
 
     """
+    ext = "{:02d}".format(run_num) if run_num is not None else ""
     data, corrections, sw, xx1, xx2, xx3, f = _read_data_and_corrections(
-        root_folder, "S11/InternalSwitch"
+        root_folder, "S11/InternalSwitch" + ext, run_num=run_num
     )
 
     flow = f_in.min()
@@ -360,7 +361,7 @@ def low_band_switch_correction_june_2016(
     f_center = (fhigh - flow) / 2 + flow
 
     # Computation of S-parameters to the receiver input
-    resistance_of_match = resistance_m  # 50.027 #50.177#50.124#male
+    resistance_of_match = resistance_m
     md = 1
     oa, sa, la = rc.agilent_85033E(f, resistance_of_match, md)
 

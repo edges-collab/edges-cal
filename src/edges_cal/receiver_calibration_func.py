@@ -448,7 +448,6 @@ def calibrated_antenna_temperature(
         value used to derive the calibration parameters in the first place.
     """
     a, b = get_linear_coefficients(gamma_ant, gamma_rec, sca, off, TU, TC, TS, T_load)
-    print(gamma_ant[0], gamma_rec[0], sca[0], off[0], TU[0], TC[0], TS[0])
 
     return temp_raw * a + b
     # K = get_K(gamma_rec, gamma_ant)
@@ -501,8 +500,6 @@ def uncalibrated_antenna_temperature(
         value used to derive the calibration parameters in the first place.
     """
     a, b = get_linear_coefficients(gamma_ant, gamma_rec, sca, off, TU, TC, TS, T_load)
-    print(gamma_ant[0], gamma_rec[0], sca[0], off[0], TU[0], TC[0], TS[0])
-    print(temp, a, b)
     return (temp - b) / a
 
     # K = get_K(gamma_rec, gamma_ant)

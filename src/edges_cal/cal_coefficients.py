@@ -175,6 +175,7 @@ class VNA:
 
     def _read(self):
         """Read the s1p file"""
+        print("reading %s"%self.fname)
         return rc.s1p_read(self.fname)
 
     @cached_property
@@ -292,6 +293,7 @@ class SwitchCorrection:
             self.switch_corrections[0],
             f_in=self.freq.freq,
             resistance_m=self.resistance,
+            run_num=self.run_num
         )
 
     @lru_cache()
@@ -444,7 +446,14 @@ class LNA(SwitchCorrection):
 
 
 class LoadSpectrum:
-    _kinds = {
+    _s11_dirs = {
+        "ambient": "Ambient",
+        "hot_load": "HotLoad",
+        "open": "LongCableOpen",
+        "short": "LongCableShorted",
+        "antsim": "AntSim4",
+    }
+    _res_paths = {
         "ambient": "Ambient",
         "hot_load": "HotLoad",
         "open": "LongCableOpen",
@@ -455,7 +464,7 @@ class LoadSpectrum:
         "ambient": "Ambient",
         "hot_load": "HotLoad",
         "open": "LongCableOpen",
-        "short": "LongCableShort",
+        "short": "LongCableShorted",
         "antsim": "AntSim4",
     }
 
@@ -527,8 +536,8 @@ class LoadSpectrum:
         """
         self.load_name = load_name
         self.path = path
-        self.path_s11 = os.path.join(path, "S11", self._kinds[self.load_name])
-        self.path_res = os.path.join(path, "Resistance")
+        self.path_s11 = os.path.join(path, "S11", self._s11_dirs[self.load_name])
+        self.path_res = os.path.join(path, "Resistance", self._res_paths[self.load_name])
         self.path_spec = os.path.join(path, "Spectra", "mat_files")
 
         if cache_dir is None:
@@ -655,6 +664,9 @@ class LoadSpectrum:
         means = {}
         vars = {}
         for key, spec in spectra.items():
+            # Weird thing where there are zeros in the spectra.
+            spec[spec==0] = np.nan
+
             mean = np.nanmean(spec, axis=1)
             var = np.nanvar(spec, axis=1)
 
@@ -666,7 +678,11 @@ class LoadSpectrum:
                 resid = mean - xrfi.medfilt(
                     mean, kernel_size=2 * self.rfi_kernel_width_freq + 1
                 )
-                flags = resid > self.rfi_threshold * np.sqrt(varfilt / nsample)
+                flags = np.logical_or(
+                    resid > self.rfi_threshold * np.sqrt(varfilt / nsample),
+                    var - varfilt > self.rfi_threshold * np.sqrt(2*varfilt**2/(nsample - 1))
+                )
+
                 mean[flags] = np.nan
                 var[flags] = np.nan
 
@@ -772,9 +788,7 @@ class LoadSpectrum:
         """
         Temperature of the known noise source.
         """
-        res_files = glob.glob(
-            os.path.join(self.path_res, self._kinds[self.load_name] + "*.txt")
-        )
+        res_files = glob.glob(self.path_res+"*.txt")
 
         if not res_files:
             raise FileNotFoundError("No .txt files found for {}".format(self.load_name))
@@ -862,7 +876,7 @@ class HotLoadCorrection:
     from Monsalve et al. (2017), Eq. 8+9.
     """
 
-    _kinds = {"s11": 1, "s12": 3, "s22": 5}
+    _kinds = {"s11": 0, "s12": 1, "s22": 2}
 
     def __init__(self, path, f_low=None, f_high=None):
         self.path = path
@@ -872,7 +886,7 @@ class HotLoadCorrection:
 
         f = data[:, 0]
         self.freq = FrequencyRange(f, f_low, f_high)
-        self.data = data[self.freq.mask] + 1j * data[self.freq.mask]
+        self.data = data[self.freq.mask, 1::2] + 1j * data[self.freq.mask, 2::2]
 
     def _get_model_part(self, kind, mag=True):
         """
@@ -887,7 +901,7 @@ class HotLoadCorrection:
         -------
         array_like : The model S-parameter
         """
-        d = self.data[:, self._kinds[kind]] + 1j * self.data[:, self._kinds[kind] + 1]
+        d = self.data[:, self._kinds[kind]]
         if mag:
             d = np.abs(d)
         else:
@@ -925,13 +939,12 @@ class HotLoadCorrection:
 
     def power_gain(self, freq, hot_load):
         """Define Eq. 9 from M17"""
-        hot_load_correction = hot_load.s11_model
 
         rht = rc.gamma_de_embed(
             self.s11_model(freq),
             self.s12_model(freq),
             self.s22_model(freq),
-            hot_load_correction,
+            hot_load.s11_model,
         )
 
         # inverting the direction of the s-parameters,
@@ -947,7 +960,7 @@ class HotLoadCorrection:
             * (1 - np.abs(rht) ** 2)
             / (
                 (np.abs(1 - s11_sr_rev * rht)) ** 2
-                * (1 - (np.abs(hot_load_correction)) ** 2)
+                * (1 - (np.abs(hot_load.s11_model)) ** 2)
             )
         )
         return G
