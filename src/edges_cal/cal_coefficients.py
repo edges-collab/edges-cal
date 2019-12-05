@@ -446,20 +446,6 @@ class LNA(SwitchCorrection):
 
 
 class LoadSpectrum:
-    _s11_dirs = {
-        "ambient": "Ambient",
-        "hot_load": "HotLoad",
-        "open": "LongCableOpen",
-        "short": "LongCableShorted",
-        "antsim": "AntSim4",
-    }
-    _res_paths = {
-        "ambient": "Ambient",
-        "hot_load": "HotLoad",
-        "open": "LongCableOpen",
-        "short": "LongCableShorted",
-        "antsim": "AntSim4",
-    }
     _file_prefixes = {
         "ambient": "Ambient",
         "hot_load": "HotLoad",
@@ -536,11 +522,11 @@ class LoadSpectrum:
         """
         self.load_name = load_name
         self.path = path
-        self.path_s11 = os.path.join(path, "S11", self._s11_dirs[self.load_name])
+        self.path_s11 = os.path.join(path, "S11", self._file_prefixes[self.load_name])
         self.path_res = os.path.join(
-            path, "Resistance", self._res_paths[self.load_name]
+            path, "Resistance", self._file_prefixes[self.load_name]
         )
-        self.path_spec = os.path.join(path, "Spectra", "mat_files")
+        self.path_spec = os.path.join(path, "Spectra")
 
         if cache_dir is None:
             self.cache_dir = self.path_spec
@@ -779,7 +765,9 @@ class LoadSpectrum:
         if len(resistance_file) == 0:
             raise ValueError("Empty list of resistance files")
 
-        resistance = np.genfromtxt(resistance_file[0])
+        resistance = np.genfromtxt(resistance_file[0], skip_header=1, delimiter=",")[
+            :, -3
+        ]
         for fl in resistance_file[1:]:
             resistance = np.concatenate((resistance, np.genfromtxt(fl)), axis=0)
 
@@ -791,10 +779,10 @@ class LoadSpectrum:
         """
         Temperature of the known noise source.
         """
-        res_files = glob.glob(self.path_res + "*.txt")
+        res_files = sorted(glob.glob(self.path_res + "_*.csv"))
 
         if not res_files:
-            raise FileNotFoundError("No .txt files found for {}".format(self.load_name))
+            raise FileNotFoundError("No .csv files found for {}".format(self.load_name))
 
         temp = self._read_thermistor_temp(res_files)
 
