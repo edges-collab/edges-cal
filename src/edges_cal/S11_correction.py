@@ -306,7 +306,10 @@ def _read_data_and_corrections(root_dir, branch_dir, run_num):
         for extern in [False, True]:
             data[kind]["ex" if extern else "sw"], f = rc.s1p_read(
                 path.join(
-                    path_folder, "{}{}{:02d}.s1p".format("External" if extern else "", kind, run_num)
+                    path_folder,
+                    "{}{}{:02d}.s1p".format(
+                        "External" if extern else "", kind, run_num
+                    ),
                 )
             )
 

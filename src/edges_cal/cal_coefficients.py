@@ -175,7 +175,7 @@ class VNA:
 
     def _read(self):
         """Read the s1p file"""
-        print("reading %s"%self.fname)
+        print("reading %s" % self.fname)
         return rc.s1p_read(self.fname)
 
     @cached_property
@@ -293,7 +293,7 @@ class SwitchCorrection:
             self.switch_corrections[0],
             f_in=self.freq.freq,
             resistance_m=self.resistance,
-            run_num=self.run_num
+            run_num=self.run_num,
         )
 
     @lru_cache()
@@ -537,7 +537,9 @@ class LoadSpectrum:
         self.load_name = load_name
         self.path = path
         self.path_s11 = os.path.join(path, "S11", self._s11_dirs[self.load_name])
-        self.path_res = os.path.join(path, "Resistance", self._res_paths[self.load_name])
+        self.path_res = os.path.join(
+            path, "Resistance", self._res_paths[self.load_name]
+        )
         self.path_spec = os.path.join(path, "Spectra", "mat_files")
 
         if cache_dir is None:
@@ -665,7 +667,7 @@ class LoadSpectrum:
         vars = {}
         for key, spec in spectra.items():
             # Weird thing where there are zeros in the spectra.
-            spec[spec==0] = np.nan
+            spec[spec == 0] = np.nan
 
             mean = np.nanmean(spec, axis=1)
             var = np.nanvar(spec, axis=1)
@@ -680,7 +682,8 @@ class LoadSpectrum:
                 )
                 flags = np.logical_or(
                     resid > self.rfi_threshold * np.sqrt(varfilt / nsample),
-                    var - varfilt > self.rfi_threshold * np.sqrt(2*varfilt**2/(nsample - 1))
+                    var - varfilt
+                    > self.rfi_threshold * np.sqrt(2 * varfilt ** 2 / (nsample - 1)),
                 )
 
                 mean[flags] = np.nan
@@ -788,7 +791,7 @@ class LoadSpectrum:
         """
         Temperature of the known noise source.
         """
-        res_files = glob.glob(self.path_res+"*.txt")
+        res_files = glob.glob(self.path_res + "*.txt")
 
         if not res_files:
             raise FileNotFoundError("No .txt files found for {}".format(self.load_name))
