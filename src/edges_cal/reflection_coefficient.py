@@ -1,5 +1,7 @@
 import numpy as np
 
+from . import io
+
 
 def impedance2gamma(Z, Z0):
     return (Z - Z0) / (Z + Z0)
@@ -17,57 +19,10 @@ def gamma_shifted(s11, s12s21, s22, r):
     return s11 + (s12s21 * r / (1 - s22 * r))
 
 
-def _get_kind(path_filename):
-    # identifying the format
-    with open(path_filename, "r") as d:
-        comment_rows = 0
-        for line in d.readlines():
-            # checking settings line
-            if line.startswith("#"):
-                if "DB" in line or "dB" in line:
-                    flag = "DB"
-                if "MA" in line:
-                    flag = "MA"
-                if "RI" in line:
-                    flag = "RI"
-
-                comment_rows += 1
-            elif line.startswith("!"):
-                comment_rows += 1
-            elif flag is not None:
-                break
-
-    #  loading data
-    d = np.genfromtxt(path_filename, skip_header=comment_rows)
-
-    return d, flag
-
-
-def s1p_read(path_filename):
-
-    d, flag = _get_kind(path_filename)
-    f = d[:, 0]
-
-    if flag == "DB":
-        r = 10 ** (d[:, 1] / 20) * (
-            np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2])
-        )
-    elif flag == "MA":
-        r = d[:, 1] * (
-            np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2])
-        )
-    elif flag == "RI":
-        r = d[:, 1] + 1j * d[:, 2]
-    else:
-        raise Exception("file had no flags set!")
-
-    return r, f
-
-
 def s2p_read(path_filename):
 
     # loading data
-    d, flag = _get_kind(path_filename)
+    d, flag = io.S1P._get_kind(path_filename)
     f = d[:, 0]
 
     if flag == "DB":

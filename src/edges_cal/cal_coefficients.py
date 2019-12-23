@@ -10,6 +10,7 @@ functions in other modules.
 
 import glob
 import os
+import re
 import warnings
 from functools import lru_cache
 from hashlib import md5
@@ -26,6 +27,13 @@ from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
 from . import xrfi
+
+LOAD_ALIASES = {
+    "ambient": "Ambient",
+    "hot_load": "HotLoad",
+    "open": "LongCableOpen",
+    "short": "LongCableShorted",
+}
 
 
 class FrequencyRange:
@@ -148,7 +156,7 @@ class VNA:
     Parameters
     ----------
     fname : str
-        The path to a valid .s1p file containing VNA measurements.
+        The root to a valid .s1p file containing VNA measurements.
     f_low : float, optional
         The minimum frequency to keep.
     f_high : float, optional
@@ -206,10 +214,10 @@ class SwitchCorrection:
         load_name : str
             The name of the load. Affects default values for the S11 correction modeling.
         base_path : str
-            The path to the directory in which the s1p files reside for the load.
+            The root to the directory in which the s1p files reside for the load.
             Three files must exist there -- open, short and match.
         correction_path : str, optional
-            The path to S11 switch correction measurements. If not given, defaults to
+            The root to S11 switch correction measurements. If not given, defaults to
             `base_path`.
         f_low : float, optional
             Minimum frequency to use. Default is all frequencies.
@@ -446,18 +454,10 @@ class LNA(SwitchCorrection):
 
 
 class LoadSpectrum:
-    _file_prefixes = {
-        "ambient": "Ambient",
-        "hot_load": "HotLoad",
-        "open": "LongCableOpen",
-        "short": "LongCableShorted",
-        "antsim": "AntSim4",
-    }
-
     def __init__(
         self,
         load_name,
-        path,
+        root,
         switch_correction=None,
         correction_path=None,
         f_low=None,
@@ -478,8 +478,9 @@ class LoadSpectrum:
         Parameters
         ----------
         load_name : str
-            Name of the load
-        path : str
+            Name of the load. Can also be the unique file prefix associated with a
+            load (eg. "LongCableShorted" or "AntSim4").
+        root : str
             Path to the directory containing all relevant measurements. It is assumed
             that in this directory is an `S11`, `Resistance` and `Spectra` directory.
         switch_correction : :class:`SwitchCorrection`, optional
@@ -521,12 +522,17 @@ class LoadSpectrum:
             write permission there, it may be useful to use an alternative path.
         """
         self.load_name = load_name
-        self.path = path
-        self.path_s11 = os.path.join(path, "S11", self._file_prefixes[self.load_name])
-        self.path_res = os.path.join(
-            path, "Resistance", self._file_prefixes[self.load_name]
-        )
-        self.path_spec = os.path.join(path, "Spectra")
+        self.prefix = LOAD_ALIASES.get(self.load_name, self.load_name)
+
+        self.path = root
+
+        self.path_s11 = os.path.join(root, "S11", self.prefix)
+        assert os.path.exists(
+            self.path_s11
+        ), "That load name does not exist in this directory!"
+
+        self.path_res = os.path.join(root, "Resistance", self.prefix)
+        self.path_spec = os.path.join(root, "Spectra")
 
         if cache_dir is None:
             self.cache_dir = self.path_spec
@@ -619,7 +625,7 @@ class LoadSpectrum:
             self.percent,
             self.freq.min,
             self.freq.max,
-            self._get_spec_filenames(),
+            self.spectrum_filenames(),
         )
         hsh = md5(str(params).encode()).hexdigest()
 
@@ -709,10 +715,9 @@ class LoadSpectrum:
                 spec[key] = val
         return spec
 
-    def _get_spec_filenames(self):
-        spectrum_files = glob.glob(
-            os.path.join(self.path_spec, self._file_prefixes[self.load_name] + "*.mat")
-        )
+    @property
+    def spectrum_filenames(self):
+        spectrum_files = glob.glob(os.path.join(self.path_spec, self.prefix + "_*.mat"))
         return spectrum_files
 
     def _read_spectrum(self, spectrum_files=None, kind=None):
@@ -726,7 +731,7 @@ class LoadSpectrum:
         ndarray : T* as a function of frequency.
         """
         if spectrum_files is None:
-            spectrum_files = self._get_spec_filenames()
+            spectrum_files = self.spectrum_filenames
 
         if not spectrum_files:
             raise FileNotFoundError(
@@ -990,7 +995,7 @@ class CalibrationObservation:
             Path to the directory containing all relevant measurements. It is assumed
             that in this directory is an `S11`, `Resistance` and `Spectra` directory.
         correction_path : str, optional
-            A path to switch corrections, if different from base path.
+            A root to switch corrections, if different from base root.
         f_low : float, optional
             Minimum frequency to keep.
         f_high : float, optional
