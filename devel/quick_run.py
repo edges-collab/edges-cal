@@ -11,7 +11,7 @@ obs = cc.CalibrationObservation(
     f_low=50,
     f_high=190,
     run_num=2,
-    percent=5,
+    ignore_times_percent=5,
     resistance_f=50.0002,
     resistance_m=50.166,
     cterms=11,
@@ -20,7 +20,9 @@ obs = cc.CalibrationObservation(
 
 obs.plot_calibrated_temps(bins=40)
 
-antsim = cc.LoadSpectrum("antsim", dataIn, f_low=50, f_high=190, run_num=2, percent=5)
+antsim = cc.LoadSpectrum(
+    "antsim", dataIn, f_low=50, f_high=190, run_num=2, ignore_times_percent=5
+)
 obs.plot_calibrated_temp(antsim)
 
 obs.write_coefficients()

@@ -234,7 +234,7 @@ class _SpectrumOrResistance(_DataFile):
 
             if "month" in dct:
                 jd = ymd_to_jd(
-                    match.group("year"), match.group("month"), match.group("day"),
+                    match.group("year"), match.group("month"), match.group("day")
                 )
             else:
                 jd = dct["day"]
@@ -387,6 +387,10 @@ class _SpectrumOrResistance(_DataFile):
         return days
 
     @cached_property
+    def load_name(self):
+        return self._groups[0]["load_name"]
+
+    @cached_property
     def hours(self):
         """List of integer hours (one per file) at which data acquisition was begun"""
         return [int(group["day"]) for group in self._groups]
@@ -442,7 +446,7 @@ class Spectrum(_SpectrumOrResistance):
         """
         out = {}
         keys = ["p0", "p1", "p2", "ant_temp"]
-        for fl in self.fnames:
+        for fl in self.path:
             this_spec = getattr(self, "_read_" + self.file_format)(fl)
 
             for key in keys:
@@ -451,10 +455,7 @@ class Spectrum(_SpectrumOrResistance):
                 else:
                     out[key] = np.concatenate((out[key], this_spec[key]), axis=1)
 
-        self.p0 = out["p0"]
-        self.p1 = out["p1"]
-        self.p2 = out["p2"]
-        self.uncalibrated_spectrum = out["ant_temp"]
+        return out
 
     @staticmethod
     def _read_mat(file_name):
@@ -509,14 +510,13 @@ class Resistance(_SpectrumOrResistance):
         return "csv"
 
     def read(self):
-        fnames = sorted(self.fnames)
+        fnames = sorted(self.path)
 
         resistance = np.genfromtxt(fnames[0], skip_header=1, delimiter=",")[:, -3]
         for fl in fnames[1:]:
             resistance = np.concatenate((resistance, np.genfromtxt(fl)), axis=0)
 
-        self.resistance = resistance
-        return self.resistance
+        return resistance
 
 
 class _SpectraOrResistanceFolder(_DataContainer):
@@ -623,7 +623,7 @@ class S1P(_DataFile):
         "ExternalLoad",
     ]
 
-    def __init__(self, path, fix):
+    def __init__(self, path, fix=False):
         super().__init__(path, fix)
 
         self.kind = self._re_match.groupdict()["kind"]
@@ -719,6 +719,9 @@ class _S11SubDir(_DataContainer):
                 S1P(os.path.join(path, name + "{:<02}.s1p".format(self.run_num))),
             )
 
+        # All frequencies should be the same.
+        self.freq = getattr(self, self.STANDARD_NAMES[0].lower()).freq
+
         self.filenames = [
             getattr(self, thing.lower()).fname for thing in self.STANDARD_NAMES
         ]
@@ -772,24 +775,6 @@ class _S11SubDir(_DataContainer):
     @classmethod
     def _check_file_consistency(cls, path):
         pass
-
-        # TODO: The following checks if all subfiles have the same run-num.
-        # I'm not sure if this *has* to be the case, so I've commented it out.
-
-        # fls = get_active_files(path)
-        #
-        # out = defaultdict(list)
-        #
-        # for fl in fls:
-        #     match = re.match(S1P.file_pattern, os.path.basename(fl))
-        #     groups = match.groupdict()
-        #     out[groups['kind']].append(int(groups['run_num']))
-        #
-        # for kind, val in out.items():
-        #     if len(set(val)) != len(set(out['Short'])):
-        #         logger.error(
-        #             "Number of run_rums for {} is different in {}".format(kind, path)
-        #         )
 
     def _get_max_run_num(self):
         return max(

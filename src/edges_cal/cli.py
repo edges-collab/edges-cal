@@ -29,7 +29,7 @@ main = click.Group()
 @click.option("-n", "--run-num", type=int, default=2, help="run number to read")
 @click.option(
     "-p",
-    "--percent",
+    "--ignore_times_percent",
     type=float,
     default=5,
     help="percentage of data at start of files to ignore",
@@ -86,7 +86,7 @@ def run(
         f_low=f_low,
         f_high=f_high,
         run_num=run_num,
-        percent=percent,
+        ignore_times_percent=percent,
         resistance_f=resistance_f,
         resistance_m=resistance_m,
         cterms=c_terms,
@@ -115,7 +115,7 @@ def run(
         f_low=f_low,
         f_high=f_high,
         run_num=run_num,
-        percent=percent,
+        ignore_times_percent=percent,
     )
     fig = obs.plot_calibrated_temp(antsim, bins=256)
     fig.savefig(join(out, "antsim_calibrated_temp.png"))
