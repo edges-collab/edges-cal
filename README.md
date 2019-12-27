@@ -1,69 +1,76 @@
-# cal_coefficients
+# edges_cal
 
-This is the code to calculate the calibration coefficients of EDGES spectra.
+This is the code to calculate the calibration coefficients of EDGES LoadSpectrum.
 
+## Installation
 
-### Prerequisites
-
-* Numpy
-* SciPy
-
-
-### Usage
-
-Import
+Download/clone the repo and do
 
 ```
-from calibrate.cal_coefficients import *
+pip install .
 ```
 
-Spectra object
+in the top-level directory (optionally add an `-e` for develop-mode).
+Preferably, do this in an isolated python/conda environment.
 
-To begin, we create an object that will encapsulate the spectra we are creating. This step defines the data locations for input and output,low and high frequencies, the percentage of initial time ignored, and the run number.
+## Usage
 
-```
-spectraName=spectra(dataOut, dataIn, freqlow, freqhigh, percent, runNum)
-```
-
-Reading
-
-We can then make an initial reading of our spectra. It will go through the the four calibration loads(Ambient, Hot, Open, Short) as well as the antenna simulator. It will try to find these files by default, but the user can pass in a list of .mat and .txt files to use (still with matching load names) instead of the ones in the data folder.
+### CLI
+There is a very basic CLI set up for running a full calibration pipeline over a set of
+data. To use it, do
 
 ```
-spec_read(spectraName, specFiles, resFiles)
+$ edges-cal run --help
 ```
 
-#### Initial plotting
-
-Generates plots of the initials uncalibrated data read in by the previous step.
-```
-spec_plot(spectraName)
-```
-
-#### S11 Modeling
-
-This will model the S11 after reading in the receiver parameters measured previously (s11_path). Resistances for the male and female standards can be specified, if not then default values will be used.
-```
-s11_model(spectraName, s11_path, resistance_f, resistance_m)
-```
-
-#### S11 Calibration
-
-Uses the S11 models to calculate the calibration coefficients for the spectra. Specify the number of polynomial terms in both parts, if not specified then cterms = 5 and wterms = 7
+Multiple options exist, but the only one required is `PATH`, which should point to
+a directory in which exists `S11`, `Resistance` and `Spectra` folders. Thus:
 
 ```
-s11_cal(spectraName, cterms, wterms)
+$ edges-cal run .
 ```
 
-#### Final plotting
+will work if you are in such a directory.
 
-Generates the calibrated plots for the spectra, displaying the S11 and calibrated temperatures as well as the coefficients.
+### Using the Library
+To import:
+
 ```
-s11_plot(spectraName)
+import edges_cal as ec
 ```
 
-## Authors
+Most of the functionality is highly object-oriented, and objects exist for each kind
+of data/measurement. However, there is a container object for all of these, which
+manages them. Thus you will typically use
 
-* **Nivedita Mahesh**
-* **David Lewis** 
-* **Steven Murray** 
+```
+>>> calobs = ec.CalibrationObservation(path="path/to/top/level")
+```
+
+Several other options exist, and they have documentation that you can access interactively
+by using
+
+```
+>>> help(ec.CalibrationObservation)
+```
+
+The most relevant attributes are the (lazily-evaluated) calibration coefficient models:
+
+```
+>>> plt.plot(calobs.freq.freq, calobs.C1())
+```
+
+the various plotting routines, eg.
+
+```
+>>> calobs.plot_coefficients()
+```
+
+and the calibrate/decalibrate methods:
+
+```
+>>> calibrated_temp = calobs.calibrate("ambient")
+```
+
+Note that this final method can be applied to any `LoadSpectrum` -- i.e. you can pass
+in field observations, or an antenna simulator.

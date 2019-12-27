@@ -1,39 +1,22 @@
+# -*- coding: utf-8 -*-
+"""
+    Setup file for cal_coefficients.
+    Use setup.cfg to configure your project.
+
+    This file was generated with PyScaffold 3.2.1.
+    PyScaffold helps you to put up the scaffold of your new Python project.
+    Learn more under: https://pyscaffold.org/
+"""
+import sys
+from pkg_resources import VersionConflict, require
 from setuptools import setup
-import os, sys
-import os.path as op
-import json
+
+try:
+    require("setuptools>=38.3")
+except VersionConflict:
+    print("Error: version of setuptools is too old (<38.3)!")
+    sys.exit(1)
 
 
-def package_files(package_dir, subdirectory):
-    # walk the input package_dir/subdirectory
-    # return a package_data list
-    paths = []
-    directory = os.path.join(package_dir, subdirectory)
-    for (path, directories, filenames) in os.walk(directory):
-        for filename in filenames:
-            path = path.replace(package_dir + '/', '')
-            paths.append(os.path.join(path, filename))
-    return paths
-
-
-setup_args = {
-    'name': 'calibrate',
-    'author': 'EDGES Team',
-    'url': 'https://github.com/edges-collab/cal_coefficients',
-    'license': 'BSD',
-    'description': 'Calibrate EDGES spectra',
-    'package_dir': {'calibrate': 'calibrate'},
-    'packages': ['calibrate'],
-    'include_package_data': True,
-    'version': '0.1.0',
-    'install_requires': [
-        'numpy',
-        'matplotlib',
-        'scipy'
-    ],
-    'zip_safe': False,
-}
-
-
-if __name__ == '__main__':
-    setup(**setup_args)
+if __name__ == "__main__":
+    setup(use_pyscaffold=True)

@@ -1,21 +1,30 @@
-from calibrate.cal_coefficients import *
 from os import path
 
-dataIn = '/data5/edges/data/data_dmlewis/Receiver01_2019_06_24_040_to_200_MHz/25C/'
-dataOut = path.expanduser('~/output/')
+from edges_cal import cal_coefficients as cc
 
-run1 = spectra(dataOut, dataIn, 50, 190, 5.0, 2)
+dataIn = "ExampleData/25C"
+dataOut = "output"
 
-spec_read(run1)
-run1.save()
-fig = spec_plot(run1)
-fig.savefig("spec_plot.png")
+obs = cc.CalibrationObservation(
+    path=dataIn,
+    correction_path=dataIn,
+    f_low=50,
+    f_high=190,
+    run_num=2,
+    ignore_times_percent=5,
+    resistance_f=50.0002,
+    resistance_m=50.166,
+    cterms=11,
+    wterms=12,
+)
 
-s11_model(run1, '/data5/edges/data/', resistance_f=50.0002, resistance_m=50.166)
-s11_cal(run1, 11, 12)
-figs = s11_plot(run1)
+obs.plot_calibrated_temps(bins=40)
 
-for i, fig in enumerate(figs):
-    fig.savefig(f"fig{i}.png")
+antsim = cc.LoadSpectrum(
+    "antsim", dataIn, f_low=50, f_high=190, run_num=2, ignore_times_percent=5
+)
+obs.plot_calibrated_temp(antsim)
 
-s11_write(run1)
+obs.write_coefficients()
+obs.plot_coefficients()
+obs.write()
