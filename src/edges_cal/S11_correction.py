@@ -88,7 +88,7 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
     sw = {
         "open": 1 * np.ones_like(switching_state.freq),
         "short": -1 * np.ones_like(switching_state.freq),
-        "load": np.zeros_like(switching_state.freq),
+        "match": np.zeros_like(switching_state.freq),
     }
     # Correction at the switch
     corrections = {}
@@ -96,11 +96,11 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
         corrections[kind] = rc.de_embed(
             sw["open"],
             sw["short"],
-            sw["load"],
-            getattr(switching_state, "open"),
-            getattr(switching_state, "short"),
-            getattr(switching_state, "match"),
-            getattr(switching_state, "external%s" % kind),
+            sw["match"],
+            getattr(switching_state, "open").s11,
+            getattr(switching_state, "short").s11,
+            getattr(switching_state, "match").s11,
+            getattr(switching_state, "external%s" % kind).s11,
         )[0]
 
     return corrections, sw
@@ -141,10 +141,10 @@ def low_band_switch_correction(
         oa,
         sa,
         la,
-        corrections["Open"],
-        corrections["Short"],
-        corrections["Match"],
-        corrections["Open"],
+        corrections["open"],
+        corrections["short"],
+        corrections["match"],
+        corrections["open"],
     )
 
     # Frequency normalization
@@ -160,7 +160,7 @@ def low_band_switch_correction(
     for ikind, (kind, val) in enumerate(
         zip(["s11", "s12s21", "s22"], [s11, s12s21, s22])
     ):
-        fits[kind] = 0
+        fits[kind] = 0 + 0 * 1j
         for imag in range(2):
             p = np.polyfit(fn, [np.real, np.imag][imag](val), poly_order)
             out = np.polyval(p, fn_in) * (1j if imag else 1)

@@ -12,21 +12,14 @@ main = click.Group()
 
 
 @main.command()
-@click.argument("root", type=click.Path(dir_okay=True, file_okay=False, exists=True))
-@click.option(
-    "-c",
-    "--correction-root",
-    type=click.Path(dir_okay=True, file_okay=False, exists=True),
-    default=None,
-    help="base root to correction data",
-)
+@click.argument("path", type=click.Path(dir_okay=True, file_okay=False, exists=True))
 @click.option(
     "-f", "--f-low", type=float, default=None, help="minimum frequency to calibrate"
 )
 @click.option(
     "-F", "--f-high", type=float, default=None, help="maximum frequency to calibrate"
 )
-@click.option("-n", "--run-num", type=int, default=2, help="run number to read")
+@click.option("-n", "--run-num", type=int, default=None, help="run number to read")
 @click.option(
     "-p",
     "--ignore_times_percent",
@@ -61,36 +54,40 @@ main = click.Group()
     default=".",
     help="output directory",
 )
+@click.option(
+    "-c",
+    "--cache-dir",
+    type=click.Path(dir_okay=True, file_okay=False),
+    default=".",
+    help="directory in which to keep/search for the cache",
+)
 def run(
     path,
-    correction_path,
     f_low,
     f_high,
     run_num,
-    percent,
+    ignore_times_percent,
     resistance_f,
     resistance_m,
     c_terms,
     w_terms,
     out,
+    cache_dir,
 ):
     """
     Calibrate using lab measurements in PATH, and make all relevant plots.
     """
-    #    dataIn = "/data5/edges/data/data_dmlewis/Receiver01_2019_06_24_040_to_200_MHz/25C/"
-    #    dataOut = root.expanduser("~/output/")
-
     obs = cc.CalibrationObservation(
         path=path,
-        correction_path=correction_path or path,  # "/data5/edges/data",
         f_low=f_low,
         f_high=f_high,
         run_num=run_num,
-        ignore_times_percent=percent,
+        ignore_times_percent=ignore_times_percent,
         resistance_f=resistance_f,
         resistance_m=resistance_m,
         cterms=c_terms,
         wterms=w_terms,
+        cache_dir=cache_dir,
     )
 
     # Plot Calibrator properties
@@ -108,21 +105,12 @@ def run(
     fig.savefig(join(out, "calibration_coefficients.png"))
 
     # Calibrate and plot antsim
-    antsim = cc.LoadSpectrum(
-        "antsim",
-        path,
-        correction_path=correction_path or path,
-        f_low=f_low,
-        f_high=f_high,
-        run_num=run_num,
-        ignore_times_percent=percent,
-    )
+    antsim = obs.new_load(load_name="AntSim3")
     fig = obs.plot_calibrated_temp(antsim, bins=256)
     fig.savefig(join(out, "antsim_calibrated_temp.png"))
 
     # Write out data
     obs.write_coefficients()
-    obs.write(out)
 
 
 @main.command()

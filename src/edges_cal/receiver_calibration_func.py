@@ -298,6 +298,7 @@ def get_calibration_quantities_iterative(
         * (~np.isnan(T_raw["hot_load"]))
         * ~np.isnan(T_raw["open"])
     )
+
     fmask = f_norm[mask]
     gamma_ant = {key: value[mask] for key, value in gamma_ant.items()}
     T_raw = {key: value[mask] for key, value in T_raw.items()}

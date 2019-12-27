@@ -39,6 +39,12 @@ def get_active_files(path):
     ]
 
 
+def get_parent_dir(path, n=1):
+    for i in range(n):
+        path = os.path.dirname(os.path.normpath(path))
+    return path
+
+
 def ymd_to_jd(y, m, d):
     return (
         datetime.date(int(y), int(m), int(d)) - datetime.date(int(y), 1, 1)
@@ -48,7 +54,9 @@ def ymd_to_jd(y, m, d):
 def _ask_to_rm(fl):
     while True:
         reply = (
-            str(input("Would you like to (recursively) remove {} (y/N)?: ".format(fl)))
+            str(
+                input("Would you like to (recursively) remove {} (y/i/N)?: ".format(fl))
+            )
             .lower()
             .strip()
         )
@@ -57,6 +65,9 @@ def _ask_to_rm(fl):
             break
         elif reply.startswith("n") or not reply:
             rm = False
+            break
+        elif reply.startswith("i"):
+            rm = None
             break
         else:
             print("please select (y/n) only")
@@ -67,6 +78,9 @@ def _ask_to_rm(fl):
         else:
             os.remove(fl)
         return True
+    elif rm is None:
+        shutil.move(fl, fl + ".old")
+        return True
     else:
         return False
 
@@ -76,7 +90,7 @@ class FileStructureError(Exception):
 
 
 class _DataFile(ABC):
-    def __init__(self, path):
+    def __init__(self, path, fix=False):
         self.path, self._re_match = self.check_self(path)
 
     @staticmethod
@@ -140,7 +154,12 @@ class _DataContainer(ABC):
                     )
 
                     if fix:
+                        if os.path.basename(fl) == "Notes.odt":
+                            shutil.move(fl, fl.replace("odt", "txt"))
+                            fl = fl.replace("odt", "txt")
+                            logger.success("Successfully renamed to {}".format(fl))
                         fixed = _ask_to_rm(fl)
+
                         if fixed:
                             logger.success("Successfully removed.")
 
@@ -277,10 +296,10 @@ class _SpectrumOrResistance(_DataFile):
 
                 if fix:
                     newname, match = cls._fix(root, basename)
+                    path[i] = newname
 
             if match is not None:
-                path[i] = newname
-
+                newname = os.path.basename(path[i])
                 groups = match.groupdict()
                 if int(groups["run_num"]) < 1:
                     logger.error("The run_num for {} is less than one!".format(newname))
@@ -325,19 +344,41 @@ class _SpectrumOrResistance(_DataFile):
             The filetype of the data. Must be one of the supported formats. Defaults
             to `_default_filetype`.
         """
-        filetype = filetype or cls.supported_formats[0]
+        if load in LOAD_ALIASES:
+            load = LOAD_ALIASES[load]
+
+        if load not in LOAD_ALIASES.values() and not load.startswith("AntSim"):
+            logger.error(
+                "The load specified {} is not one of the options available.".format(
+                    load
+                )
+            )
 
         files = glob.glob(
-            os.path.join(
-                direc,
-                "{load}_??_????_???_??_??_??_lab.{filetype}".format(
-                    load=load, filetype=filetype
-                ),
-            )
+            os.path.join(direc, "{load}_??_????_???_??_??_??_lab.*".format(load=load))
         )
 
+        if filetype:
+            files = [fl for fl in files if fl.endswith("." + filetype)]
+        else:
+            # Use any format so long as it is supported
+            restricted_files = []
+            for ftype in cls.supported_formats:
+                restricted_files = [fl for fl in files if fl.endswith("." + ftype)]
+                if restricted_files:
+                    break
+            files = restricted_files
+            filetype = ftype
+
+        if not files:
+            raise ValueError(
+                "No files exist for the load {} on that path: {}".format(load, direc)
+            )
+
         # Restrict to the given run_num (default last run)
-        run_nums = [int(fl[len(load) : len(load) + 2]) for fl in files]
+        run_nums = [
+            int(os.path.basename(fl)[len(load) + 1 : len(load) + 3]) for fl in files
+        ]
         if run_num is None:
             run_num = max(run_nums)
 
@@ -421,8 +462,7 @@ class Spectrum(_SpectrumOrResistance):
     >>> spec = Spectrum.from_load("Ambient", ".")
     >>> spec.file_format
     h5
-    >>> spec.read()
-    >>> spec.p0
+    >>> spectra = spec.read()
     """
 
     supported_formats = ["h5", "acq", "mat"]
@@ -430,7 +470,7 @@ class Spectrum(_SpectrumOrResistance):
     @cached_property
     def file_format(self):
         """The file format of the data to be read."""
-        formats = [os.path.splitext(fl)[1][1:] for fl in self.fnames]
+        formats = [os.path.splitext(fl)[1][1:] for fl in self.path]
         if any(
             format != formats[0] or format not in self.supported_formats
             for format in formats
@@ -445,7 +485,7 @@ class Spectrum(_SpectrumOrResistance):
         Adds the attributes 'p0', 'p1', 'p2' and 'uncalibrated_spectrum'.
         """
         out = {}
-        keys = ["p0", "p1", "p2", "ant_temp"]
+        keys = ["p0", "p1", "p2", "Qratio"]
         for fl in self.path:
             this_spec = getattr(self, "_read_" + self.file_format)(fl)
 
@@ -475,21 +515,23 @@ class Spectrum(_SpectrumOrResistance):
         d = sio.loadmat(file_name)
 
         # Return dict of all things
-        if "ta" in d:
-            d["ant_temp"] = d["ta"]
-            del d["ta"]
+        if "Qratio" not in d:
+            raise IOError(
+                "The file {} is in an old format, and does not have the key Qratio. Please re-convert it."
+            )
+
         return d
 
     @staticmethod
     def _read_acq(file_name):
-        ant_temp, px = read_acq.decode_file(file_name, progress=False, write_formats=[])
-        return {"ant_temp": ant_temp, "p0": px[0], "p1": px[1], "p2": px[2]}
+        Q, px = read_acq.decode_file(file_name, progress=False, write_formats=[])
+        return {"Qratio": Q.T, "p0": px[0].T, "p1": px[1].T, "p2": px[2].T}
 
     @staticmethod
     def _read_h5(file_name):
         out = {}
         with h5py.File(file_name, "r") as fl:
-            out["ant_temp"] = fl["ant_temp"][...]
+            out["Qratio"] = fl["Qratio"][...]
             out["p0"] = fl["p0"][...]
             out["p1"] = fl["p1"][...]
             out["p2"] = fl["p2"][...]
@@ -504,19 +546,26 @@ class Resistance(_SpectrumOrResistance):
 
     supported_formats = ("csv",)
 
+    def __init__(self, path, fix=False):
+        super(Resistance, self).__init__(path, fix=fix)
+        self.path = self.path[0]
+
+    @classmethod
+    def check_self(cls, path, fix=False):
+        path, match = super(Resistance, cls).check_self(path, fix)
+        if len(path) > 1:
+            logger.error(
+                "Only one resistance file should exist for each load and run_num"
+            )
+        return path, match
+
     @cached_property
     def file_format(self):
         """The file format of the data to be read."""
         return "csv"
 
     def read(self):
-        fnames = sorted(self.path)
-
-        resistance = np.genfromtxt(fnames[0], skip_header=1, delimiter=",")[:, -3]
-        for fl in fnames[1:]:
-            resistance = np.concatenate((resistance, np.genfromtxt(fl)), axis=0)
-
-        return resistance
+        return np.genfromtxt(self.path, skip_header=1, delimiter=",")[:, -3]
 
 
 class _SpectraOrResistanceFolder(_DataContainer):
@@ -569,9 +618,6 @@ class _SpectraOrResistanceFolder(_DataContainer):
     def _check_file_consistency(cls, path):
         fls = get_active_files(path)
 
-        # logger.info("Found the following Antenna Simulators in {}: {}".format(
-        #     cls.__name__, [os.path.basename(fl) for fl in fls if os.path.basename(fl).startswith("AntSim")])
-        # )
         groups = [
             re.search(cls._content_type.file_pattern, fl).groupdict() for fl in fls
         ]
@@ -594,8 +640,10 @@ class _SpectraOrResistanceFolder(_DataContainer):
 
     def read_all(self):
         """Read all spectra"""
+        out = {}
         for name in LOAD_ALIASES:
-            getattr(self, name).read()
+            out[name] = getattr(self, name).read()
+        return out
 
 
 class Spectra(_SpectraOrResistanceFolder):
@@ -706,6 +754,7 @@ class S1P(_DataFile):
 class _S11SubDir(_DataContainer):
     STANDARD_NAMES = S1P.POSSIBLE_KINDS
     _content_type = S1P
+    folder_pattern = None
 
     def __init__(self, path, run_num=None, fix=False):
         super().__init__(path, fix)
@@ -716,14 +765,14 @@ class _S11SubDir(_DataContainer):
             setattr(
                 self,
                 name.lower(),
-                S1P(os.path.join(path, name + "{:<02}.s1p".format(self.run_num))),
+                S1P(os.path.join(path, name + "{:>02}.s1p".format(self.run_num))),
             )
 
         # All frequencies should be the same.
         self.freq = getattr(self, self.STANDARD_NAMES[0].lower()).freq
 
         self.filenames = [
-            getattr(self, thing.lower()).fname for thing in self.STANDARD_NAMES
+            getattr(self, thing.lower()).path for thing in self.STANDARD_NAMES
         ]
 
     @property
@@ -755,6 +804,12 @@ class _S11SubDir(_DataContainer):
                 else:
                     newpath = path
 
+                # Sometimes they don't have repeat_nums attached.
+                if os.path.basename(newpath) == "SwitchingState":
+                    newpath = newpath.replace("SwitchingState", "SwitchingState01")
+                elif os.path.basename(newpath) == "ReceiverReading":
+                    newpath = newpath.replace("ReceiverReading", "ReceiverReading01")
+
                 if newpath != path:
                     shutil.move(path, newpath)
                     path = newpath
@@ -778,7 +833,7 @@ class _S11SubDir(_DataContainer):
 
     def _get_max_run_num(self):
         return max(
-            int(re.match(S1P.file_pattern, os.path.basename(fl)).groups("run_num"))
+            int(re.match(S1P.file_pattern, os.path.basename(fl)).group("run_num"))
             for fl in self.active_contents
         )
 
@@ -789,7 +844,7 @@ class LoadS11(_S11SubDir):
 
     def __init__(self, direc, run_num=None, fix=False):
         super().__init__(direc, run_num, fix)
-        self.load_name = self._re_match.groupdict("load_name")
+        self.load_name = self._re_match.groupdict()["load_name"]
 
 
 class AntSimS11(LoadS11):
@@ -852,26 +907,36 @@ class S11Dir(_DataContainer):
         """
         super().__init__(path, fix)
 
-        if type(repeat_num) == int or repeat_num is None:
-            rep_nums = {"SwitchingState": repeat_num, "ReceiverReading": repeat_num}
+        if type(repeat_num) == int:
+            sw_rep_num = repeat_num
+            rr_rep_num = repeat_num
+        elif repeat_num is None:
+            sw_rep_num = self._get_highest_rep_num(path, "SwitchingState")
+            rr_rep_num = self._get_highest_rep_num(path, "ReceiverReading")
         else:
-            rep_nums = repeat_num
+            sw_rep_num = repeat_num["SwitchingState"]
+            rr_rep_num = repeat_num["ReceiverReading"]
 
         if type(run_num) == int or run_num is None:
-            run_nums = {"SwitchingState": run_num, "ReceiverReading": run_num}.update(
-                {name: run_num for name in LOAD_ALIASES.values()}
-            )
+            run_nums = {
+                **{"SwitchingState": run_num, "ReceiverReading": run_num},
+                **{name: run_num for name in LOAD_ALIASES.values()},
+            }
         else:
             run_nums = run_num
 
+        logger.debug(
+            "Highest rep_num for switching state: {}".format(
+                self._get_highest_rep_num(path, "SwitchingState")
+            )
+        )
+
         self.switching_state = SwitchingState(
-            os.path.join(path, "SwitchingState" + rep_nums.get("SwitchingState", None)),
+            os.path.join(path, "SwitchingState{:>02}".format(sw_rep_num)),
             run_num=run_nums.get("SwitchingState", None),
         )
         self.receiver_reading = ReceiverReading(
-            os.path.join(
-                path, "ReceiverReading" + rep_nums.get("ReceiverReading", None)
-            ),
+            os.path.join(path, "ReceiverReading{:>02}".format(rr_rep_num)),
             run_num=run_nums.get("ReceiverReading", None),
         )
 
@@ -883,6 +948,13 @@ class S11Dir(_DataContainer):
             )
 
     @classmethod
+    def _get_highest_rep_num(cls, path, kind):
+        fls = get_active_files(os.path.join(path))
+        fls = [fl for fl in fls if kind in fl]
+        rep_nums = [int(fl[-2:]) for fl in fls]
+        return max(rep_nums)
+
+    @classmethod
     def check_self(cls, path, fix=False):
         logger.structure("Checking S11 folder contents at {}".format(path))
 
@@ -890,7 +962,7 @@ class S11Dir(_DataContainer):
             logger.error("This path does not exist: {}".format(path))
 
         if not os.path.basename(path) == "S11":
-            logger.error("The S11 folder should be called S11")
+            logger.error("The S11 folder sho**kwargsuld be called S11")
 
         return path, True
 
@@ -952,17 +1024,17 @@ class CalibrationObservation(_DataContainer):
             run_nums = run_num
 
         self.spectra = Spectra(
-            os.path.join(self.base_path, "Spectra"),
+            os.path.join(self.path, "Spectra"),
             run_num=run_nums.get("Spectra", None),
             fix=fix,
         )
         self.resistance = Resistances(
-            os.path.join(self.base_path, "Resistance"),
+            os.path.join(self.path, "Resistance"),
             run_num=run_nums.get("Resistance", None),
             fix=fix,
         )
         self.s11 = S11Dir(
-            os.path.join(self.base_path, "S11"),
+            os.path.join(self.path, "S11"),
             run_num=run_nums.get("S11", None),
             repeat_num=repeat_num,
             fix=fix,
