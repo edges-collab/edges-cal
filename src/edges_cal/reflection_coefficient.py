@@ -1,6 +1,5 @@
 import numpy as np
-
-from . import io
+from edges_io import io
 
 
 def impedance2gamma(Z, Z0):
