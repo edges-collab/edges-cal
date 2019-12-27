@@ -8,8 +8,8 @@ Created on Thu Feb 08 21:07:31 2018
 from os import path
 
 import numpy as np
+from edges_io import io
 
-from . import io
 from . import reflection_coefficient as rc
 
 

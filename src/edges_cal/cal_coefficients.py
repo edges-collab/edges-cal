@@ -18,14 +18,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.convolution import Gaussian1DKernel, convolve
 from cached_property import cached_property
+from edges_io import io
+from edges_io.logging import logger
 
 from . import S11_correction as s11
-from . import io
 from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
 from . import xrfi
-from .logging import logger
 
 LOAD_ALIASES = {
     "ambient": "Ambient",
