@@ -1,5 +1,11 @@
 # Changelog
 
+## Version 0.3.0
+
+### Changed
+- load_name now always an alias (hot_load, ambient, short, open)
+- Load.temp_ave now always the correct one (even for hot load)
+
 ## Version 0.2.1
 
 ### Added

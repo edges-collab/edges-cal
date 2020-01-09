@@ -27,13 +27,6 @@ from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
 from . import xrfi
 
-LOAD_ALIASES = {
-    "ambient": "Ambient",
-    "hot_load": "HotLoad",
-    "open": "LongCableOpen",
-    "short": "LongCableShorted",
-}
-
 
 class FrequencyRange:
     """
@@ -196,10 +189,10 @@ class VNA:
 
 class SwitchCorrection:
     default_nterms = {
-        "Ambient": 37,
-        "HotLoad": 37,
-        "LongCableOpen": 105,
-        "LongCableShorted": 105,
+        "ambient": 37,
+        "hot_load": 37,
+        "open": 105,
+        "short": 105,
         "AntSim2": 55,
         "AntSim3": 55,
         "AntSim4": 55,
@@ -275,7 +268,7 @@ class SwitchCorrection:
         repeat_num=None,
         **kwargs,
     ):
-        antsim = load_name.startswith("AntSim")
+        antsim = load_name.startswith("ant_sim")
 
         if not antsim:
             s11_load_dir = io.LoadS11(
@@ -340,7 +333,11 @@ class SwitchCorrection:
         n_terms = n_terms or self.n_terms
 
         if not isinstance(n_terms, int):
-            raise ValueError("n_terms must be an integer, got {}".format(n_terms))
+            raise ValueError(
+                "n_terms must be an integer, got {} with load {}".format(
+                    n_terms, self.load_name
+                )
+            )
 
         def get_model(mag):
             # Returns a callable function that will evaluate a model onto a set of
@@ -514,28 +511,16 @@ class LoadSpectrum:
 
         self.load_name = self.spec_obj.load_name
         assert (
-            self.load_name == self.resistance_obj.load_name
+            self.spec_obj.load_name == self.resistance_obj.load_name
         ), "spec and resistance load_name must be the same"
-
-        #        self.prefix = LOAD_ALIASES.get(self.load_name, self.load_name)
-
-        #        self.path = root
-
-        # self.path_s11 = os.path.join(root, "S11", self.prefix)
-        # assert os.path.exists(
-        #     self.path_s11
-        # ), "That load name does not exist in this directory!"
 
         self.spec_files = self.spec_obj.path
         self.resistance_file = self.resistance_obj.path
 
         self.run_num = self.spec_obj.run_num
-        # self.path_res = os.path.join(root, "Resistance", self.prefix)
-        # self.path_spec = os.path.join(root, "Spectra")
 
         self.cache_dir = cache_dir or os.path.curdir
 
-        #        self.s11_model_nterms = s11_model_nterms
         self.rfi_kernel_width_time = rfi_kernel_width_time
         self.rfi_kernel_width_freq = rfi_kernel_width_freq
         self.rfi_threshold = rfi_threshold
@@ -897,7 +882,7 @@ class HotLoadCorrection:
             hot_load_s11, SwitchCorrection
         ), "hot_load_s11 must be a switch correction"
         assert (
-            hot_load_s11.load_name == "HotLoad"
+            hot_load_s11.load_name == "hot_load"
         ), "hot_load_s11 must be a hot_load s11"
 
         rht = rc.gamma_de_embed(
@@ -929,7 +914,13 @@ class HotLoadCorrection:
 class Load:
     """Wrapper class containing all relevant information for a given load."""
 
-    def __init__(self, spectrum: LoadSpectrum, reflections: SwitchCorrection):
+    def __init__(
+        self,
+        spectrum: LoadSpectrum,
+        reflections: SwitchCorrection,
+        hot_load_correction: [HotLoadCorrection, None] = None,
+        ambient: [LoadSpectrum, None] = None,
+    ):
         assert isinstance(spectrum, LoadSpectrum), "spectrum must be a LoadSpectrum"
         assert isinstance(
             reflections, SwitchCorrection
@@ -938,6 +929,11 @@ class Load:
 
         self.spectrum = spectrum
         self.reflections = reflections
+        self.load_name = spectrum.load_name
+
+        if self.load_name == "hot_load":
+            self._correction = hot_load_correction
+            self._ambient = ambient
 
     @classmethod
     def from_path(
@@ -987,9 +983,15 @@ class Load:
     def s11_model(self):
         return self.reflections.s11_model
 
-    @property
+    @cached_property
     def temp_ave(self):
-        return self.spectrum.temp_ave
+        if self.load_name != "hot_load":
+            return self.spectrum.temp_ave
+        else:
+            G = self._correction.power_gain(self.freq.freq, self.reflections)
+
+            # temperature
+            return G * self.spectrum.temp_ave + (1 - G) * self._ambient.temp_ave
 
     @property
     def averaged_Q(self):
@@ -1082,6 +1084,15 @@ class CalibrationObservation:
 
         self.path = self.io.path
 
+        hot_load_correction = HotLoadCorrection(
+            semi_rigid_path
+            or os.path.join(
+                io.utils.get_parent_dir(self.path, 2), "SemiRigidCableMeasurements"
+            ),
+            f_low,
+            f_high,
+        )
+
         self._loads = {}
         for source in self._sources:
             load = LoadSpectrum(
@@ -1104,21 +1115,21 @@ class CalibrationObservation:
                 f_high=f_high,
                 resistance=resistance_m,
             )
-            self._loads[source] = Load(load, refl)
+            if source == "hot_load":
+                print("making hot load")
+                self._loads[source] = Load(
+                    load,
+                    refl,
+                    hot_load_correction=hot_load_correction,
+                    ambient=self._loads["ambient"].spectrum,
+                )
+            else:
+                self._loads[source] = Load(load, refl)
 
         self.short = self._loads["short"]
         self.open = self._loads["open"]
         self.hot_load = self._loads["hot_load"]
         self.ambient = self._loads["ambient"]
-
-        self.hot_load_correction = HotLoadCorrection(
-            semi_rigid_path
-            or os.path.join(
-                io.get_parent_dir(self.path, 2), "SemiRigidCableMeasurements"
-            ),
-            f_low,
-            f_high,
-        )
 
         self.lna = LNA(
             self.io.s11.receiver_reading,
@@ -1208,16 +1219,6 @@ class CalibrationObservation:
         return figs
 
     @cached_property
-    def hot_load_corrected_ave_temp(self):
-        """The hot-load averaged temperature, as a function of frequency"""
-        G = self.hot_load_correction.power_gain(
-            self.freq.freq, self.hot_load.reflections
-        )
-
-        # temperature
-        return G * self.hot_load.temp_ave + (1 - G) * self.ambient.temp_ave
-
-    @cached_property
     def s11_correction_models(self):
         """Dictionary of S11 correction models, one for each source"""
         return {
@@ -1235,14 +1236,7 @@ class CalibrationObservation:
             T_raw={k: source.averaged_spectrum for k, source in self._loads.items()},
             gamma_rec=self.lna.s11_model(self.freq.freq),
             gamma_ant=self.s11_correction_models,
-            T_ant={
-                k: (
-                    self.hot_load_corrected_ave_temp
-                    if k == "hot_load"
-                    else source.temp_ave
-                )
-                for k, source in self._loads.items()
-            },
+            T_ant={k: source.temp_ave for k, source in self._loads.items()},
             cterms=self.cterms,
             wterms=self.wterms,
         )
@@ -1390,7 +1384,9 @@ class CalibrationObservation:
                     "load must be a Load object or a string (one of {ambient,hot_load,open,short}"
                 )
         else:
-            assert isinstance(load, Load), "load must be a Load instance"
+            assert isinstance(
+                load, Load
+            ), "load must be a Load instance, got the {} {}".format(load, type(Load))
         return load
 
     def decalibrate(self, temp: np.ndarray, load: [Load, str], freq: np.ndarray = None):
@@ -1483,12 +1479,12 @@ class CalibrationObservation:
             label=f"Calibrated {load.spectrum.load_name} [RMS = {rms:.3f}]",
         )
 
-        if load != "hot_load":
+        if load.load_name != "hot_load":
             ax.axhline(load.temp_ave, color="C2", label="Average thermistor temp")
         else:
             ax.plot(
                 self.freq.freq,
-                self.hot_load_corrected_ave_temp,
+                self.hot_load.temp_ave,
                 color="C2",
                 label="Average thermistor temp",
             )
