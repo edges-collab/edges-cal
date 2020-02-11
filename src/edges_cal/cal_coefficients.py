@@ -1116,7 +1116,6 @@ class CalibrationObservation:
                 resistance=resistance_m,
             )
             if source == "hot_load":
-                print("making hot load")
                 self._loads[source] = Load(
                     load,
                     refl,

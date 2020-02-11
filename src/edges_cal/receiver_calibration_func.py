@@ -245,10 +245,14 @@ def get_K(gamma_rec, gamma_ant, F=None, alpha=None, G=None):
     if G is None:
         G = 1 - np.abs(gamma_rec) ** 2
 
-    K1 = (1 - np.abs(gamma_ant) ** 2) * np.abs(F) ** 2 / G
-    K2 = (np.abs(gamma_ant) ** 2) * (np.abs(F) ** 2) / G
-    K3 = (np.abs(gamma_ant) * np.abs(F) / G) * np.cos(alpha)
-    K4 = (np.abs(gamma_ant) * np.abs(F) / G) * np.sin(alpha)
+    F = np.abs(F)
+    gant = np.abs(gamma_ant)
+    fgant = gant * F / G
+
+    K2 = fgant ** 2 * G
+    K1 = F ** 2 / G - K2
+    K3 = fgant * np.cos(alpha)
+    K4 = fgant * np.sin(alpha)
 
     return K1, K2, K3, K4
 
@@ -417,6 +421,10 @@ def get_linear_coefficients(gamma_ant, gamma_rec, sca, off, TU, TC, TS, T_load=3
     """
     K = get_K(gamma_rec, gamma_ant)
 
+    return get_linear_coefficients_from_K(K, sca, off, TU, TC, TS, T_load)
+
+
+def get_linear_coefficients_from_K(K, sca, off, TU, TC, TS, T_load=300):
     # Noise wave contribution
     noise_wave_terms = TU * K[1] + TC * K[2] + TS * K[3]
 
