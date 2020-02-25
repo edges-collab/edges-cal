@@ -17,7 +17,6 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.convolution import Gaussian1DKernel, convolve
-from cached_property import cached_property
 from edges_io import io
 from edges_io.logging import logger
 
@@ -26,6 +25,7 @@ from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
 from . import xrfi
+from .cached_property import cached_property
 
 
 class FrequencyRange:
@@ -135,8 +135,7 @@ class EdgesFrequencyRange(FrequencyRange):
         """
         # Full frequency vector
         fstep = max_freq / nchannels
-        freqs = np.arange(0, max_freq, fstep)
-        return freqs
+        return np.arange(0, max_freq, fstep)
 
 
 class VNA:
@@ -899,8 +898,7 @@ class HotLoadCorrection:
         # absolute value of S_21
         abs_s21 = np.sqrt(np.abs(self.s12_model(freq)))
 
-        # available power gain
-        G = (
+        return (
             (abs_s21 ** 2)
             * (1 - np.abs(rht) ** 2)
             / (
@@ -908,7 +906,6 @@ class HotLoadCorrection:
                 * (1 - (np.abs(hot_load_s11.s11_model(freq))) ** 2)
             )
         )
-        return G
 
 
 class Load:
@@ -1116,7 +1113,6 @@ class CalibrationObservation:
                 resistance=resistance_m,
             )
             if source == "hot_load":
-                print("making hot load")
                 self._loads[source] = Load(
                     load,
                     refl,
@@ -1213,10 +1209,10 @@ class CalibrationObservation:
         dict:
             Each entry has a key of the source name, and the value is a matplotlib figure.
         """
-        figs = {}
-        for name, source in self._loads.items():
-            figs[name] = source.reflections.plot_residuals()
-        return figs
+        return {
+            name: source.reflections.plot_residuals()
+            for name, source in self._loads.items()
+        }
 
     @cached_property
     def s11_correction_models(self):
@@ -1296,50 +1292,35 @@ class CalibrationObservation:
         """
         Scaling calibration parameter.
         """
-        if f is None:
-            fnorm = self.freq.freq_recentred
-        else:
-            fnorm = self.freq.normalize(f)
+        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.C1_poly(fnorm)
 
     def C2(self, f=None):
         """
         Offset calibration parameter.
         """
-        if f is None:
-            fnorm = self.freq.freq_recentred
-        else:
-            fnorm = self.freq.normalize(f)
+        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.C2_poly(fnorm)
 
     def Tunc(self, f=None):
         """
         Uncorrelated noise-wave parameter
         """
-        if f is None:
-            fnorm = self.freq.freq_recentred
-        else:
-            fnorm = self.freq.normalize(f)
+        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.Tunc_poly(fnorm)
 
     def Tcos(self, f=None):
         """
         Cosine noise-wave parameter
         """
-        if f is None:
-            fnorm = self.freq.freq_recentred
-        else:
-            fnorm = self.freq.normalize(f)
+        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.Tcos_poly(fnorm)
 
     def Tsin(self, f=None):
         """
         Sine noise-wave parameter
         """
-        if f is None:
-            fnorm = self.freq.freq_recentred
-        else:
-            fnorm = self.freq.normalize(f)
+        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.Tsin_poly(fnorm)
 
     def get_linear_coefficients(self, load: [Load, str]):
@@ -1461,9 +1442,7 @@ class CalibrationObservation:
 
         # binning
         temp_calibrated = self.calibrate(load)
-        #        f_new = np.linspace(self.freq.freq.min(), self.freq.freq.max(), bins)
 
-        # TODO: this would probably be better using a convolution kernel
         if bins > 0:
             freq_ave_cal = convolve(
                 temp_calibrated, Gaussian1DKernel(stddev=bins), boundary="extend"
@@ -1484,7 +1463,7 @@ class CalibrationObservation:
         else:
             ax.plot(
                 self.freq.freq,
-                self.hot_load.temp_ave,
+                load.temp_ave,
                 color="C2",
                 label="Average thermistor temp",
             )
@@ -1501,6 +1480,26 @@ class CalibrationObservation:
         ax.legend()
 
         return plt.gcf()
+
+    def get_load_residuals(self):
+        """Get residuals of the calibrated temperature for a each load."""
+        out = {}
+        for source in self._sources:
+            load = self._load_str_to_load(source)
+            cal = self.calibrate(load)
+            true = load.temp_ave
+            out[source] = cal - true
+        return out
+
+    def get_rms(self, smooth: int = 4):
+        """Return a dict of RMS values for each source."""
+        resids = self.get_load_residuals()
+        out = {}
+        for name, res in resids.items():
+            if smooth > 1:
+                res = convolve(res, Gaussian1DKernel(stddev=smooth), boundary="extend")
+            out[name] = np.sqrt(np.nanmean(res ** 2))
+        return out
 
     def plot_calibrated_temps(self, bins=64):
         """
@@ -1605,3 +1604,17 @@ class CalibrationObservation:
 
         fig.suptitle("Calibration Parameters", fontsize=15)
         return fig
+
+    def invalidate_cache(self):
+        """Invalidate all cached attributes so they must be recalculated."""
+        if not hasattr(self, "_cached_"):
+            return
+
+        for cache in self._cached_:
+            del self.__dict__[cache]
+
+    def update(self, **kwargs):
+        """Update the class in-place, invalidating the cache as well."""
+        self.invalidate_cache()
+        for k, v in kwargs.items():
+            setattr(self, k, v)
