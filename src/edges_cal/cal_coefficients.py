@@ -307,7 +307,7 @@ class SwitchCorrection:
             self.internal_switch,
             f_in=self.freq.freq,
             resistance_m=self.resistance,
-        )
+        )[0]
 
     @lru_cache()
     def get_s11_correction_model(self, n_terms=None):
@@ -876,7 +876,6 @@ class HotLoadCorrection:
         return self._get_model_kind("s22")
 
     def power_gain(self, freq, hot_load_s11: SwitchCorrection):
-        """Define Eq. 9 from M17"""
         assert isinstance(
             hot_load_s11, SwitchCorrection
         ), "hot_load_s11 must be a switch correction"
@@ -884,26 +883,31 @@ class HotLoadCorrection:
             hot_load_s11.load_name == "hot_load"
         ), "hot_load_s11 must be a hot_load s11"
 
-        rht = rc.gamma_de_embed(
-            self.s11_model(freq),
-            self.s12_model(freq),
-            self.s22_model(freq),
+        return self.get_power_gain(
+            {
+                "s11": self.s11_model(freq),
+                "s12s21": self.s12_model(freq),
+                "s22": self.s22_model(freq),
+            },
             hot_load_s11.s11_model(freq),
         )
 
-        # inverting the direction of the s-parameters,
-        # since the port labels have to be inverted to match those of Pozar eqn 10.25
-        s11_sr_rev = self.s11_model(freq)
-
-        # absolute value of S_21
-        abs_s21 = np.sqrt(np.abs(self.s12_model(freq)))
+    @staticmethod
+    def get_power_gain(semi_rigid_sparams, hot_load_s11):
+        """Define Eq. 9 from M17"""
+        rht = rc.gamma_de_embed(
+            semi_rigid_sparams["s11"],
+            semi_rigid_sparams["s12s21"],
+            semi_rigid_sparams["s22"],
+            hot_load_s11,
+        )
 
         return (
-            (abs_s21 ** 2)
+            np.abs(semi_rigid_sparams["s12s21"])
             * (1 - np.abs(rht) ** 2)
             / (
-                (np.abs(1 - s11_sr_rev * rht)) ** 2
-                * (1 - (np.abs(hot_load_s11.s11_model(freq))) ** 2)
+                (np.abs(1 - semi_rigid_sparams["s11"] * rht)) ** 2
+                * (1 - np.abs(hot_load_s11) ** 2)
             )
         )
 
