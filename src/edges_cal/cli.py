@@ -2,6 +2,7 @@ import logging
 from os.path import join
 
 import click
+
 from edges_cal import cal_coefficients as cc
 
 from . import io
@@ -41,7 +42,7 @@ main = click.Group()
 )
 @click.option(
     "-W",
-    "--w-terms",
+    "--weights-terms",
     type=int,
     default=12,
     help="number of terms to fit for TC, TS and TU",
