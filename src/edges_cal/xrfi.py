@@ -293,7 +293,7 @@ def xrfi_medfilt(spectrum, threshold=6, Kt=16, Kf=16):
         return flags
 
 
-def xrfi_explicit(f, rfi_file=None, extra_rfi=None, in_place=False):
+def xrfi_explicit(f, rfi_file=None, extra_rfi=None):
     """
     Excise RFI from given data using a explicitly set list of flag ranges.
 
@@ -307,8 +307,6 @@ def xrfi_explicit(f, rfi_file=None, extra_rfi=None, in_place=False):
         uses a file included in `edges-analysis` with known RFI channels from the MRO.
     extra_rfi : list, optional
         A list of extra RFI channels (in the format of the `rfi_ranges` from the `rfi_file`).
-    in_place : bool, optional
-        Whether to perform the masking in-place (i.e. overwriting the input `spectrum` and `weights`).
 
     Returns
     -------
