@@ -381,7 +381,7 @@ class SwitchCorrection:
             Matplotlib Figure handle.
         """
         fig, ax = plt.subplots(
-            4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="w"
+            4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="weights"
         )
         for axx in ax:
             axx.xaxis.set_ticks(
@@ -566,9 +566,10 @@ class LoadSpectrum:
         spec = self._ave_and_var_spec[0]["Qratio"]
 
         if self.rfi_removal == "1D":
-            spec = xrfi.remove_rfi(
+            flags = xrfi.xrfi_medfilt(
                 spec, threshold=self.rfi_threshold, Kf=self.rfi_kernel_width_freq
             )
+            spec[flags] = np.nan
         return spec
 
     @cached_property
@@ -681,7 +682,7 @@ class LoadSpectrum:
         if not os.path.exists(self.cache_dir):
             os.mkdir(self.cache_dir)
 
-        with h5py.File(fname, "w") as fl:
+        with h5py.File(fname, "weights") as fl:
             logger.info("Saving reduced spectra to cache at {}".format(fname))
             for kind in kinds:
                 fl[kind + "_mean"] = means[kind]
@@ -700,12 +701,13 @@ class LoadSpectrum:
                 if key != "Qratio":
                     val[val == 0] = np.inf
 
-                val = xrfi.remove_rfi(
+                flags = xrfi.xrfi_medfilt(
                     val,
                     threshold=self.rfi_threshold,
                     Kt=self.rfi_kernel_width_time,
                     Kf=self.rfi_kernel_width_freq,
                 )
+                val[flags] = np.nan
                 spec[key] = val
         return spec
 
@@ -1442,7 +1444,7 @@ class CalibrationObservation:
         load = self._load_str_to_load(load)
 
         if fig is None and ax is None:
-            fig, ax = plt.subplots(1, 1, facecolor="w")
+            fig, ax = plt.subplots(1, 1, facecolor="weights")
 
         # binning
         temp_calibrated = self.calibrate(load)
@@ -1585,7 +1587,7 @@ class CalibrationObservation:
         """
         if fig is None or ax is None:
             fig, ax = plt.subplots(
-                5, 1, facecolor="w", gridspec_kw={"hspace": 0.05}, figsize=(10, 9)
+                5, 1, facecolor="weights", gridspec_kw={"hspace": 0.05}, figsize=(10, 9)
             )
 
         labels = [
