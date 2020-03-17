@@ -53,6 +53,20 @@ class FrequencyRange:
             raise ValueError("Cannot create frequency range: f_low >= f_high")
 
     @cached_property
+    def n(self):
+        """Number of frequencies in the (masked) array"""
+        len(self.freq.freq)
+
+    @cached_property
+    def df(self):
+        """Resolution of the frequencies."""
+        if not np.allclose(np.diff(self.freq)):
+            warnings.warn(
+                "Not all frequency intervals are even, so using df is ill-advised!"
+            )
+        return self.freq[1] - self.freq[0]
+
+    @cached_property
     def min(self):
         """Minimum frequency in the array"""
         return self.freq.min()
