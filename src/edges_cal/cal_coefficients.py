@@ -12,6 +12,7 @@ import os
 import warnings
 from functools import lru_cache
 from hashlib import md5
+from pathlib import Path
 
 import h5py
 import matplotlib.pyplot as plt
@@ -19,6 +20,7 @@ import numpy as np
 from astropy.convolution import Gaussian1DKernel, convolve
 from edges_io import io
 from edges_io.logging import logger
+from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 
 from . import S11_correction as s11
 from . import modelling as mdl
@@ -96,7 +98,7 @@ class FrequencyRange:
     @cached_property
     def center(self):
         """The center of the frequency array"""
-        return self.freq.min() + self.range / 2.0
+        return self.min + self.range / 2.0
 
     @cached_property
     def freq_recentred(self):
@@ -395,7 +397,7 @@ class SwitchCorrection:
             Matplotlib Figure handle.
         """
         fig, ax = plt.subplots(
-            4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="weights"
+            4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="w"
         )
         for axx in ax:
             axx.xaxis.set_ticks(
@@ -696,7 +698,7 @@ class LoadSpectrum:
         if not os.path.exists(self.cache_dir):
             os.mkdir(self.cache_dir)
 
-        with h5py.File(fname, "weights") as fl:
+        with h5py.File(fname, "w") as fl:
             logger.info("Saving reduced spectra to cache at {}".format(fname))
             for kind in kinds:
                 fl[kind + "_mean"] = means[kind]
@@ -1458,7 +1460,7 @@ class CalibrationObservation:
         load = self._load_str_to_load(load)
 
         if fig is None and ax is None:
-            fig, ax = plt.subplots(1, 1, facecolor="weights")
+            fig, ax = plt.subplots(1, 1, facecolor="w")
 
         # binning
         temp_calibrated = self.calibrate(load)
@@ -1601,7 +1603,7 @@ class CalibrationObservation:
         """
         if fig is None or ax is None:
             fig, ax = plt.subplots(
-                5, 1, facecolor="weights", gridspec_kw={"hspace": 0.05}, figsize=(10, 9)
+                5, 1, facecolor="w", gridspec_kw={"hspace": 0.05}, figsize=(10, 9)
             )
 
         labels = [
@@ -1638,3 +1640,83 @@ class CalibrationObservation:
         self.invalidate_cache()
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+    def write(self, filename: [str, Path]):
+        """
+        Write all information required to calibrate a new spectrum to file.
+
+        Parameters
+        ----------
+        filename : path
+            the filename to write to.
+        """
+
+        with h5py.File(filename, "w") as fl:
+            # Write attributes
+            fl.attrs["path"] = self.path
+            fl.attrs["cterms"] = self.cterms
+            fl.attrs["wterms"] = self.wterms
+
+            fl["C1"] = self.C1_poly.coefficients
+            fl["C2"] = self.C2_poly.coefficients
+            fl["Tunc"] = self.Tunc_poly.coefficients
+            fl["Tcos"] = self.Tcos_poly.coefficients
+            fl["Tsin"] = self.Tsin_poly.coefficients
+            fl["frequencies"] = self.freq.freq
+            fl["lna_s11"] = self.lna.s11_model(self.freq.freq)
+
+
+class Calibration:
+    def __init__(self, filename):
+        with h5py.File(filename, "r") as fl:
+            self.path = fl.attrs["path"]
+            self.cterms = fl.attrs["cterms"]
+            self.wterms = fl.attrs["wterms"]
+
+            self.C1_poly = np.poly1d(fl["C1"][...])
+            self.C2_poly = np.poly1d(fl["C2"][...])
+            self.Tcos_poly = np.poly1d(fl["Tcos"][...])
+            self.Tsin_poly = np.poly1d(fl["Tsin"][...])
+            self.Tunc_poly = np.poly1d(fl["Tunc"][...])
+
+            self.freq = FrequencyRange(fl["frequencies"][...])
+            self.lna_s11 = Spline(self.freq.freq, fl["lna_s11"][...])
+
+    def C1(self, freq):
+        return self.C1_poly(self.freq.normalize(freq))
+
+    def C2(self, freq):
+        return self.C2_poly(self.freq.normalize(freq))
+
+    def Tcos(self, freq):
+        return self.Tcos_poly(self.freq.normalize(freq))
+
+    def Tsin(self, freq):
+        return self.C1_poly(self.freq.normalize(freq))
+
+    def Tunc(self, freq):
+        return self.C1_poly(self.freq.normalize(freq))
+
+    def _linear_coefficients(self, freq, ant_s11):
+        return rcf.get_linear_coefficients(
+            ant_s11,
+            self.lna_s11(freq),
+            self.C1(freq),
+            self.C2(freq),
+            self.Tunc(freq),
+            self.Tcos(freq),
+            self.Tsin(freq),
+            300,
+        )
+
+    def calibrate_temp(self, freq, temp, ant_s11):
+        a, b = self._linear_coefficients(freq, ant_s11)
+        return temp * a + b
+
+    def decalibrate_temp(self, freq, temp, ant_s11):
+        a, b = self._linear_coefficients(freq, ant_s11)
+        return (temp - b) / a
+
+    def calibrate_Q(self, freq, Q, ant_s11):
+        uncal_temp = 400 * Q + 300
+        return self.calibrate_temp(freq, uncal_temp, ant_s11)
