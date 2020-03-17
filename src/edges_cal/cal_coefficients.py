@@ -1663,7 +1663,8 @@ class CalibrationObservation:
             fl["Tcos"] = self.Tcos_poly.coefficients
             fl["Tsin"] = self.Tsin_poly.coefficients
             fl["frequencies"] = self.freq.freq
-            fl["lna_s11"] = self.lna.s11_model(self.freq.freq)
+            fl["lna_s11_real"] = self.lna.s11_model(self.freq.freq).real
+            fl["lna_s11_imag"] = self.lna.s11_model(self.freq.freq).imag
 
 
 class Calibration:
@@ -1680,7 +1681,11 @@ class Calibration:
             self.Tunc_poly = np.poly1d(fl["Tunc"][...])
 
             self.freq = FrequencyRange(fl["frequencies"][...])
-            self.lna_s11 = Spline(self.freq.freq, fl["lna_s11"][...])
+            self._lna_s11_rl = Spline(self.freq.freq, fl["lna_s11_real"][...])
+            self._lna_s11_im = Spline(self.freq.freq, fl["lna_s11_imag"][...])
+
+    def lna_s11(self, freq):
+        return self._lna_s11_rl(freq) + 1j * self._lna_s11_im(freq)
 
     def C1(self, freq):
         return self.C1_poly(self.freq.normalize(freq))
