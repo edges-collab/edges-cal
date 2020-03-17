@@ -318,10 +318,10 @@ def xrfi_explicit(f, rfi_file=None, extra_rfi=None):
     rfi_freqs = []
     if rfi_file:
         with open(rfi_file, "r") as fl:
-            rfi_freqs.append(yaml.load(fl, Loader=yaml.FullLoader)["rfi_ranges"])
+            rfi_freqs += yaml.load(fl, Loader=yaml.FullLoader)["rfi_ranges"]
 
     if extra_rfi:
-        rfi_freqs.append(extra_rfi)
+        rfi_freqs += extra_rfi
 
     flags = np.zeros(len(f), dtype=bool)
     for low, high in rfi_freqs:
@@ -520,7 +520,9 @@ def xrfi_poly(
     flags = np.zeros(nf, dtype=bool)
     f = np.linspace(-1, 1, nf) if not f_log else np.logspace(0, f_ratio, nf)
 
-    data_mask = spectrum > 0 & weights > 0 & ~np.isnan(spectrum) & ~np.isinf(spectrum)
+    data_mask = (
+        (spectrum > 0) & (weights > 0) & ~np.isnan(spectrum) & ~np.isinf(spectrum)
+    )
     flags |= ~data_mask
 
     n_flags = np.sum(flags)
@@ -543,12 +545,12 @@ def xrfi_poly(
         if t_log:
             model = np.exp(model)
 
-        res = s - model[flags]
+        res = s - model[~flags]
 
         par = np.polyfit(ff, np.abs(res), n_resid - 1)
-        model_std = np.polyval(par, f)
+        model_std = np.polyval(par, ff)
 
-        flags |= np.abs(res) > n_abs_resid_threshold * model_std
+        flags[~flags] |= np.abs(res) > n_abs_resid_threshold * model_std
 
         n_flags_new = np.sum(flags)
         counter += 1
