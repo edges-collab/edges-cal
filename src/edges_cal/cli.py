@@ -42,7 +42,7 @@ main = click.Group()
 )
 @click.option(
     "-W",
-    "--weights-terms",
+    "--w-terms",
     type=int,
     default=12,
     help="number of terms to fit for TC, TS and TU",
