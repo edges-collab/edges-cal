@@ -1590,10 +1590,24 @@ class CalibrationObservation:
             ],
         )
     def write_coefficients_h5(self, path: [str, None] = None):
+        """
+        This is meant to be more in-depth than the write function below, and 
+        should encapsulate the entire calibration process.
+        
+        Save calibration models (C1, C2, Tunc, Tcos and Tsin) as h5, as well as 
+        the uncalibrated and calibrated temperatures for each load.
+         
+        Parameters
+        ----------
+        path : str
+            Directory in which to write the file. The filename starts with `All_cal-params`
+            and includes parameters of the class in the filename. By default, current
+            directory.
+        """
         path = path or os.path.curdir
         file_name = os.path.join(
             path, 
-            "calibration_parameters_fmin{}_fmax{}_C{}_W{}.h5".format(
+            "calibration_fmin{}_fmax{}_C{}_W{}.h5".format(
                 self.freq.freq.min(), self.freq.freq.max(), self.cterms, self.wterms
             )
         )
@@ -1608,6 +1622,7 @@ class CalibrationObservation:
                 fl[source]["temp_cal"] = cal
                 fl[source]["residuals"] = load.get_load_residuals(load)
                 fl[source]["RMS"] = rms[source]
+                
             fl["Frequencies"] = self.freq.freq
             fl["C1"] = self.C1()
             fl["C2"] = self.C2()
