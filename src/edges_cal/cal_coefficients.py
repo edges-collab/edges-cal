@@ -1561,12 +1561,42 @@ class CalibrationObservation:
             [
                 self.freq.freq,
                 self.C1(),
-                self.C1(),
+                self.C2(),
                 self.Tunc(),
                 self.Tcos(),
                 self.Tsin(),
             ],
         )
+    def write_coefficients_h5(self, path: [str, None] = None):
+        path = path or os.path.curdir
+        file_name = os.path.join(
+            path, 
+            "calibration_parameters_fmin{}_fmax{}_C{}_W{}.h5".format(
+                self.freq.freq.min(), self.freq.freq.max(), self.cterms, self.wterms
+            )
+        )
+        rms = self.get_rms
+        with h5py.File(file_name, "w") as fl:
+            for source in self._sources:
+                load = self._load_str_to_load(source)
+                cal = self.calibrate(load)
+            
+                fl[source]["frequencies"] = load.spectrum.freq
+                fl[source]["temp_raw"] = load.averaged_spectrum
+                fl[source]["temp_cal"] = cal
+                fl[source]["residuals"] = load.get_load_residuals(load)
+                fl[source]["RMS"] = rms[source]
+            fl["Frequencies"] = self.freq.freq
+            fl["C1"] = self.C1()
+            fl["C2"] = self.C2()
+            fl["Tunc"] = self.Tunc()
+            fl["Tsin"] = self.Tsin()
+            fl["Tcos"] = self.Tcos()
+            fl["cterms"] = self.cterms
+            fl["wterms"] = self.wterms
+            
+            fl.close()
+        
 
     def plot_coefficients(self, fig=None, ax=None):
         """
