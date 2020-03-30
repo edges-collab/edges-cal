@@ -459,28 +459,6 @@ def calibrated_antenna_temperature(
     a, b = get_linear_coefficients(gamma_ant, gamma_rec, sca, off, TU, TC, TS, T_load)
 
     return temp_raw * a + b
-    # K = get_K(gamma_rec, gamma_ant)
-    #
-    # # # S11 quantities
-    # # Fd = np.sqrt(1 - np.abs(gamma_rec) ** 2) / (1 - gamma_ant * gamma_rec)
-    # # PHId = np.angle(gamma_ant * Fd)
-    # # G = 1 - np.abs(gamma_rec) ** 2
-    # # K1d = (1 - np.abs(gamma_ant) ** 2) * np.abs(Fd) ** 2 / G
-    # # K2d = (np.abs(gamma_ant) ** 2) * (np.abs(Fd) ** 2) / G
-    # # K3d = (np.abs(gamma_ant) * np.abs(Fd) / G) * np.cos(PHId)
-    # # K4d = (np.abs(gamma_ant) * np.abs(Fd) / G) * np.sin(PHId)
-    #
-    # # Applying scale and offset to raw spectrum
-    # # Gives the LHS of Eq. 7
-    # temp_corrected = (temp_raw - T_load) * sca + T_load - off
-    #
-    # # Noise wave contribution
-    # noise_wave_terms = TU * K[1] + TC * K[2] + TS * K[3]
-    #
-    # print(sca/K[0], (T_load-off - noise_wave_terms - T_load*sca)/K[0])
-    #
-    # # Antenna temperature
-    # return (temp_corrected - noise_wave_terms) / K[0]
 
 
 def uncalibrated_antenna_temperature(
@@ -510,24 +488,3 @@ def uncalibrated_antenna_temperature(
     """
     a, b = get_linear_coefficients(gamma_ant, gamma_rec, sca, off, TU, TC, TS, T_load)
     return (temp - b) / a
-
-    # K = get_K(gamma_rec, gamma_ant)
-    #
-    # # # S11 quantities
-    # # Fd = np.sqrt(1 - np.abs(rl) ** 2) / (1 - rd * rl)
-    # # PHId = np.angle(rd * Fd)
-    # # G = 1 - np.abs(rl) ** 2
-    # # K1d = (1 - np.abs(rd) ** 2) * np.abs(Fd) ** 2 / G
-    # # K2d = (np.abs(rd) ** 2) * (np.abs(Fd) ** 2) / G
-    # # K3d = (np.abs(rd) * np.abs(Fd) / G) * np.cos(PHId)
-    # # K4d = (np.abs(rd) * np.abs(Fd) / G) * np.sin(PHId)
-    #
-    # # Noise wave contribution
-    # noise_wave_terms = TU * K[1] + TC * K[2] + TS * K[3]
-    #
-    # # Scaled and offset spectrum
-    # # This is the full RHS of Eq. 7
-    # Tde_corrected = temp * K[0] + noise_wave_terms
-    #
-    # # Removing scale and offset
-    # return T_load + (Tde_corrected - T_load + off) / sca

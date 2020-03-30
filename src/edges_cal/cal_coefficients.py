@@ -12,6 +12,7 @@ import os
 import warnings
 from functools import lru_cache
 from hashlib import md5
+from pathlib import Path
 
 import h5py
 import matplotlib.pyplot as plt
@@ -19,6 +20,7 @@ import numpy as np
 from astropy.convolution import Gaussian1DKernel, convolve
 from edges_io import io
 from edges_io.logging import logger
+from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 
 from . import S11_correction as s11
 from . import modelling as mdl
@@ -53,6 +55,20 @@ class FrequencyRange:
             raise ValueError("Cannot create frequency range: f_low >= f_high")
 
     @cached_property
+    def n(self):
+        """Number of frequencies in the (masked) array"""
+        len(self.freq.freq)
+
+    @cached_property
+    def df(self):
+        """Resolution of the frequencies."""
+        if not np.allclose(np.diff(self.freq)):
+            warnings.warn(
+                "Not all frequency intervals are even, so using df is ill-advised!"
+            )
+        return self.freq[1] - self.freq[0]
+
+    @cached_property
     def min(self):
         """Minimum frequency in the array"""
         return self.freq.min()
@@ -82,7 +98,7 @@ class FrequencyRange:
     @cached_property
     def center(self):
         """The center of the frequency array"""
-        return self.freq.min() + self.range / 2.0
+        return self.min + self.range / 2.0
 
     @cached_property
     def freq_recentred(self):
@@ -307,7 +323,7 @@ class SwitchCorrection:
             self.internal_switch,
             f_in=self.freq.freq,
             resistance_m=self.resistance,
-        )
+        )[0]
 
     @lru_cache()
     def get_s11_correction_model(self, n_terms=None):
@@ -566,9 +582,10 @@ class LoadSpectrum:
         spec = self._ave_and_var_spec[0]["Qratio"]
 
         if self.rfi_removal == "1D":
-            spec = xrfi.remove_rfi(
+            flags = xrfi.xrfi_medfilt(
                 spec, threshold=self.rfi_threshold, Kf=self.rfi_kernel_width_freq
             )
+            spec[flags] = np.nan
         return spec
 
     @cached_property
@@ -700,12 +717,13 @@ class LoadSpectrum:
                 if key != "Qratio":
                     val[val == 0] = np.inf
 
-                val = xrfi.remove_rfi(
+                flags = xrfi.xrfi_medfilt(
                     val,
                     threshold=self.rfi_threshold,
                     Kt=self.rfi_kernel_width_time,
                     Kf=self.rfi_kernel_width_freq,
                 )
+                val[flags] = np.nan
                 spec[key] = val
         return spec
 
@@ -876,7 +894,6 @@ class HotLoadCorrection:
         return self._get_model_kind("s22")
 
     def power_gain(self, freq, hot_load_s11: SwitchCorrection):
-        """Define Eq. 9 from M17"""
         assert isinstance(
             hot_load_s11, SwitchCorrection
         ), "hot_load_s11 must be a switch correction"
@@ -884,26 +901,31 @@ class HotLoadCorrection:
             hot_load_s11.load_name == "hot_load"
         ), "hot_load_s11 must be a hot_load s11"
 
-        rht = rc.gamma_de_embed(
-            self.s11_model(freq),
-            self.s12_model(freq),
-            self.s22_model(freq),
+        return self.get_power_gain(
+            {
+                "s11": self.s11_model(freq),
+                "s12s21": self.s12_model(freq),
+                "s22": self.s22_model(freq),
+            },
             hot_load_s11.s11_model(freq),
         )
 
-        # inverting the direction of the s-parameters,
-        # since the port labels have to be inverted to match those of Pozar eqn 10.25
-        s11_sr_rev = self.s11_model(freq)
-
-        # absolute value of S_21
-        abs_s21 = np.sqrt(np.abs(self.s12_model(freq)))
+    @staticmethod
+    def get_power_gain(semi_rigid_sparams, hot_load_s11):
+        """Define Eq. 9 from M17"""
+        rht = rc.gamma_de_embed(
+            semi_rigid_sparams["s11"],
+            semi_rigid_sparams["s12s21"],
+            semi_rigid_sparams["s22"],
+            hot_load_s11,
+        )
 
         return (
-            (abs_s21 ** 2)
+            np.abs(semi_rigid_sparams["s12s21"])
             * (1 - np.abs(rht) ** 2)
             / (
-                (np.abs(1 - s11_sr_rev * rht)) ** 2
-                * (1 - (np.abs(hot_load_s11.s11_model(freq))) ** 2)
+                (np.abs(1 - semi_rigid_sparams["s11"] * rht)) ** 2
+                * (1 - np.abs(hot_load_s11) ** 2)
             )
         )
 
@@ -1648,3 +1670,88 @@ class CalibrationObservation:
         self.invalidate_cache()
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+    def write(self, filename: [str, Path]):
+        """
+        Write all information required to calibrate a new spectrum to file.
+
+        Parameters
+        ----------
+        filename : path
+            the filename to write to.
+        """
+
+        with h5py.File(filename, "w") as fl:
+            # Write attributes
+            fl.attrs["path"] = self.path
+            fl.attrs["cterms"] = self.cterms
+            fl.attrs["wterms"] = self.wterms
+
+            fl["C1"] = self.C1_poly.coefficients
+            fl["C2"] = self.C2_poly.coefficients
+            fl["Tunc"] = self.Tunc_poly.coefficients
+            fl["Tcos"] = self.Tcos_poly.coefficients
+            fl["Tsin"] = self.Tsin_poly.coefficients
+            fl["frequencies"] = self.freq.freq
+            fl["lna_s11_real"] = self.lna.s11_model(self.freq.freq).real
+            fl["lna_s11_imag"] = self.lna.s11_model(self.freq.freq).imag
+
+
+class Calibration:
+    def __init__(self, filename):
+        with h5py.File(filename, "r") as fl:
+            self.path = fl.attrs["path"]
+            self.cterms = fl.attrs["cterms"]
+            self.wterms = fl.attrs["wterms"]
+
+            self.C1_poly = np.poly1d(fl["C1"][...])
+            self.C2_poly = np.poly1d(fl["C2"][...])
+            self.Tcos_poly = np.poly1d(fl["Tcos"][...])
+            self.Tsin_poly = np.poly1d(fl["Tsin"][...])
+            self.Tunc_poly = np.poly1d(fl["Tunc"][...])
+
+            self.freq = FrequencyRange(fl["frequencies"][...])
+            self._lna_s11_rl = Spline(self.freq.freq, fl["lna_s11_real"][...])
+            self._lna_s11_im = Spline(self.freq.freq, fl["lna_s11_imag"][...])
+
+    def lna_s11(self, freq):
+        return self._lna_s11_rl(freq) + 1j * self._lna_s11_im(freq)
+
+    def C1(self, freq):
+        return self.C1_poly(self.freq.normalize(freq))
+
+    def C2(self, freq):
+        return self.C2_poly(self.freq.normalize(freq))
+
+    def Tcos(self, freq):
+        return self.Tcos_poly(self.freq.normalize(freq))
+
+    def Tsin(self, freq):
+        return self.C1_poly(self.freq.normalize(freq))
+
+    def Tunc(self, freq):
+        return self.C1_poly(self.freq.normalize(freq))
+
+    def _linear_coefficients(self, freq, ant_s11):
+        return rcf.get_linear_coefficients(
+            ant_s11,
+            self.lna_s11(freq),
+            self.C1(freq),
+            self.C2(freq),
+            self.Tunc(freq),
+            self.Tcos(freq),
+            self.Tsin(freq),
+            300,
+        )
+
+    def calibrate_temp(self, freq, temp, ant_s11):
+        a, b = self._linear_coefficients(freq, ant_s11)
+        return temp * a + b
+
+    def decalibrate_temp(self, freq, temp, ant_s11):
+        a, b = self._linear_coefficients(freq, ant_s11)
+        return (temp - b) / a
+
+    def calibrate_Q(self, freq, Q, ant_s11):
+        uncal_temp = 400 * Q + 300
+        return self.calibrate_temp(freq, uncal_temp, ant_s11)

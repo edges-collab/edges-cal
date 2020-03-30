@@ -167,4 +167,4 @@ def low_band_switch_correction(
             fits[kind] += out
 
     # Corrected antenna S11
-    return rc.gamma_de_embed(fits["s11"], fits["s12s21"], fits["s22"], ant_s11)
+    return rc.gamma_de_embed(fits["s11"], fits["s12s21"], fits["s22"], ant_s11), fits
