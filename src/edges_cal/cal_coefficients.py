@@ -318,7 +318,7 @@ class SwitchCorrection:
         """
         The correction required for the S11 due to the switch.
         """
-        return s11.low_band_switch_correction(
+        return s11.get_switch_correction(
             self.switch_corrections[0],
             self.internal_switch,
             f_in=self.freq.freq,
@@ -362,9 +362,7 @@ class SwitchCorrection:
             else:
                 d = np.unwrap(np.angle(self.s11_correction))
 
-            fit = mdl.fit_polynomial_fourier(
-                "fourier", self.freq.freq_recentred, d, n_terms
-            )[0]
+            fit = mdl.model_fit("fourier", self.freq.freq_recentred, d, n_terms)[0]
             return lambda x: mdl.model_evaluate("fourier", fit, x)
 
         mag = get_model(True)
@@ -863,7 +861,7 @@ class HotLoadCorrection:
         else:
             d = np.unwrap(np.angle(d))
 
-        mag = mdl.fit_polynomial_fourier("polynomial", self.freq.freq_recentred, d, 21)
+        mag = mdl.model_fit("polynomial", self.freq.freq_recentred, d, 21)
 
         def out(f):
             ff = self.freq.normalize(f)

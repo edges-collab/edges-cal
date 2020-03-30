@@ -1,263 +1,214 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Feb 08 20:48:35 2018
-
-@author: Nivedita
+Functions for generating least-squares model fits for linear models(and evaluating the models).
 """
-import functools
+from abc import abstractmethod
+from typing import Sequence, Type
 
 import numpy as np
 import scipy as sp
-
-_MODELS = {}
+from cached_property import cached_property
 
 F_CENTER = 75.0
 
 
-def flexible_model(func):
-    functools.wraps(func)
-    _MODELS[func.__name__] = func
-    return func
+class Model:
+    _models = {}
+    n_terms = None
 
-
-@flexible_model
-def explog(x, *par, f_center=F_CENTER):
-    y = x / f_center
-    return 2.725 + par[0] * y ** sum(
-        [p * np.log(y) ** i for i, p in enumerate(par[1:])]
-    )
-
-
-@flexible_model
-def physical5(x, a, b, c, d, e, f_center=F_CENTER):
-    return np.log(
-        a
-        * (x / f_center) ** (-2.5 + b + c * np.log(x / f_center))
-        * np.exp(-d * (x / f_center) ** -2)
-        + e * (x / f_center) ** -2
-    )
-
-
-@flexible_model
-def physicallin5(x, a, b, c, d, e, f_center=F_CENTER):
-    return (
-        a * (x / f_center) ** -2.5
-        + b * (x / f_center) ** -2.5 * np.log(x / f_center)
-        + c * (x / f_center) ** -2.5 * (np.log(x / f_center)) ** 2
-        + d * (x / f_center) ** -4.5
-        + e * (x / f_center) ** -2
-    )
-
-
-@flexible_model
-def loglog(x, *par, f_center=F_CENTER):
-    """
-    Log-Log foreground model, with arbitrary number of parameters
-
-    Parameters
-    ----------
-    x : array_like
-        Frequencies.
-    p : iterable
-        Co-efficients of the polynomial, from p0 to pn.
-    f_center : float
-        Central / reference frequency.
-    """
-    return sum([p * (x / f_center) ** i for i, p in enumerate(par)])
-
-
-@flexible_model
-def polynomial(x, *par, f_center=1):
-    return loglog(x, *par, f_center=f_center)
-
-
-@flexible_model
-def linlog(x, *par, f_center=F_CENTER):
-    """
-    Lin-Log foreground model, with arbitrary number of parameters
-
-    Parameters
-    ----------
-    x : array_like
-        Frequencies.
-    p : iterable
-        Co-efficients of the polynomial, from p0 to pn.
-    f_center : float
-        Central / reference frequency.
-    """
-    return sum([p * np.log(x / f_center) ** i for i, p in enumerate(par)])
-
-
-@flexible_model
-def edges_polynomial(x, *par, f_center=F_CENTER):
-    return sum([p * (x / f_center) ** (-2.5 + i) for i, p in enumerate(par)])
-
-
-@flexible_model
-def fourier(x, *par, f_center=F_CENTER):
-    summ = par[0]
-
-    n_cos_sin = int((len(par) - 1) / 2)
-    for i in range(n_cos_sin):
-        icos = 2 * i + 1
-        isin = 2 * i + 2
-        summ = summ + par[icos] * np.cos((i + 1) * x) + par[isin] * np.sin((i + 1) * x)
-    return summ
-
-
-def model_evaluate(model, par, xdata, center=False, **kwargs):
-    """
-    This function evaluates 'polynomial' or 'fourier' models at array 'xdata',
-    using parameters 'par'.
-    It is a direct complement to the function 'fit_polynomial_fourier'.
-    If P is the total number of parameters, the 'polynomial' model is: model = a0 + a1*xdata +
-    a2*xdata**2 + ... + (aP-1)*xdata**(P-1).
-    The 'fourier' model is: model = a0 + (a1*np.cos(1*xdata) + a2*np.sin(1*xdata)) + ... + ((
-    aP-2)*np.cos(((P-1)/2)*xdata) + (aP-1)*np.sin(((P-1)/2)*xdata)).
-
-    Parameters
-    ----------
-    model: str {'polynomial', 'fourier'}
-        Model to evaluate
-    par: 1D array
-        Parameters, in increasing order, i.e., [a0, a1, ... , aP-1]
-    xdata: 1D array
-        Independent variable
-
-    Returns
-    -------
-    1D-array with model
-
-    Examples
-    --------
-    >>> model = model_evaluate('fourier', [0, 1], np.arange(10))
-    >>> [0,1,2,3,4,5,6,7,8,9]
-    """
-    if type(model) == str:
-        model = _MODELS[model]
-
-    if model not in _MODELS.values():
-        raise ValueError("the model passed was not a registered flexible_model")
-
-    if not center:
-        kwargs["f_center"] = 1
-
-    return model(xdata, *par, **kwargs)
-
-
-def fit_polynomial_fourier(model_type, xdata, ydata, nterms, Weights=1):
-    """
-    This function computes a Least-Squares fit to data using the QR decomposition method.
-    Two models are supported: 'polynomial', and 'fourier'.
-
-    If P is the total number of parameters (P = nterms), the 'polynomial' model is::
-
-        ydata = a0 + a1*xdata + a2*xdata**2 + ... + (aP-1)*xdata**(P-1).
-
-    The 'fourier' model is::
-
-        ydata = a0 + (a1*np.cos(1*xdata) + a2*np.sin(1*xdata)) + ... + ((aP-2)*np.cos(((
-        P-1)/2)*xdata) + (aP-1)*np.sin(((P-1)/2)*xdata)).
-
-    Parameters
-    ----------
-    model_type: 'polynomial', 'EDGES_polynomial', or 'fourier'
-    xdata: 1D array of independent measurements, of length N, properly normalized to optimize the
-    fit
-    ydata: 1D array of dependent measurements, of length N
-    nterms: total number of fit coefficients for baseline
-    W: matrix of weights, expressed as the inverse of a covariance matrix. It doesn't have to be
-    normalized to anything in particular. Relative weights are OK.
-
-    Returns
-    -------
-    param: 1D-array
-        Fit parameters, in increasing order, i.e., [a0, a1, ... , aP-1]
-    model: 1D-array of length N,
-        Model evaluated at fit parameters
-    rms: RMS of residuals
-    cov: covariance matrix of fit parameters, organized following 'param' array
-
-    Examples
-    --------
-    >>> param, model, rms, cov = fit_polynomial_fourier('fourier', (f_MHz-150)/50,
-    measured_spectrum, 11)
-    """
-
-    # initializing "design" matrix
-    AT = np.zeros((nterms, len(xdata)))
-
-    # assigning basis functions
-    if model_type == "polynomial":
-        for i in range(nterms):
-            AT[i, :] = xdata ** i
-
-    if model_type == "fourier":
-        AT[0, :] = np.ones(len(xdata))
-        for i in range(int((nterms - 1) / 2)):
-            AT[2 * i + 1, :] = np.cos((i + 1) * xdata)
-            AT[2 * i + 2, :] = np.sin((i + 1) * xdata)
-
-    if model_type.startswith("EDGES_polynomial"):
-        for i in range(nterms):
-            AT[i, :] = xdata ** (-2.5 + i)
-
-    # Physical model from Memo 172
-    elif model_type.startswith("Physical_model"):
-        if nterms >= 3:
-            AT = np.zeros((nterms, len(xdata)))
-            AT[0, :] = xdata ** (-2.5)
-            AT[1, :] = np.log(xdata) * xdata ** (-2.5)
-            AT[2, :] = (np.log(xdata)) ** 2 * xdata ** (-2.5)
-
-            if nterms >= 4:
-                AT[3, :] = xdata ** (-4.5)
-                if nterms == 5:
-                    AT[4, :] = xdata ** (-2)
+    def __init__(
+        self,
+        parameters: [None, Sequence] = None,
+        n_terms: [int, None] = None,
+        default_x=None,
+    ):
+        if parameters:
+            self.parameters = list(parameters)
+            if self.n_terms and len(self.parameters) != self.n_terms:
+                raise ValueError(
+                    f"wrong number of parameters! Should be {self.n_terms}."
+                )
+            self.n_terms = len(self.parameters)
         else:
-            raise ValueError("For the Physical model it has to be 4 or 5 terms.")
+            self.parameters = None
 
-    # Applying General Least Squares Formalism, and Solving using QR decomposition
-    # See: http://www2.imm.dtu.dk/pubdb/views/edoc_download.php/2804/pdf/imm2804.pdf
+        if n_terms:
+            if self.n_terms and n_terms != self.n_terms:
+                raise ValueError(f"n_terms must be {self.n_terms}")
 
-    # if no weights are given
-    if np.isscalar(Weights):
-        W = np.eye(len(xdata))
+            self.n_terms = n_terms
 
-    # if a vector is given
-    elif np.ndim(Weights) == 1:
-        W = np.diag(Weights)
+        if not self.n_terms:
+            raise ValueError("Need to supply either parameters or n_terms!")
 
-    # if a matrix is given
-    elif np.ndim(Weights) == 2:
-        W = Weights
+        self.default_x = default_x
+        self.default_basis = (
+            self.get_basis(self.default_x) if self.default_x is not None else None
+        )
 
-    # sqrt of weight matrix
-    sqrtW = np.sqrt(W)
+    def __init_subclass__(cls, meta=False, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if not meta:
+            cls._models[cls.__name__.lower()] = cls
 
-    # transposing matrices so 'frequency' dimension is along columns
-    A = AT.T
-    ydata = np.reshape(ydata, (-1, 1))
+    def get_basis(self, x):
+        out = np.zeros((self.n_terms, len(x)))
+        self._fill_basis_terms(x, out)
+        return out
 
-    # A and ydata "tilde"
-    WA = np.dot(sqrtW, A)
-    Wydata = np.dot(sqrtW, ydata)
+    def __call__(self, x=None, basis=None):
+        if x is None and basis is None and self.default_basis is None:
+            raise ValueError("You need to provide either 'x' or 'basis'.")
+        elif x is None and basis is None:
+            basis = self.default_basis
+        elif x is not None:
+            basis = self.get_basis(x)
 
-    # solving system using 'short' QR decomposition (see R. Butt, Num. Anal. Using MATLAB)
-    Q1, R1 = sp.linalg.qr(WA, mode="economic")  # returns
-    param = sp.linalg.solve(R1, np.dot(Q1.T, Wydata))
+        return np.dot(self.parameters, basis)
 
-    model = np.dot(A, param)
-    error = ydata - model
-    DF = len(xdata) - len(param) - 1
-    wMSE = (1 / DF) * np.dot(error.T, np.dot(W, error))
-    wRMS = np.sqrt(np.dot(error.T, np.dot(W, error)) / np.sum(np.diag(W)))
-    inv_pre_cov = np.linalg.inv(np.dot(R1.T, R1))
-    cov = wMSE * inv_pre_cov
+    @abstractmethod
+    def _fill_basis_terms(self, x, out):
+        pass
 
-    # back to input format
-    ydata = ydata.flatten()
-    model = model.flatten()
-    param = param.flatten()
 
-    return param, model, wRMS, cov, wMSE  # wMSE = reduced chi square
+class Foreground(Model, meta=True):
+    def __init__(self, *par, f_center=F_CENTER, with_cmb=False):
+        if self.n_terms and len(par) != self.n_terms:
+            raise ValueError(f"wrong number of parameters! Should be {self.n_terms}.")
+
+        super().__init__(*par)
+        self.f_center = f_center
+        self.with_cmb = with_cmb
+        self.n_terms = len(par)
+
+    def __call__(self, x):
+        t = 2.725 if self.with_cmb else 0
+        return t + super().__call__(x)
+
+
+class PhysicalLin(Foreground):
+    def _fill_basis_terms(self, x, out):
+        y = x / self.f_center
+
+        out[0] = y ** -2.5
+        out[1] = y ** -2.5 * np.log(y)
+        out[2] = y ** -2.5 * np.log(y) ** 2
+
+        if self.n_terms >= 4:
+            out[3] = y ** -4.5
+            if self.n_terms == 5:
+                out[4] = y ** -2
+            if self.n_terms > 5:
+                raise ValueError("too many terms supplied!")
+
+
+class Polynomial(Foreground):
+    def __init__(self, *par, f_center=F_CENTER, with_cmb=False, log_x=False, offset=0):
+        super().__init__(*par, f_center=f_center, with_cmb=with_cmb)
+        self.log_x = log_x
+        self.offset = offset
+
+    def _fill_basis_terms(self, x, out):
+        y = x / self.f_center
+        if self.log_x:
+            y = np.log(y)
+
+        for i in range(self.n_terms):
+            out[i] = y ** (i + self.offset)
+
+
+class EdgesPoly(Polynomial):
+    def __init__(self, *par, offset=-2.5, **kwargs):
+        super().__init__(*par, offset=offset, **kwargs)
+
+
+class Fourier(Model):
+    def _fill_basis_terms(self, x, out):
+        out[0] = np.ones_like(x)
+
+        for i in range((self.n_terms - 1) // 2):
+            out[2 * i + 1] = np.cos((i + 1) * x)
+            out[2 * i + 2] = np.sin((i + 1) * x)
+
+
+class ModelFit:
+    def __init__(
+        self,
+        model_type: [str, Type[Model]],
+        xdata: np.ndarray,
+        ydata: np.ndarray,
+        weights: [None, np.ndarray] = None,
+        **kwargs,
+    ):
+        if isinstance(model_type, str):
+            self.model = Model._models[model_type.lower()](default_x=xdata, **kwargs)
+        else:
+            self.model = model_type(default_x=xdata, **kwargs)
+
+        self.xdata = xdata
+        self.ydata = ydata
+        self.weights = weights
+
+        if weights is None:
+            self.weights = np.eye(len(self.xdata))
+        elif weights.ndim == 1:
+            # if a vector is given
+            self.weights = np.diag(weights)
+        else:
+            self.weights = weights
+
+        self.n_terms = self.model.n_terms
+
+        self.degrees_of_freedom = len(self.xdata) - self.n_terms - 1
+
+    @cached_property
+    def model_parameters(self):
+        return self.get_model_params()
+
+    @cached_property
+    def qr(self):
+        AT = self.model.default_basis
+
+        # sqrt of weight matrix
+        sqrt_w = np.sqrt(self.weights)
+
+        # A and ydata "tilde"
+        WA = np.dot(sqrt_w, AT.T)
+
+        # solving system using 'short' QR decomposition (see R. Butt, Num. Anal. Using MATLAB)
+        q, r = sp.linalg.qr(WA, mode="economic")
+        return q, r
+
+    def get_model_params(self):
+        # transposing matrices so 'frequency' dimension is along columns
+        ydata = np.reshape(self.ydata, (-1, 1))
+
+        Wydata = np.dot(np.sqrt(self.weights), ydata)
+        q, r = self.qr
+        return sp.linalg.solve(r, np.dot(q.T, Wydata)).flatten()
+
+    def evaluate(self, x=None):
+        # Set the parameters on the underlying object (solves for them if not solved yet)
+        self.model.parameters = list(self.model_parameters)
+        if x is None:
+            x = self.xdata
+        return self.model(x)
+
+    @cached_property
+    def model_error(self):
+        return self.ydata - self.evaluate()
+
+    @cached_property
+    def weighted_chi2(self):
+        return np.dot(self.model_error.T, np.dot(self.weights, self.model_error))
+
+    def reduced_weighted_chi2(self):
+        return (1 / self.degrees_of_freedom) * self.weighted_chi2
+
+    def weighted_rms(self):
+        return np.sqrt(self.weighted_chi2) / np.sum(np.diag(self.weights))
+
+    def get_covariance(self):
+        r = self.qr[1]
+        inv_pre_cov = np.linalg.inv(np.dot(r.T, r))
+        return self.reduced_weighted_chi2() * inv_pre_cov
