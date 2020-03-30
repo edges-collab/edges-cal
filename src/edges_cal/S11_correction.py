@@ -11,6 +11,7 @@ import numpy as np
 from edges_io import io
 
 from . import reflection_coefficient as rc
+from .modelling import ModelFit
 
 
 def _get_parameters_at_temperature(data_path, temp):
@@ -106,11 +107,16 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
     return corrections, sw
 
 
-def low_band_switch_correction(
-    ant_s11, internal_switch, f_in=np.zeros([0, 1]), resistance_m=50.166, poly_order=7
+def get_switch_correction(
+    ant_s11,
+    internal_switch,
+    f_in=np.zeros([0, 1]),
+    resistance_m=50.166,
+    poly_order=7,
+    model_type="fourier",
 ):
     """
-    Compute the low band switch correction
+    Compute the switch correction
 
     Parameters
     ----------
@@ -120,6 +126,10 @@ def low_band_switch_correction(
         An internal switching state object.
     f_in
     resistance_m
+    poly_order : int or tuple
+        Specifies the order of the fitted polynomial for the S11 measurements.
+        If a tuple, must be length 3, specifying the order for the s11, s12, s22
+        respectively.
 
     Returns
     -------
@@ -131,11 +141,8 @@ def low_band_switch_correction(
     fhigh = f_in.max()
     f_center = (fhigh + flow) / 2
 
-    f = 1e6 * internal_switch.freq
     # Computation of S-parameters to the receiver input
-    resistance_of_match = resistance_m
-    md = 1
-    oa, sa, la = rc.agilent_85033E(f, resistance_of_match, md)
+    oa, sa, la = rc.agilent_85033E(internal_switch.freq * 1e6, resistance_m, 1)
 
     xx, s11, s12s21, s22 = rc.de_embed(
         oa,
@@ -148,22 +155,22 @@ def low_band_switch_correction(
     )
 
     # Frequency normalization
-    fn = 1e-6 * f / f_center
+    fn = internal_switch.freq / f_center
 
-    if len(f_in) > 10:
-        fn_in = f_in / f_center
-    else:
-        fn_in = fn
+    fn_in = f_in / f_center if len(f_in) > 10 else fn
+
+    poly_order = (poly_order,) * 3 if not hasattr(poly_order, "__len__") else poly_order
+    assert len(poly_order) == 3
 
     # Polynomial fits
     fits = {}
-    for ikind, (kind, val) in enumerate(
-        zip(["s11", "s12s21", "s22"], [s11, s12s21, s22])
+    for ikind, (kind, val, npoly) in enumerate(
+        zip(["s11", "s12s21", "s22"], [s11, s12s21, s22], poly_order)
     ):
         fits[kind] = 0 + 0 * 1j
         for imag in range(2):
-            p = np.polyfit(fn, [np.real, np.imag][imag](val), poly_order)
-            out = np.polyval(p, fn_in) * (1j if imag else 1)
+            mdl = ModelFit(model_type, fn, [np.real, np.imag][imag](val), n_terms=npoly)
+            out = mdl.evaluate(fn_in) * (1j if imag else 1)
             fits[kind] += out
 
     # Corrected antenna S11
