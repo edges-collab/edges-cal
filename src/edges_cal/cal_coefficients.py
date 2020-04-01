@@ -57,12 +57,12 @@ class FrequencyRange:
     @cached_property
     def n(self):
         """Number of frequencies in the (masked) array"""
-        len(self.freq.freq)
+        return len(self.freq)
 
     @cached_property
     def df(self):
         """Resolution of the frequencies."""
-        if not np.allclose(np.diff(self.freq)):
+        if not np.allclose(np.diff(self.freq, 2), 0):
             warnings.warn(
                 "Not all frequency intervals are even, so using df is ill-advised!"
             )

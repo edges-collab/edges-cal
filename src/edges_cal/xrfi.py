@@ -386,7 +386,7 @@ def xrfi_poly_filter(
     #    index = np.arange(len(f))
     nf = spectrum.shape[-1]
     f = np.linspace(-1, 1, window_width)
-    flags = np.zeros(nf, dtype=bool)
+    flags = np.zeros(spectrum.shape, dtype=bool)
 
     flags[weights <= 0] = True
 
@@ -402,9 +402,20 @@ def xrfi_poly_filter(
             raise NoDataError
 
     # Compute residuals for initial section
-    r, mask = compute_resid(
-        spectrum[:window_width], weights[:window_width], flags[:window_width]
-    )
+    got_init = False
+    window = np.arange(window_width)
+    while not got_init and window[-1] < nf:
+        try:
+            r, mask = compute_resid(spectrum[window], weights[window], flags[window])
+            got_init = True
+
+        except NoDataError:
+            window += 1
+
+    if not got_init:
+        raise NoDataError(
+            "There were no windows of data with enough data to perform xrfi."
+        )
 
     # Computation of STD for initial section using the median statistic
     if not use_median:
@@ -419,31 +430,19 @@ def xrfi_poly_filter(
     flags[:window_width][mask][np.abs(r) > n_sigma * r_std] = True
 
     # Initial window limits
-    index_low = 0
-    index_high = window_width - 1
-
-    while index_high < (nf - 1):
-        index_low += 1
-        index_high += 1
-
+    window += 1
+    while window[-1] < nf:
         # Selecting section of data of width "window_width"
-        if index_high < (nf - 1):
-            mask = slice(index_low, (index_high + 1))
-        else:
-            mask = slice(index_low, None)
-
         try:
-            r, fmask = compute_resid(spectrum[mask], weights[mask], flags[mask])
+            r, fmask = compute_resid(spectrum[window], weights[window], flags[window])
         except NoDataError:
             continue
 
-        flags[mask][fmask][np.abs(r) > n_sigma * r_std] = True
+        flags[window][fmask][np.abs(r) > n_sigma * r_std] = True
 
         # Update std dev. estimate for the next window.
-        if not use_median:
-            r_std = np.std(r)
-        else:
-            r_std = _get_mad(r)
+        r_std = _get_mad(r) if use_median else np.std(r)
+        window += 1
 
     if flip:
         flip_flags = xrfi_poly_filter(
