@@ -602,6 +602,10 @@ class LoadSpectrum:
         return self.variance_Q * 400 ** 2
 
     @cached_property
+    def ancillary(self):
+        return self._ave_and_var_spec[2]
+
+    @cached_property
     def averaged_p0(self):
         return self._ave_and_var_spec[0]["p0"]
 
@@ -662,7 +666,7 @@ class LoadSpectrum:
             return means, vars
 
         logger.info("Reducing {} spectra...".format(self.load_name))
-        spectra = self.get_spectra()
+        spectra, anc = self.get_spectra()
 
         means = {}
         vars = {}
@@ -702,10 +706,10 @@ class LoadSpectrum:
                 fl[kind + "_mean"] = means[kind]
                 fl[kind + "_var"] = vars[kind]
 
-        return means, vars
+        return means, vars, anc
 
     def get_spectra(self):
-        spec = self._read_spectrum()
+        spec, anc = self._read_spectrum()
 
         if self.rfi_removal == "2D":
             for key, val in spec.items():
@@ -723,7 +727,7 @@ class LoadSpectrum:
                 )
                 val[flags] = np.nan
                 spec[key] = val
-        return spec
+        return spec, anc
 
     def _read_spectrum(self):
         """
@@ -736,14 +740,14 @@ class LoadSpectrum:
                powers of source, load, and load+noise respectively), and ant_temp (the
                uncalibrated, but normalised antenna temperature).
         """
-        out = self.spec_obj.read()
+        out, anc = self.spec_obj.read()
 
+        n_times = len(anc)
+
+        index_start_spectra = int((self.ignore_times_percent / 100) * n_times)
         for key, val in out.items():
-            index_start_spectra = int(
-                (self.ignore_times_percent / 100) * len(val[0, :])
-            )
             out[key] = val[self.freq.mask, index_start_spectra:]
-        return out
+        return out, anc[index_start_spectra:]
 
     @cached_property
     def thermistor_temp(self):
