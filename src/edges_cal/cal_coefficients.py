@@ -362,8 +362,8 @@ class SwitchCorrection:
             else:
                 d = np.unwrap(np.angle(self.s11_correction))
 
-            fit = mdl.model_fit("fourier", self.freq.freq_recentred, d, n_terms)[0]
-            return lambda x: mdl.model_evaluate("fourier", fit, x)
+            fit = mdl.ModelFit("fourier", self.freq.freq_recentred, d, n_terms=n_terms)
+            return lambda x: fit.evaluate(x)
 
         mag = get_model(True)
         ang = get_model(False)
@@ -868,16 +868,12 @@ class HotLoadCorrection:
         array_like : The model S-parameter
         """
         d = self.data[:, self._kinds[kind]]
-        if mag:
-            d = np.abs(d)
-        else:
-            d = np.unwrap(np.angle(d))
-
-        mag = mdl.model_fit("polynomial", self.freq.freq_recentred, d, 21)
+        d = np.abs(d) if mag else np.unwrap(np.angle(d))
+        mag = mdl.ModelFit("polynomial", self.freq.freq_recentred, d, n_terms=21)
 
         def out(f):
             ff = self.freq.normalize(f)
-            return mdl.model_evaluate("polynomial", mag[0], ff)
+            return mag.evaluate(ff)
 
         return out
 
