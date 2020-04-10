@@ -742,12 +742,20 @@ class LoadSpectrum:
         """
         out, anc = self.spec_obj.read()
 
-        n_times = len(anc)
+        n_times = len(out["p0"][0])
 
         index_start_spectra = int((self.ignore_times_percent / 100) * n_times)
         for key, val in out.items():
             out[key] = val[self.freq.mask, index_start_spectra:]
-        return out, anc[index_start_spectra:]
+
+        for key, val in anc.items():
+            try:
+                if len(val) == n_times:
+                    anc[key] = val[index_start_spectra:]
+            except (TypeError, AttributeError):
+                pass
+
+        return out, anc
 
     @cached_property
     def thermistor_temp(self):
