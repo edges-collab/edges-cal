@@ -42,14 +42,15 @@ class Model:
             raise ValueError("Need to supply either parameters or n_terms!")
 
         self.default_x = default_x
-        self.default_basis = (
-            self.get_basis(self.default_x) if self.default_x is not None else None
-        )
 
-    def __init_subclass__(cls, meta=False, **kwargs):
+    def __init_subclass__(cls, is_meta=False, **kwargs):
         super().__init_subclass__(**kwargs)
-        if not meta:
+        if not is_meta:
             cls._models[cls.__name__.lower()] = cls
+
+    @cached_property
+    def default_basis(self):
+        return self.get_basis(self.default_x) if self.default_x is not None else None
 
     def get_basis(self, x):
         out = np.zeros((self.n_terms, len(x)))
@@ -71,15 +72,11 @@ class Model:
         pass
 
 
-class Foreground(Model, meta=True):
-    def __init__(self, *par, f_center=F_CENTER, with_cmb=False):
-        if self.n_terms and len(par) != self.n_terms:
-            raise ValueError(f"wrong number of parameters! Should be {self.n_terms}.")
-
-        super().__init__(*par)
+class Foreground(Model, is_meta=True):
+    def __init__(self, parameters=None, f_center=F_CENTER, with_cmb=False, **kwargs):
+        super().__init__(parameters, **kwargs)
         self.f_center = f_center
         self.with_cmb = with_cmb
-        self.n_terms = len(par)
 
     def __call__(self, x):
         t = 2.725 if self.with_cmb else 0
@@ -103,8 +100,8 @@ class PhysicalLin(Foreground):
 
 
 class Polynomial(Foreground):
-    def __init__(self, *par, f_center=F_CENTER, with_cmb=False, log_x=False, offset=0):
-        super().__init__(*par, f_center=f_center, with_cmb=with_cmb)
+    def __init__(self, log_x=False, offset=0, **kwargs):
+        super().__init__(**kwargs)
         self.log_x = log_x
         self.offset = offset
 
@@ -118,8 +115,8 @@ class Polynomial(Foreground):
 
 
 class EdgesPoly(Polynomial):
-    def __init__(self, *par, offset=-2.5, **kwargs):
-        super().__init__(*par, offset=offset, **kwargs)
+    def __init__(self, offset=-2.5, **kwargs):
+        super().__init__(offset=offset, **kwargs)
 
 
 class Fourier(Model):
@@ -141,6 +138,7 @@ class ModelFit:
         **kwargs,
     ):
         if isinstance(model_type, str):
+            print(Model._models[model_type.lower()].__name__)
             self.model = Model._models[model_type.lower()](default_x=xdata, **kwargs)
         else:
             self.model = model_type(default_x=xdata, **kwargs)

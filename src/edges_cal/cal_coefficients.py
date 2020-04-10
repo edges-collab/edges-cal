@@ -758,12 +758,15 @@ class LoadSpectrum:
         return out, anc
 
     @cached_property
+    def thermistor(self):
+        return self.resistance_obj.read()[0]
+
+    @cached_property
     def thermistor_temp(self):
         """
         Read a resistance file and return the associated thermistor temperature in K.
         """
-        resistance = self.resistance_obj.read()
-        temp_spectrum = rcf.temperature_thermistor(resistance)
+        temp_spectrum = rcf.temperature_thermistor(self.thermistor["load_resistance"])
         return temp_spectrum[
             int((self.ignore_times_percent / 100) * len(temp_spectrum)) :
         ]
