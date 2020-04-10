@@ -337,7 +337,7 @@ def _get_mad(x):
 
 def xrfi_poly_filter(
     spectrum,
-    weights,
+    weights=None,
     window_width=100,
     n_poly=4,
     n_bootstrap=20,
@@ -381,19 +381,18 @@ def xrfi_poly_filter(
         Boolean array of the same shape as ``spectrum`` indicated which channels/times
         have flagged RFI.
     """
-
-    #    index = np.arange(len(f))
     nf = spectrum.shape[-1]
     f = np.linspace(-1, 1, window_width)
     flags = np.zeros(spectrum.shape, dtype=bool)
 
-    flags[weights <= 0] = True
+    if weights is not None:
+        flags |= weights <= 0
 
     class NoDataError(Exception):
         pass
 
-    def compute_resid(d, w, flagged):
-        mask = w > 0 & ~flagged
+    def compute_resid(d, flagged):
+        mask = ~flagged
         if np.any(mask):
             par = np.polyfit(f[mask], d[mask], n_poly - 1)
             return d[mask] - np.polyval(par, f[mask]), mask
@@ -405,7 +404,7 @@ def xrfi_poly_filter(
     window = np.arange(window_width)
     while not got_init and window[-1] < nf:
         try:
-            r, mask = compute_resid(spectrum[window], weights[window], flags[window])
+            r, mask = compute_resid(spectrum[window], flags[window])
             got_init = True
 
         except NoDataError:
@@ -425,15 +424,17 @@ def xrfi_poly_filter(
     else:
         r_std = _get_mad(r)
 
+    print(r_std)
+
     # Set this window's flags to true.
-    flags[:window_width][mask][np.abs(r) > n_sigma * r_std] = True
+    flags[:window_width][mask] |= np.abs(r) > n_sigma * r_std
 
     # Initial window limits
     window += 1
     while window[-1] < nf:
         # Selecting section of data of width "window_width"
         try:
-            r, fmask = compute_resid(spectrum[window], weights[window], flags[window])
+            r, fmask = compute_resid(spectrum[window], flags[window])
         except NoDataError:
             continue
 
@@ -446,7 +447,7 @@ def xrfi_poly_filter(
     if flip:
         flip_flags = xrfi_poly_filter(
             np.flip(spectrum),
-            np.flip(weights),
+            np.flip(weights) if weights is not None else None,
             window_width=window_width,
             n_poly=n_poly,
             n_bootstrap=n_bootstrap,
@@ -461,9 +462,9 @@ def xrfi_poly_filter(
 
 def xrfi_poly(
     spectrum,
-    weights,
+    weights=None,
     f_ratio=None,
-    f_log=True,
+    f_log=False,
     t_log=True,
     n_signal=10,
     n_resid=3,
@@ -518,16 +519,18 @@ def xrfi_poly(
     flags = np.zeros(nf, dtype=bool)
     f = np.linspace(-1, 1, nf) if not f_log else np.logspace(0, f_ratio, nf)
 
-    data_mask = (
-        (spectrum > 0) & (weights > 0) & ~np.isnan(spectrum) & ~np.isinf(spectrum)
-    )
-    flags |= ~data_mask
+    flags |= (spectrum <= 0) | np.isnan(spectrum) | np.isinf(spectrum)
+
+    if weights is not None:
+        flags |= weights <= 0
 
     n_flags = np.sum(flags)
     n_flags_new = n_flags + 1
     counter = 0
     while (
-        n_flags < n_flags_new and counter < max_iter and nf - n_flags_new > n_signal * 2
+        n_flags < n_flags_new
+        and counter < max_iter
+        and (nf - n_flags_new) > n_signal * 2
     ):
         n_flags = 1 * n_flags_new
 
