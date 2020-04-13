@@ -1,12 +1,16 @@
 import warnings
+from typing import Tuple, Union
 
 import numpy as np
 import yaml
 from astropy.convolution import convolve
+from scipy.ndimage import generic_filter, median_filter
 from scipy.signal import medfilt, medfilt2d
 
+from .modelling import ModelFit
 
-def _check_convolve_dims(data, K1=None, K2=None):
+
+def _check_convolve_dims(data, half_size: [None, Tuple[int, None]] = None):
     """Check the kernel sizes to be used in various convolution-like operations.
     If the kernel sizes are too big, replace them with the largest allowable size
     and issue a warning to the user.
@@ -17,58 +21,39 @@ def _check_convolve_dims(data, K1=None, K2=None):
     ----------
     data : array
         1- or 2-D array that will undergo convolution-like operations.
-    K1 : int, optional
-        Integer representing box dimension in first dimension to apply statistic.
-        Defaults to None (see Returns)
-    K2 : int, optional
-        Integer representing box dimension in second dimension to apply statistic.
-        Only used if data is two dimensional
+    half_size : tuple
+        Tuple of ints or None's with length ``data.ndim``. They represent the half-size
+        of the kernel to be used (or, rather the kernel will be 2*half_size+1 in each
+        dimension). None uses half_size=data.shape.
+
     Returns
     -------
-    K1 : int
-        Input K1 or data.shape[0] if K1 is larger than first dim of arr.
-        If K1 is not provided, will return data.shape[0].
-    K2 : int (only if data is two dimensional)
-        Input K2 or data.shape[1] if K2 is larger than second dim of arr.
-        If data is 2D but K2 is not provided, will return data.shape[1].
+    size : tuple
+        The kernel size in each dimension.
+
     Raises
     ------
     ValueError:
-        If the number of dimensions of the arr array is not 1 or 2, a ValueError is raised;
-        If K1 < 1, or if data is 2D and K2 < 1.
+        If half_size does not match the number of dimensions.
     """
-    if data.ndim not in (1, 2):
-        raise ValueError("Input to filter must be 1- or 2-D array.")
-    if K1 is None:
-        warnings.warn(
-            "No K1 input provided. Using the size of the data for the " "kernel size."
+    if half_size is None:
+        half_size = (None,) * data.ndim
+
+    if len(half_size) != data.ndim:
+        raise ValueError(
+            "Number of kernel dimensions does not match number of data dimensions."
         )
-        K1 = data.shape[0]
-    elif K1 > data.shape[0]:
-        warnings.warn(
-            "K1 value {0:d} is larger than the data of dimension {1:d}; "
-            "using the size of the data for the kernel size".format(K1, data.shape[0])
-        )
-        K1 = data.shape[0]
-    elif K1 < 1:
-        raise ValueError("K1 must be greater than or equal to 1.")
-    if (data.ndim == 2) and (K2 is None):
-        warnings.warn(
-            "No K2 input provided. Using the size of the data for the " "kernel size."
-        )
-        K2 = data.shape[1]
-    elif (data.ndim == 2) and (K2 > data.shape[1]):
-        warnings.warn(
-            "K2 value {0:d} is larger than the data of dimension {1:d}; "
-            "using the size of the data for the kernel size".format(K2, data.shape[1])
-        )
-        K2 = data.shape[1]
-    elif (data.ndim == 2) and (K2 < 1):
-        raise ValueError("K2 must be greater than or equal to 1.")
-    if data.ndim == 1:
-        return K1
-    else:
-        return K1, K2
+
+    out = []
+    for data_shape, hsize in zip(data.shape, half_size):
+        if hsize is None or hsize > data_shape:
+            out.append(data_shape)
+        elif hsize < 0:
+            out.append(0)
+        else:
+            out.append(hsize)
+
+    return tuple(out)
 
 
 def robust_divide(num, den):
@@ -90,58 +75,35 @@ def robust_divide(num, den):
         to infinity.
     """
     thresh = np.finfo(den.dtype).eps
-    out = np.true_divide(num, den, where=(np.abs(den) > thresh))
-    out = np.where(
-        np.logical_and(np.abs(den) > thresh, np.abs(num) > thresh), out, np.inf
-    )
+
+    den_mask = np.abs(den) > thresh
+
+    out = np.true_divide(num, den, where=den_mask)
+    out[~den_mask] = np.inf
 
     # If numerator is also small, set to zero (better for smooth stuff)
-    out = np.where(np.logical_and(np.abs(den) <= thresh, np.abs(num) <= thresh), 0, out)
+    out[~den_mask & (np.abs(num) <= thresh)] = 0
     return out
 
 
-def detrend_medfilt(data, Kt=8, Kf=8):
-    """Detrend array using a median filter.
-
-    .. note:: ripped from here: https://github.com/HERA-Team/hera_qm/blob/master/hera_qm/xrfi.py
-
-    Parameters
-    ----------
-    data : array
-        2D data array to detrend.
-    Kt : int, optional
-        The box size in time (first) dimension to apply medfilt over. Default is
-        8 pixels.
-    Kf : int, optional
-        The box size in frequency (second) dimension to apply medfilt over. Default
-        is 8 pixels.
-    Returns
-    -------
-    out : array
-        An array containing the outlier significance metric. Same type and size as spectrum.
-    """
-
-    Kt, Kf = _check_convolve_dims(data, Kt, Kf)
-    data = np.concatenate([data[Kt - 1 :: -1], data, data[: -Kt - 1 : -1]], axis=0)
-    data = np.concatenate(
-        [data[:, Kf - 1 :: -1], data, data[:, : -Kf - 1 : -1]], axis=1
-    )
-    if np.iscomplexobj(data):
-        d_sm_r = medfilt2d(data.real, kernel_size=(2 * Kt + 1, 2 * Kf + 1))
-        d_sm_i = medfilt2d(data.imag, kernel_size=(2 * Kt + 1, 2 * Kf + 1))
-        d_sm = d_sm_r + 1j * d_sm_i
+def flagged_median_filter(data, size, flags=None):
+    if flags is not None and np.any(flags):
+        assert flags.shape == data.shape
+        orig_flagged_data = data[flags].copy()
+        data[flags] = np.nan
+        filtered = generic_filter(data, np.nanmedian, size=size, mode="reflect")
+        filtered[flags] = orig_flagged_data
     else:
-        d_sm = medfilt2d(data, kernel_size=(2 * Kt + 1, 2 * Kf + 1))
-    d_rs = data - d_sm
-    d_sq = np.abs(d_rs) ** 2
-    # Factor of .456 is to put mod-z scores on same scale as standard deviation.
-    sig = np.sqrt(medfilt2d(d_sq, kernel_size=(2 * Kt + 1, 2 * Kf + 1)) / 0.456)
-    # don't divide by zero, instead turn those entries into +inf
-    out = robust_divide(d_rs, sig)
-    return out[Kt:-Kt, Kf:-Kf]
+        filtered = median_filter(data, size=size, mode="reflect")
+
+    return filtered
 
 
-def detrend_medfilt_1d(data, K=8):
+def detrend_medfilt(
+    data: np.ndarray,
+    flags: [None, np.ndarray] = None,
+    half_size: [None, Tuple[int, None]] = None,
+):
     """Detrend array using a median filter.
 
     .. note:: ripped from here: https://github.com/HERA-Team/hera_qm/blob/master/hera_qm/xrfi.py
@@ -149,124 +111,80 @@ def detrend_medfilt_1d(data, K=8):
     Parameters
     ----------
     data : array
-        2D data array to detrend.
-    K : int, optional
-        The box size to apply medfilt over. Default is 8 pixels.
+        Data to detrend. Can be an array of any number of dimensions.
+    flags : boolean array, optional
+        Flags specifying data to ignore in the detrend. If not given, don't ignore
+        anything.
+    half_size : tuple of int/None
+        The half-size of the kernel to convolve (kernel size will be 2*half_size+1).
+        Value of zero (for any dimension) omits that axis from the kernel, effectively
+        applying the detrending for each subarray along that axis. Value of None will
+        effectively (but slowly) perform a median along the entire axis before running
+        the kernel over the other axis.
 
     Returns
     -------
     out : array
-        An array containing the outlier significance metric. Same type and size as spectrum.
+        An array containing the outlier significance metric. Same type and size as `data`.
     """
 
-    K = _check_convolve_dims(data, K)
-    data = np.concatenate([data[K - 1 :: -1], data, data[: -K - 1 : -1]])
+    half_size = _check_convolve_dims(data, half_size)
+    size = tuple(2 * s + 1 for s in half_size)
 
-    d_sm = medfilt(data, kernel_size=2 * K + 1)
-
+    d_sm = flagged_median_filter(data, size=size, flags=flags)
     d_rs = data - d_sm
-    d_sq = np.abs(d_rs) ** 2
+    d_sq = d_rs ** 2
+
+    # Remember that d_sq will be zero for any window in which the data is monotonic (but
+    # could also be zero for non-monotonic windows where the two halves of the window
+    # are self-contained). Most smooth functions will be monotonic in small enough
+    # windows. If noise is of low-enough amplitude wrt the steepness of the smooth
+    # underlying function, there is a good chance the resulting data will also be
+    # monotonic. Nevertheless, any RFI that is large enough will cause the value of
+    # that channel to *not* be the central value, and it will have d_sq > 0.
+
     # Factor of .456 is to put mod-z scores on same scale as standard deviation.
-    sig = np.sqrt(medfilt(d_sq, kernel_size=2 * K + 1) / 0.456)
+    sig = np.sqrt(flagged_median_filter(d_sq, size=size, flags=flags) / 0.456)
+
     # don't divide by zero, instead turn those entries into +inf
-    out = robust_divide(d_rs, sig)
-    return out[K:-K]
+    return robust_divide(d_rs, sig)
 
 
-def detrend_meanfilt(data, flags=None, Kt=8, Kf=8):
-    """Detrend array using a mean filter.
-    Parameters
-    ----------
-    data : array
-        2D data array to detrend.
-    flags : array, optional
-        2D flag array to be interpretted as mask for spectrum.
-    Kt : int, optional
-        The box size in time (first) dimension to apply medfilt over. Default is
-        8 pixels.
-    Kf : int, optional
-        The box size in frequency (second) dimension to apply medfilt over.
-        Default is 8 pixels.
-    Returns
-    -------
-    out : array
-        An array containing the outlier significance metric. Same type and size as spectrum.
-    """
-
-    Kt, Kf = _check_convolve_dims(data, Kt, Kf)
-    kernel = np.ones((2 * Kt + 1, 2 * Kf + 1))
-    # do a mirror extend, like in scipy's convolve, which astropy doesn't support
-    data = np.concatenate([data[Kt - 1 :: -1], data, data[: -Kt - 1 : -1]], axis=0)
-    data = np.concatenate(
-        [data[:, Kf - 1 :: -1], data, data[:, : -Kf - 1 : -1]], axis=1
-    )
-    if flags is not None:
-        flags = np.concatenate(
-            [flags[Kt - 1 :: -1], flags, flags[: -Kt - 1 : -1]], axis=0
-        )
-        flags = np.concatenate(
-            [flags[:, Kf - 1 :: -1], flags, flags[:, : -Kf - 1 : -1]], axis=1
-        )
-    d_sm = convolve(data, kernel, mask=flags, boundary="extend")
-    d_rs = data - d_sm
-    d_sq = np.abs(d_rs) ** 2
-    sig = np.sqrt(convolve(d_sq, kernel, mask=flags))
-    # don't divide by zero, instead turn those entries into +inf
-    out = robust_divide(d_rs, sig)
-    return out[Kt:-Kt, Kf:-Kf]
-
-
-def detrend_meanfilt_1d(data, flags=None, K=8):
-    """Detrend array using a mean filter.
-
-    Parameters
-    ----------
-    data : array
-        1D data array to detrend.
-    flags : array, optional
-        1D flag array to be interpretted as mask for spectrum.
-    K : int, optional
-        The box size  apply medfilt over. Default is 8 pixels.
-
-    Returns
-    -------
-    out : array
-        An array containing the outlier significance metric. Same type and size as spectrum.
-    """
-
-    K = _check_convolve_dims(data, K)
-    kernel = np.ones(2 * K + 1)
-
-    # do a mirror extend, like in scipy's convolve, which astropy doesn't support
-    data = np.concatenate([data[K - 1 :: -1], data, data[: -K - 1 : -1]])
-
-    if flags is not None:
-        flags = np.concatenate([flags[K - 1 :: -1], flags, flags[: -K - 1 : -1]])
-
-    d_sm = convolve(data, kernel, mask=flags, boundary="extend")
-    d_rs = data - d_sm
-    d_sq = np.abs(d_rs) ** 2
-    sig = np.sqrt(convolve(d_sq, kernel, mask=flags))
-    # don't divide by zero, instead turn those entries into +inf
-    out = robust_divide(d_rs, sig)
-    return out[K:-K]
-
-
-def xrfi_medfilt(spectrum, threshold=6, Kt=16, Kf=16):
+def xrfi_medfilt(
+    spectrum: np.ndarray,
+    threshold: float = 6,
+    flags: [None, np.ndarray] = None,
+    kf: [int, None] = 8,
+    kt: [int, None] = 8,
+    inplace: bool = True,
+    max_iter: int = 1,
+    poly_order=0,
+    accumulate=False,
+):
     """Generate RFI flags for a given spectrum using a median filter.
 
     Parameters
     ----------
     spectrum : array-like
         Either a 1D array of shape ``(NFREQS,)`` or a 2D array of shape
-        ``(NFREQS, NTIMES)`` defining the measured raw spectrum.
-        If 2D, a 2D filter in freq*time will be applied.
-    threshold : float
+        ``(NTIMES, NFREQS)`` defining the measured raw spectrum.
+        If 2D, a 2D filter in freq*time will be applied by default. One can perform
+        the filter just over frequency (in the case that `NTIMES > 1`) by setting
+        `kt=0`.
+    threshold : float, optional
         Number of effective sigma at which to clip RFI.
-    Kt : int
-        Window size in the time dimension (if used).
-    Kf : int
-        Window size in the frequency dimension.
+    flags : array-like, optional
+        Boolean array of pre-existing flagged data to ignore in the filtering.
+    kt, kf : tuple of int/None
+        The half-size of the kernel to convolve (eg. kernel size over frequency
+        will be ``2*kt+1``).
+        Value of zero (for any dimension) omits that axis from the kernel, effectively
+        applying the detrending for each subarray along that axis. Value of None will
+        effectively (but slowly) perform a median along the entire axis before running
+        the kernel over the other axis.
+    inplace : bool, optional
+        If True, and flags are given, update the flags in-place instead of creating a
+        new array.
 
     Returns
     -------
@@ -274,22 +192,62 @@ def xrfi_medfilt(spectrum, threshold=6, Kt=16, Kf=16):
         Boolean array of the same shape as ``spectrum`` indicated which channels/times
         have flagged RFI.
     """
-    if spectrum.ndim == 2:
-        significance = detrend_medfilt(spectrum.T, Kt=Kt, Kf=Kf)
+    iter = 0
 
-        flags = np.abs(significance) > threshold  # worse than 5 sigma!
+    if flags is None:
+        new_flags = np.zeros(spectrum.shape, dtype=bool)
+    else:
+        new_flags = flags if inplace else flags.copy()
 
-        significance = detrend_meanfilt(spectrum.T, flags, Kt=Kt, Kf=Kf)
-        flags = np.abs(significance) > threshold
-        return flags.T
-    elif spectrum.ndim == 1:
-        significance = detrend_medfilt_1d(spectrum, K=Kf)
+    nflags = -1
 
-        flags = np.abs(significance) > threshold  # worse than 5 sigma!
+    # Subtract a smooth polynomial first.
+    # The point of this is that steep spectra with only a little bit of noise
+    # tend to detrend to exactly zero, but randomly may detrend to something non-zero.
+    # In this case, the behaviour is to set the significance to infinity. This is not
+    # a problem for data in which the noise is large compared to the signal. We can
+    # force this by initially detrending by some flexible polynomial over the whole
+    # band. This is not guaranteed to work -- the poly fit itself could over-fit
+    # for RFI. Therefore the order of the fit should be low. Its purpose is not to
+    # do a "good fit" to the data, but rather to get the residuals "flat enough" that
+    # the median filter works.
+    # TODO: the following is pretty limited (why polynomial?) but it seems to do
+    # reasonably well.
 
-        significance = detrend_meanfilt_1d(spectrum, flags, K=Kf)
-        flags = np.abs(significance) > threshold
-        return flags
+    assert max_iter > 0
+    resid = spectrum.copy()
+
+    size = (kf,) if spectrum.ndim == 1 else (kt, kf)
+    while iter < max_iter and np.sum(new_flags) > nflags:
+        nflags = np.sum(new_flags)
+
+        if spectrum.ndim == 1 and poly_order:
+            f = np.linspace(0, 1, len(spectrum))
+            resid[~new_flags] = (
+                spectrum[~new_flags]
+                - ModelFit(
+                    "polynomial",
+                    f[~new_flags],
+                    spectrum[~new_flags],
+                    n_terms=poly_order,
+                ).evaluate()
+            )
+        else:
+            resid = spectrum
+
+        significance = detrend_medfilt(resid, half_size=size, flags=new_flags)
+
+        if accumulate:
+            new_flags |= np.abs(significance) > threshold
+        else:
+            new_flags = np.abs(significance) > threshold
+
+        iter += 1
+
+    if 1 < max_iter == iter and np.sum(new_flags) > nflags:
+        warnings.warn("Median filter reached max_iter and is still finding new RFI.")
+
+    return new_flags, significance
 
 
 def xrfi_explicit(f, rfi_file=None, extra_rfi=None):
@@ -470,6 +428,7 @@ def xrfi_poly(
     n_resid=3,
     n_abs_resid_threshold=5,
     max_iter=20,
+    accumulate=False,
 ):
     """
     Flag RFI by subtracting a smooth polynomial and iteratively removing outliers.
@@ -502,7 +461,8 @@ def xrfi_poly(
         outliers.
     max_iter : int, optional
         The maximum number of iterations to perform.
-
+    accumulate : bool, optional
+        Whether to accumulate flags on each iteration.
     Returns
     -------
     flags : array-like
@@ -551,7 +511,12 @@ def xrfi_poly(
         par = np.polyfit(ff, np.abs(res), n_resid - 1)
         model_std = np.polyval(par, ff)
 
-        flags[~flags] |= np.abs(res) > n_abs_resid_threshold * model_std
+        if accumulate:
+            flags[~flags] |= np.abs(res) > n_abs_resid_threshold * model_std
+        else:
+            flags_tmp = np.zeros(len(flags), dtype=bool)
+            flags_tmp[~flags] = np.abs(res) > n_abs_resid_threshold * model_std
+            flags = flags_tmp
 
         n_flags_new = np.sum(flags)
         counter += 1

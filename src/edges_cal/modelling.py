@@ -193,12 +193,12 @@ class ModelFit:
         return self.model(x)
 
     @cached_property
-    def model_error(self):
+    def residual(self):
         return self.ydata - self.evaluate()
 
     @cached_property
     def weighted_chi2(self):
-        return np.dot(self.model_error.T, np.dot(self.weights, self.model_error))
+        return np.dot(self.residual.T, np.dot(self.weights, self.residual))
 
     def reduced_weighted_chi2(self):
         return (1 / self.degrees_of_freedom) * self.weighted_chi2

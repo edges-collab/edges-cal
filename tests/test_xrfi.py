@@ -28,27 +28,29 @@ def sky_flat_1d():
 
 @pytest.fixture("module")
 def sky_linpoly_1d(freq):
-    p = np.poly1d([1000, -400, 4000, -8000, 7000, -2000, 400][:-1])
-    return (freq / 75.0) ** -2.55 * p(freq / 75.0)
+    p = np.poly1d([1750, 0, 3, -2, 7, 5][::-1])
+    f = np.linspace(-1, 1, len(freq))
+    return (freq / 75.0) ** -2.55 * p(f)
 
 
-def add_noise(spec, scale=1, seed=None):
+def thermal_noise(spec, scale=1, seed=None):
     if seed:
         np.random.seed(seed)
-    return spec + np.random.normal(0, spec / scale)
+    return np.random.normal(0, spec / scale)
 
 
 @pytest.fixture("module")
 def rfi_regular_1d():
     a = np.zeros(NFREQ)
-    a[::50] = 10000
+    a[::50] = 1
     return a
 
 
 @pytest.fixture("module")
 def rfi_random_1d():
     a = np.zeros(NFREQ)
-    a[np.random.randint(0, len(a), 100)] = 10000
+    np.random.seed(12345)
+    a[np.random.randint(0, len(a), 100)] = 1
     return a
 
 
@@ -64,16 +66,41 @@ def rfi_null_1d():
     "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
 )
 @pytest.mark.parametrize(
-    "rfi_func, scale",
+    "scale, amplitude",
     list(
         itertools.product(
-            (xrfi.xrfi_medfilt, xrfi.xrfi_poly, xrfi.xrfi_poly_filter),
-            (1000, 100, 10),  # Note that realistic noise should be ~250.
+            (1000,),  # 100, 50),  # Note that realistic noise should be ~250.
+            (200,),  # 100, 50), # amplitude of RFI wrt the largest noise.
         )
     ),
 )
-def test_1d_default(sky_model, rfi_model, rfi_func, scale):
-    sky = add_noise(sky_model, scale=scale, seed=1010) + rfi_model
+def test_1d_default(sky_model, rfi_model, scale, amplitude):
+    std = sky_model / scale
+    amp = std.max() * amplitude
+    noise = thermal_noise(sky_model, scale=scale, seed=1010)
+    rfi = rfi_model * amp
+    sky = sky_model + noise + rfi
 
-    flags = rfi_func(sky)
-    assert not np.any(flags ^ (rfi_model > 0))
+    true_flags = rfi_model > 0
+    flags, significance = xrfi.xrfi_medfilt(
+        sky, max_iter=15, threshold=10, kf=5, poly_order=3
+    )
+
+    wrong = np.where(true_flags != flags)[0]
+
+    if len(wrong) > 0:
+        print("RFI false positive(0)/negative(1): ")
+        print(true_flags[wrong])
+        print("Corrupted sky at wrong flags: ")
+        print(sky[wrong])
+        print("Std. dev away from model at wrong flags: ")
+        print((sky[wrong] - sky_model[wrong]) / std[wrong])
+        print("Std. dev of noise away from model at wrong flags: ")
+        print(noise[wrong] / std[wrong])
+        print("Significance at wrong flags: ")
+        print(significance[wrong] / std[wrong])
+
+        print("Std dev of RFI away from model at wrong flags: ")
+        print(rfi[wrong] / std[wrong])
+
+    assert len(wrong) == 0
