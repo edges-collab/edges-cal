@@ -362,8 +362,8 @@ class SwitchCorrection:
             else:
                 d = np.unwrap(np.angle(self.s11_correction))
 
-            fit = mdl.model_fit("fourier", self.freq.freq_recentred, d, n_terms)[0]
-            return lambda x: mdl.model_evaluate("fourier", fit, x)
+            fit = mdl.ModelFit("fourier", self.freq.freq_recentred, d, n_terms=n_terms)
+            return lambda x: fit.evaluate(x)
 
         mag = get_model(True)
         ang = get_model(False)
@@ -602,6 +602,10 @@ class LoadSpectrum:
         return self.variance_Q * 400 ** 2
 
     @cached_property
+    def ancillary(self):
+        return self._ave_and_var_spec[2]
+
+    @cached_property
     def averaged_p0(self):
         return self._ave_and_var_spec[0]["p0"]
 
@@ -662,7 +666,7 @@ class LoadSpectrum:
             return means, vars
 
         logger.info("Reducing {} spectra...".format(self.load_name))
-        spectra = self.get_spectra()
+        spectra, anc = self.get_spectra()
 
         means = {}
         vars = {}
@@ -702,10 +706,10 @@ class LoadSpectrum:
                 fl[kind + "_mean"] = means[kind]
                 fl[kind + "_var"] = vars[kind]
 
-        return means, vars
+        return means, vars, anc
 
     def get_spectra(self):
-        spec = self._read_spectrum()
+        spec, anc = self._read_spectrum()
 
         if self.rfi_removal == "2D":
             for key, val in spec.items():
@@ -723,7 +727,7 @@ class LoadSpectrum:
                 )
                 val[flags] = np.nan
                 spec[key] = val
-        return spec
+        return spec, anc
 
     def _read_spectrum(self):
         """
@@ -736,22 +740,33 @@ class LoadSpectrum:
                powers of source, load, and load+noise respectively), and ant_temp (the
                uncalibrated, but normalised antenna temperature).
         """
-        out = self.spec_obj.read()
+        out, anc = self.spec_obj.read()
 
+        n_times = len(out["p0"][0])
+
+        index_start_spectra = int((self.ignore_times_percent / 100) * n_times)
         for key, val in out.items():
-            index_start_spectra = int(
-                (self.ignore_times_percent / 100) * len(val[0, :])
-            )
             out[key] = val[self.freq.mask, index_start_spectra:]
-        return out
+
+        for key, val in anc.items():
+            try:
+                if len(val) == n_times:
+                    anc[key] = val[index_start_spectra:]
+            except (TypeError, AttributeError):
+                pass
+
+        return out, anc
+
+    @cached_property
+    def thermistor(self):
+        return self.resistance_obj.read()[0]
 
     @cached_property
     def thermistor_temp(self):
         """
         Read a resistance file and return the associated thermistor temperature in K.
         """
-        resistance = self.resistance_obj.read()
-        temp_spectrum = rcf.temperature_thermistor(resistance)
+        temp_spectrum = rcf.temperature_thermistor(self.thermistor["load_resistance"])
         return temp_spectrum[
             int((self.ignore_times_percent / 100) * len(temp_spectrum)) :
         ]
@@ -856,16 +871,12 @@ class HotLoadCorrection:
         array_like : The model S-parameter
         """
         d = self.data[:, self._kinds[kind]]
-        if mag:
-            d = np.abs(d)
-        else:
-            d = np.unwrap(np.angle(d))
-
-        mag = mdl.model_fit("polynomial", self.freq.freq_recentred, d, 21)
+        d = np.abs(d) if mag else np.unwrap(np.angle(d))
+        mag = mdl.ModelFit("polynomial", self.freq.freq_recentred, d, n_terms=21)
 
         def out(f):
             ff = self.freq.normalize(f)
-            return mdl.model_evaluate("polynomial", mag[0], ff)
+            return mag.evaluate(ff)
 
         return out
 
