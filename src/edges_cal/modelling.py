@@ -138,7 +138,6 @@ class ModelFit:
         **kwargs,
     ):
         if isinstance(model_type, str):
-            print(Model._models[model_type.lower()].__name__)
             self.model = Model._models[model_type.lower()](default_x=xdata, **kwargs)
         else:
             self.model = model_type(default_x=xdata, **kwargs)

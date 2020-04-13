@@ -475,7 +475,7 @@ class LoadSpectrum:
         spec_obj: io.Spectrum,
         resistance_obj: io.Resistance,
         switch_correction=None,
-        f_low=None,
+        f_low=40,
         f_high=None,
         ignore_times_percent=5,
         rfi_removal="1D2D",
