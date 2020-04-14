@@ -4,7 +4,7 @@ from typing import Tuple, Union
 import numpy as np
 import yaml
 from astropy.convolution import convolve
-from scipy.ndimage import generic_filter, median_filter
+from scipy import ndimage
 from scipy.signal import medfilt, medfilt2d
 
 from .modelling import ModelFit
@@ -86,15 +86,97 @@ def robust_divide(num, den):
     return out
 
 
-def flagged_median_filter(data, size, flags=None):
+def flagged_filter(
+    data: np.ndarray,
+    size: [int, Tuple[int]],
+    kind: str = "median",
+    flags: [None, np.ndarray] = None,
+    mode: [None, str] = None,
+    interp_flagged=True,
+    **kwargs,
+):
+    """
+    Perform an n-dimensional filter operation on optionally flagged data.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        The data to filter. Can be of arbitrary dimension.
+    size : int or tuple
+        The size of the filtering convolution kernel. If tuple, one entry per dimension
+        in `data`.
+    kind : str, optional
+        The function to apply in each window. Typical options are `mean` and `median`.
+        For this function to work, the function kind chosen here must have a correspdoning
+        `nan<function>` implementation in numpy.
+    flags : np.ndarray, optional
+        A boolean array specifying data to omit from the filtering.
+    mode : str, optional
+        The mode of the filter. See ``scipy.ndimage.generic_filter` for details. By default,
+        'nearest' if size < data.size otherwise 'reflect'.
+    interp_flagged : bool, optional
+        Whether to fill in flagged entries with its filtered value. Otherwise,
+        flagged entries are set to their original value.
+    kwargs :
+        Other options to pass to the generic filter function.
+
+    Returns
+    -------
+    np.ndarray :
+        The filtered array, of the same shape and type as ``data``.
+
+    Notes
+    -----
+    This function can typically be used to implement a flagged median filter. It does
+    have some limitations in this regard, which we will now describe.
+
+    It would be expected that a perfectly smooth
+    monotonic function, after median filtering, should remain identical to the input.
+    This is only the case for the default 'nearest' mode. For the alternative 'reflect'
+    mode, the edge-data will be corrupted from the input. On the other hand, it may be
+    expected that if the kernel width is equal to or larger than the data size, that
+    the operation is merely to perform a full collapse over that dimension. This is the
+    case only for mode 'reflect', while again mode 'nearest' will continue to yield (a
+    very slow) identity operation. By default, the mode will be set to 'reflect' if
+    the size is >= the data size, with an emitted warning.
+
+    Furthermore, a median filter is *not* an identity operation, even on monotonic
+    functions, for an even-sized kernel (in this case it's the average of the two
+    central values).
+
+    Also, even for an odd-sized kernel, if using flags, some of the windows will contain
+    an odd number of useable data, in which case the data surrounding the flag will not
+    be identical to the input.
+
+    Finally, flags near the edges can have strange behaviour, depending on the mode.
+    """
+    if mode is None:
+        if (isinstance(size, int) and size >= min(data.shape)) or (
+            isinstance(size, tuple) and any(s > d for s, d in zip(size, data.shape))
+        ):
+            warnings.warn(
+                "Setting default mode to reflect because a large size was set."
+            )
+            mode = "reflect"
+        else:
+            mode = "nearest"
+
     if flags is not None and np.any(flags):
+        fnc = getattr(np, "nan" + kind)
         assert flags.shape == data.shape
         orig_flagged_data = data[flags].copy()
         data[flags] = np.nan
-        filtered = generic_filter(data, np.nanmedian, size=size, mode="reflect")
-        filtered[flags] = orig_flagged_data
+        filtered = ndimage.generic_filter(data, fnc, size=size, mode=mode, **kwargs)
+        if not interp_flagged:
+            filtered[flags] = orig_flagged_data
+        data[flags] = orig_flagged_data
+
     else:
-        filtered = median_filter(data, size=size, mode="reflect")
+        if kind == "mean":
+            kind = "uniform"
+        filtered = getattr(ndimage, kind + "_filter")(
+            data, size=size, mode=mode, **kwargs
+        )
 
     return filtered
 
@@ -126,12 +208,28 @@ def detrend_medfilt(
     -------
     out : array
         An array containing the outlier significance metric. Same type and size as `data`.
-    """
 
+    Notes
+    -----
+    This detrending is very good for data with large RFI compared to the noise, but also
+    reasonably large noise compared to the spectrum steepness. If the noise is small
+    compared to the steepness of the spectrum, individual windows can become *almost always*
+    monotonic, in which case the randomly non-monotonic bins "stick out" and get wrongly
+    flagged. This can be helped three ways:
+    1) Use a smaller bin width. This helps by reducing the probability that a bin will
+       be randomly non-monotonic. However it also loses signal-to-noise on the RFI.
+    2) Pre-fit a smooth model that "flattens" the spectrum. This helps by reducing the
+       probability that bins will be monotonic (higher noise level wrt steepness). It
+       has the disadvantage that fitted models can be wrong when there's RFI there.
+    3) Follow the medfilt with a meanfilt: if the medfilt is able to flag most/all of
+       the RFI, then a following meanfilt will tend to "unfilter" the wrongly flagged
+       parts.
+
+    """
     half_size = _check_convolve_dims(data, half_size)
     size = tuple(2 * s + 1 for s in half_size)
 
-    d_sm = flagged_median_filter(data, size=size, flags=flags)
+    d_sm = flagged_filter(data, size=size, kind="median", flags=flags)
     d_rs = data - d_sm
     d_sq = d_rs ** 2
 
@@ -144,7 +242,54 @@ def detrend_medfilt(
     # that channel to *not* be the central value, and it will have d_sq > 0.
 
     # Factor of .456 is to put mod-z scores on same scale as standard deviation.
-    sig = np.sqrt(flagged_median_filter(d_sq, size=size, flags=flags) / 0.456)
+    sig = np.sqrt(flagged_filter(d_sq, size=size, kind="median", flags=flags) / 0.456)
+
+    # don't divide by zero, instead turn those entries into +inf
+    return robust_divide(d_rs, sig)
+
+
+def detrend_meanfilt(
+    data: np.ndarray,
+    flags: [None, np.ndarray] = None,
+    half_size: [None, Tuple[int, None]] = None,
+):
+    """Detrend array using a mean filter.
+
+    Parameters
+    ----------
+    data : array
+        Data to detrend. Can be an array of any number of dimensions.
+    flags : boolean array, optional
+        Flags specifying data to ignore in the detrend. If not given, don't ignore
+        anything.
+    half_size : tuple of int/None
+        The half-size of the kernel to convolve (kernel size will be 2*half_size+1).
+        Value of zero (for any dimension) omits that axis from the kernel, effectively
+        applying the detrending for each subarray along that axis. Value of None will
+        effectively (but slowly) perform a median along the entire axis before running
+        the kernel over the other axis.
+
+    Returns
+    -------
+    out : array
+        An array containing the outlier significance metric. Same type and size as `data`.
+
+    Notes
+    -----
+    This detrending is very good for data that has most of the RFI flagged already, but
+    will perform very poorly when un-flagged RFI still exists. It is often useful to
+    precede this with a median filter.
+    """
+
+    half_size = _check_convolve_dims(data, half_size)
+    size = tuple(2 * s + 1 for s in half_size)
+
+    d_sm = flagged_filter(data, size=size, kind="mean", flags=flags)
+    d_rs = data - d_sm
+    d_sq = d_rs ** 2
+
+    # Factor of .456 is to put mod-z scores on same scale as standard deviation.
+    sig = np.sqrt(flagged_filter(d_sq, size=size, kind="mean", flags=flags))
 
     # don't divide by zero, instead turn those entries into +inf
     return robust_divide(d_rs, sig)
@@ -160,6 +305,7 @@ def xrfi_medfilt(
     max_iter: int = 1,
     poly_order=0,
     accumulate=False,
+    use_meanfilt=True,
 ):
     """Generate RFI flags for a given spectrum using a median filter.
 
@@ -185,12 +331,50 @@ def xrfi_medfilt(
     inplace : bool, optional
         If True, and flags are given, update the flags in-place instead of creating a
         new array.
+    max_iter : int, optional
+        Maximum number of iterations to perform. Each iteration uses the flags of the
+        previous iteration to achieve a more robust estimate of the flags. Multiple
+        iterations are more useful if ``poly_order > 0``.
+    poly_order : int, optional
+        If greater than 0, fits a polynomial to the spectrum before performing
+        the median filter. Only allowed if spectrum is 1D. This is useful for getting
+        the number of false positives down. If max_iter>1, the polynomial will be refit
+        on each iteration (using new flags).
+    accumulate : bool,optional
+        If True, on each iteration, accumulate flags. Otherwise, use only flags from the
+        previous iteration and then forget about them. Recommended to be False.
+    use_meanfilt : bool, optional
+        Whether to apply a mean filter *after* the median filter. The median filter is
+        good at getting RFI, but can also pick up non-RFI if the spectrum is steep
+        compared to the noise. The mean filter is better at only getting RFI if the RFI
+        has already been flagged.
 
     Returns
     -------
     flags : array-like
         Boolean array of the same shape as ``spectrum`` indicated which channels/times
         have flagged RFI.
+
+    Notes
+    -----
+    The default combination of using a median filter followed by a mean filter works
+    quite well. The median filter works quite well at picking up large RFI (wrt to the
+    noise level), but can also create false positives if the noise level is small wrt
+    the steepness of the slope. Following by a flagged mean filter tends to remove these
+    false positives (as it doesn't get pinned to zero when the function is monotonic).
+
+    It is unclear whether performing an iterative filtering is very useful unless using
+    a polynomial subtraction. With polynomial subtraction, one should likely use at least
+    a few iterations, without accumulation, so that the polynomial is not skewed by the
+    as-yet-unflagged RFI.
+
+    Choice of kernel size can be important. The wider the kernel, the more "signal-to-noise"
+    one will get on the RFI. Also, if there is a bunch of RFI all clumped together, it will
+    definitely be missed by a kernel window of order double the size of the clump or less.
+    By increasing the kernel size, these clumps are picked up, but edge-effects become
+    more prevalent in this case. One option here would be to iterate over kernel sizes
+    (getting smaller), such that very large blobs are first flagged out, then progressively
+    finer detail is added. Use ``xrfi_iterative_medfilt`` for that.
     """
     iter = 0
 
@@ -201,19 +385,6 @@ def xrfi_medfilt(
 
     nflags = -1
 
-    # Subtract a smooth polynomial first.
-    # The point of this is that steep spectra with only a little bit of noise
-    # tend to detrend to exactly zero, but randomly may detrend to something non-zero.
-    # In this case, the behaviour is to set the significance to infinity. This is not
-    # a problem for data in which the noise is large compared to the signal. We can
-    # force this by initially detrending by some flexible polynomial over the whole
-    # band. This is not guaranteed to work -- the poly fit itself could over-fit
-    # for RFI. Therefore the order of the fit should be low. Its purpose is not to
-    # do a "good fit" to the data, but rather to get the residuals "flat enough" that
-    # the median filter works.
-    # TODO: the following is pretty limited (why polynomial?) but it seems to do
-    # reasonably well.
-
     assert max_iter > 0
     resid = spectrum.copy()
 
@@ -222,6 +393,18 @@ def xrfi_medfilt(
         nflags = np.sum(new_flags)
 
         if spectrum.ndim == 1 and poly_order:
+            # Subtract a smooth polynomial first.
+            # The point of this is that steep spectra with only a little bit of noise
+            # tend to detrend to exactly zero, but randomly may detrend to something non-zero.
+            # In this case, the behaviour is to set the significance to infinity. This is not
+            # a problem for data in which the noise is large compared to the signal. We can
+            # force this by initially detrending by some flexible polynomial over the whole
+            # band. This is not guaranteed to work -- the poly fit itself could over-fit
+            # for RFI. Therefore the order of the fit should be low. Its purpose is not to
+            # do a "good fit" to the data, but rather to get the residuals "flat enough" that
+            # the median filter works.
+            # TODO: the following is pretty limited (why polynomial?) but it seems to do
+            # reasonably well.
             f = np.linspace(0, 1, len(spectrum))
             resid[~new_flags] = (
                 spectrum[~new_flags]
@@ -236,6 +419,10 @@ def xrfi_medfilt(
             resid = spectrum
 
         significance = detrend_medfilt(resid, half_size=size, flags=new_flags)
+        medfilt_flags = np.abs(significance) > threshold
+
+        if use_meanfilt:
+            significance = detrend_meanfilt(resid, half_size=size, flags=medfilt_flags)
 
         if accumulate:
             new_flags |= np.abs(significance) > threshold
@@ -248,6 +435,41 @@ def xrfi_medfilt(
         warnings.warn("Median filter reached max_iter and is still finding new RFI.")
 
     return new_flags, significance
+
+
+def xrfi_iterative_medfilt(
+    spectrum: np.ndarray,
+    threshold: float = 6,
+    flags: [None, np.ndarray] = None,
+    min_kf: [int, None] = 8,
+    min_kt: [int, None] = 8,
+    max_kf: [int, None] = None,
+    max_kt: [int, None] = None,
+    inplace: bool = True,
+    accumulate=False,
+    use_meanfilt=True,
+):
+    """
+    An iterative median filter, in which the window size is progressively reduced.
+
+    Parameters
+    ----------
+    spectrum
+    threshold
+    flags
+    kf
+    kt
+    inplace
+    max_iter
+    poly_order
+    accumulate
+    use_meanfilt
+
+    Returns
+    -------
+
+    """
+    raise NotImplementedError("This has not been implemented yet.")
 
 
 def xrfi_explicit(f, rfi_file=None, extra_rfi=None):
@@ -424,11 +646,14 @@ def xrfi_poly(
     f_ratio=None,
     f_log=False,
     t_log=True,
-    n_signal=10,
-    n_resid=3,
-    n_abs_resid_threshold=5,
+    n_signal=3,
+    n_resid=-1,
+    threshold=10,
     max_iter=20,
     accumulate=False,
+    increase_order=True,
+    decrement_threshold=0,
+    min_threshold=5,
 ):
     """
     Flag RFI by subtracting a smooth polynomial and iteratively removing outliers.
@@ -456,77 +681,96 @@ def xrfi_poly(
         The number of polynomial terms to use to fit the signal.
     n_resid : int, optional
         The number of polynomial terms to use to fit the residuals.
-    n_abs_resid_threshold : float, optional
+    threshold : float, optional
         The factor by which the absolute residual model is multiplied to determine
         outliers.
     max_iter : int, optional
         The maximum number of iterations to perform.
     accumulate : bool, optional
         Whether to accumulate flags on each iteration.
+    increase_order : bool, optional
+        Whether to increase the order of the polynomial on each iteration.
+    decrement_threshold : float, optional
+        An amount to decrement the threshold by every iteration. Threshold will never
+        go below ``min_threshold``.
+    min_threshold : float, optional
+        The minimum threshold to decrement to.
+
     Returns
     -------
     flags : array-like
         Boolean array of the same shape as ``spectrum`` indicated which channels/times
         have flagged RFI.
     """
+    if min_threshold > threshold:
+        warnings.warn(
+            f"You've set a threshold smaller than the min_threshold of {min_threshold}. Will use threshold={min_threshold}."
+        )
+        threshold = min_threshold
+
     if f_log and not f_ratio:
         raise ValueError("If fitting in log(freq), you must provide f_ratio.")
 
-    assert n_abs_resid_threshold > 1.5
-    assert n_resid < n_signal
+    assert threshold > 3
 
     nf = spectrum.shape[-1]
-    flags = np.zeros(nf, dtype=bool)
+    orig_flags = np.zeros(nf, dtype=bool)
     f = np.linspace(-1, 1, nf) if not f_log else np.logspace(0, f_ratio, nf)
 
-    flags |= (spectrum <= 0) | np.isnan(spectrum) | np.isinf(spectrum)
+    orig_flags |= (spectrum <= 0) | np.isnan(spectrum) | np.isinf(spectrum)
 
     if weights is not None:
-        flags |= weights <= 0
+        orig_flags |= weights <= 0
 
-    n_flags = np.sum(flags)
-    n_flags_new = n_flags + 1
+    flags = orig_flags.copy()
+
+    if not increase_order:
+        assert n_resid < n_signal
+
+    n_flags_changed = 1
     counter = 0
-    while (
-        n_flags < n_flags_new
-        and counter < max_iter
-        and (nf - n_flags_new) > n_signal * 2
-    ):
-        n_flags = 1 * n_flags_new
 
+    while n_flags_changed > 0 and counter < max_iter and np.sum(~flags) > n_signal * 2:
         ff = f[~flags]
         s = spectrum[~flags]
 
         if t_log:
             s = np.log(s)
 
-        par = np.polyfit(ff, s, n_signal - 1)
+        par = np.polyfit(ff, s, n_signal)
         model = np.polyval(par, f)
 
         if t_log:
             model = np.exp(model)
 
-        res = s - model[~flags]
+        res = spectrum - model
 
-        par = np.polyfit(ff, np.abs(res), n_resid - 1)
-        model_std = np.polyval(par, ff)
+        par = np.polyfit(
+            ff, np.abs(res[~flags]), n_resid if n_resid > 0 else n_signal + n_resid
+        )
+        model_std = np.polyval(par, f)
 
         if accumulate:
-            flags[~flags] |= np.abs(res) > n_abs_resid_threshold * model_std
+            nflags = np.sum(flags[~flags])
+            flags[~flags] |= np.abs(res)[~flags] > threshold * model_std[~flags]
+            n_flags_changed = np.sum(flags[~flags]) - nflags
         else:
-            flags_tmp = np.zeros(len(flags), dtype=bool)
-            flags_tmp[~flags] = np.abs(res) > n_abs_resid_threshold * model_std
-            flags = flags_tmp
+            new_flags = orig_flags | (np.abs(res) > threshold * model_std)
+            n_flags_changed = np.sum(flags ^ new_flags)
+            flags = new_flags.copy()
 
-        n_flags_new = np.sum(flags)
         counter += 1
+        if increase_order:
+            n_signal += 1
+
+        threshold = max(threshold - decrement_threshold, min_threshold)
 
     if counter == max_iter:
         warnings.warn(
             f"max iterations ({max_iter}) reached, not all RFI might have been caught."
         )
 
-    if nf - n_flags_new >= n_signal * 2:
+    if np.sum(~flags) <= n_signal * 2:
         warnings.warn(
             "Termination of iterative loop due to too many flags. Reduce n_signal or check data."
         )
