@@ -131,17 +131,26 @@ class Fourier(Model):
 class ModelFit:
     def __init__(
         self,
-        model_type: [str, Type[Model]],
+        model_type: [str, Type[Model], Model],
         xdata: np.ndarray,
         ydata: np.ndarray,
         weights: [None, np.ndarray] = None,
+        n_terms: int = None,
         **kwargs,
     ):
         if isinstance(model_type, str):
-            print(Model._models[model_type.lower()].__name__)
-            self.model = Model._models[model_type.lower()](default_x=xdata, **kwargs)
+            self.model = Model._models[model_type.lower()](
+                default_x=xdata, n_terms=n_terms, **kwargs
+            )
+        elif issubclass(model_type, Model):
+            self.model = model_type(default_x=xdata, n_terms=n_terms, **kwargs)
+        elif isinstance(model_type, Model):
+            self.model = model_type
+            self.model.default_x = xdata
         else:
-            self.model = model_type(default_x=xdata, **kwargs)
+            raise ValueError(
+                "model_type must be str, Model subclass or Model instance."
+            )
 
         self.xdata = xdata
         self.ydata = ydata
@@ -151,8 +160,10 @@ class ModelFit:
             self.weights = np.eye(len(self.xdata))
         elif weights.ndim == 1:
             # if a vector is given
+            assert weights.shape == self.xdata.shape
             self.weights = np.diag(weights)
-        else:
+        elif weights.ndim == 2:
+            assert weights.shape == (len(self.xdata), len(self.xdata))
             self.weights = weights
 
         self.n_terms = self.model.n_terms
@@ -178,7 +189,7 @@ class ModelFit:
         return q, r
 
     def get_model_params(self):
-        # transposing matrices so 'frequency' dimension is along columns
+        # transposing matrices so data is along columns
         ydata = np.reshape(self.ydata, (-1, 1))
 
         Wydata = np.dot(np.sqrt(self.weights), ydata)
@@ -193,12 +204,12 @@ class ModelFit:
         return self.model(x)
 
     @cached_property
-    def model_error(self):
+    def residual(self):
         return self.ydata - self.evaluate()
 
     @cached_property
     def weighted_chi2(self):
-        return np.dot(self.model_error.T, np.dot(self.weights, self.model_error))
+        return np.dot(self.residual.T, np.dot(self.weights, self.residual))
 
     def reduced_weighted_chi2(self):
         return (1 / self.degrees_of_freedom) * self.weighted_chi2

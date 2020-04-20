@@ -1240,10 +1240,12 @@ class CalibrationObservation:
         dict:
             Each entry has a key of the source name, and the value is a matplotlib figure.
         """
-        return {
+        out = {
             name: source.reflections.plot_residuals()
             for name, source in self._loads.items()
         }
+        out.update({"lna": self.lna.plot_residuals()})
+        return out
 
     @cached_property
     def s11_correction_models(self):
@@ -1665,6 +1667,8 @@ class CalibrationObservation:
             fl.attrs["path"] = self.path
             fl.attrs["cterms"] = self.cterms
             fl.attrs["wterms"] = self.wterms
+            fl.attrs["switch_path"] = self.lna.internal_switch.path
+            fl.attrs["switch_run_num"] = self.lna.internal_switch.run_num
 
             fl["C1"] = self.C1_poly.coefficients
             fl["C2"] = self.C2_poly.coefficients
@@ -1692,6 +1696,10 @@ class Calibration:
             self.freq = FrequencyRange(fl["frequencies"][...])
             self._lna_s11_rl = Spline(self.freq.freq, fl["lna_s11_real"][...])
             self._lna_s11_im = Spline(self.freq.freq, fl["lna_s11_imag"][...])
+
+            self.internal_switch = io.SwitchingState(
+                fl.attrs["switch_path"], run_num=fl.attrs["switch_run_num"]
+            )
 
     def lna_s11(self, freq):
         return self._lna_s11_rl(freq) + 1j * self._lna_s11_im(freq)
