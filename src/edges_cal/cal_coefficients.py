@@ -1240,10 +1240,12 @@ class CalibrationObservation:
         dict:
             Each entry has a key of the source name, and the value is a matplotlib figure.
         """
-        return {
+        out = {
             name: source.reflections.plot_residuals()
             for name, source in self._loads.items()
         }
+        out.update({"lna": self.lna.plot_residuals()})
+        return out
 
     @cached_property
     def s11_correction_models(self):
