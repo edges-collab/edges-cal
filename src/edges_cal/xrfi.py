@@ -385,6 +385,8 @@ def xrfi_medfilt(
 
     nflags = -1
 
+    nflags_list = []
+    resid_list = []
     assert max_iter > 0
     resid = spectrum.copy()
 
@@ -415,14 +417,17 @@ def xrfi_medfilt(
                     n_terms=poly_order,
                 ).evaluate()
             )
+            resid_list.append(resid)
         else:
             resid = spectrum
 
-        significance = detrend_medfilt(resid, half_size=size, flags=new_flags)
-        medfilt_flags = np.abs(significance) > threshold
+        med_significance = detrend_medfilt(resid, half_size=size, flags=new_flags)
 
         if use_meanfilt:
+            medfilt_flags = np.abs(med_significance) > threshold
             significance = detrend_meanfilt(resid, half_size=size, flags=medfilt_flags)
+        else:
+            significance = med_significance
 
         if accumulate:
             new_flags |= np.abs(significance) > threshold
@@ -430,11 +435,21 @@ def xrfi_medfilt(
             new_flags = np.abs(significance) > threshold
 
         iter += 1
+        nflags_list.append(np.sum(new_flags))
 
     if 1 < max_iter == iter and np.sum(new_flags) > nflags:
         warnings.warn("Median filter reached max_iter and is still finding new RFI.")
 
-    return new_flags, significance
+    return (
+        new_flags,
+        {
+            "significance": significance,
+            "median_significance": med_significance,
+            "iters": iter,
+            "nflags": nflags_list,
+            "residuals": resid_list,
+        },
+    )
 
 
 def xrfi_iterative_medfilt(
@@ -642,7 +657,7 @@ def xrfi_poly_filter(
 
 def xrfi_poly(
     spectrum,
-    weights=None,
+    flags=None,
     f_ratio=None,
     f_log=False,
     t_log=True,
@@ -654,6 +669,7 @@ def xrfi_poly(
     increase_order=True,
     decrement_threshold=0,
     min_threshold=5,
+    inplace=True,
 ):
     """
     Flag RFI by subtracting a smooth polynomial and iteratively removing outliers.
@@ -668,8 +684,8 @@ def xrfi_poly(
     spectrum : array-like
         A 1D or 2D array, where the last axis corresponds to frequency. The data
         measured at those frequencies.
-    weights : array-like
-        The weights associated with the data (same shape as `spectrum`).
+    flags : array-like, optional
+        The flags associated with the data (same shape as `spectrum`).
     f_ratio : float, optional
         The ratio of the max to min frequency to be fit. Only required if ``f_log``
         is True.
@@ -714,13 +730,10 @@ def xrfi_poly(
     assert threshold > 3
 
     nf = spectrum.shape[-1]
-    orig_flags = np.zeros(nf, dtype=bool)
     f = np.linspace(-1, 1, nf) if not f_log else np.logspace(0, f_ratio, nf)
 
+    orig_flags = flags if flags is not None else np.zeros(nf, dtype=bool)
     orig_flags |= (spectrum <= 0) | np.isnan(spectrum) | np.isinf(spectrum)
-
-    if weights is not None:
-        orig_flags |= weights <= 0
 
     flags = orig_flags.copy()
 
@@ -730,6 +743,10 @@ def xrfi_poly(
     n_flags_changed = 1
     counter = 0
 
+    n_flags_changed_list = []
+    total_flags_list = []
+    model_list = []
+    model_std_list = []
     while n_flags_changed > 0 and counter < max_iter and np.sum(~flags) > n_signal * 2:
         ff = f[~flags]
         s = spectrum[~flags]
@@ -739,7 +756,7 @@ def xrfi_poly(
 
         par = np.polyfit(ff, s, n_signal)
         model = np.polyval(par, f)
-
+        model_list.append(par)
         if t_log:
             model = np.exp(model)
 
@@ -749,6 +766,7 @@ def xrfi_poly(
             ff, np.abs(res[~flags]), n_resid if n_resid > 0 else n_signal + n_resid
         )
         model_std = np.polyval(par, f)
+        model_std_list.append(par)
 
         if accumulate:
             nflags = np.sum(flags[~flags])
@@ -765,6 +783,9 @@ def xrfi_poly(
 
         threshold = max(threshold - decrement_threshold, min_threshold)
 
+        n_flags_changed_list.append(n_flags_changed)
+        total_flags_list.append(np.sum(flags))
+
     if counter == max_iter:
         warnings.warn(
             f"max iterations ({max_iter}) reached, not all RFI might have been caught."
@@ -775,4 +796,15 @@ def xrfi_poly(
             "Termination of iterative loop due to too many flags. Reduce n_signal or check data."
         )
 
-    return flags
+    if inplace:
+        orig_flags |= flags
+
+    return (
+        flags,
+        {
+            "n_flags_changed": n_flags_changed_list,
+            "total_flags": total_flags_list,
+            "models": model_list,
+            "model_std": model_std_list,
+        },
+    )
