@@ -1172,6 +1172,11 @@ class CalibrationObservation:
         # Expose a Frequency object
         self.freq = self.ambient.freq
 
+        if self.lna.freq.min > self.freq.min or self.lna.freq.max < self.freq.max:
+            raise ValueError(
+                f"The LNA S11 measurements have a smaller frequency range than requested from the loads. Set f_low >= {self.lna.freq.min} and f_high <= {self.lna.freq.max}"
+            )
+
     def new_load(
         self,
         load_name,
