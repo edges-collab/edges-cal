@@ -669,6 +669,7 @@ def xrfi_poly(
     increase_order=True,
     decrement_threshold=0,
     min_threshold=5,
+    return_models=False,
     inplace=True,
 ):
     """
@@ -756,7 +757,8 @@ def xrfi_poly(
 
         par = np.polyfit(ff, s, n_signal)
         model = np.polyval(par, f)
-        model_list.append(par)
+        if return_models:
+            model_list.append(par)
         if t_log:
             model = np.exp(model)
 
@@ -766,7 +768,8 @@ def xrfi_poly(
             ff, np.abs(res[~flags]), n_resid if n_resid > 0 else n_signal + n_resid
         )
         model_std = np.polyval(par, f)
-        model_std_list.append(par)
+        if return_models:
+            model_std_list.append(par)
 
         if accumulate:
             nflags = np.sum(flags[~flags])
@@ -806,5 +809,6 @@ def xrfi_poly(
             "total_flags": total_flags_list,
             "models": model_list,
             "model_std": model_std_list,
+            "n_iters": counter,
         },
     )
