@@ -280,7 +280,7 @@ class SwitchCorrection:
     def n_terms(self):
         """Number of terms to use (by default) in modelling the S11"""
         res = self._nterms or self.default_nterms.get(self.load_name, None)
-        if not res % 2:
+        if not (isinstance(res, int) and res % 2):
             raise ValueError(
                 f"n_terms must be odd for S11 models. For {self.load_name} got n_terms={res}."
             )
@@ -360,11 +360,9 @@ class SwitchCorrection:
 
         n_terms = n_terms or self.n_terms
 
-        if not isinstance(n_terms, int):
+        if not (isinstance(n_terms, int) and n_terms % 2):
             raise ValueError(
-                "n_terms must be an integer, got {} with load {}".format(
-                    n_terms, self.load_name
-                )
+                f"n_terms must be odd for S11 models. For {self.load_name} got n_terms={n_terms}."
             )
 
         def get_model(mag):
