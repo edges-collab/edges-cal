@@ -1221,10 +1221,10 @@ class CalibrationObservation:
         # sources as well as the LNA.
         fmin = max(
             sum(
-                [
-                    (load.spectrum.freq.min, load.reflections.freq.min)
+                (
+                    [load.spectrum.freq.min, load.reflections.freq.min]
                     for load in self._loads.values()
-                ],
+                ),
                 [],
             )
             + [self.lna.freq.min]
@@ -1232,16 +1232,16 @@ class CalibrationObservation:
 
         fmax = min(
             sum(
-                [
-                    (load.spectrum.freq.max, load.reflections.freq.max)
+                (
+                    [load.spectrum.freq.max, load.reflections.freq.max]
                     for load in self._loads.values()
-                ],
+                ),
                 [],
             )
             + [self.lna.freq.max]
         )
 
-        if fmin <= fmax:
+        if fmax <= fmin:
             raise ValueError(
                 "The inputs loads and S11s have non-overlapping frequency ranges!"
             )
