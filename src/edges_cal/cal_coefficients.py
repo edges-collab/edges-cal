@@ -279,7 +279,12 @@ class SwitchCorrection:
     @cached_property
     def n_terms(self):
         """Number of terms to use (by default) in modelling the S11"""
-        return self._nterms or self.default_nterms.get(self.load_name, None)
+        res = self._nterms or self.default_nterms.get(self.load_name, None)
+        if not res % 2:
+            raise ValueError(
+                f"n_terms must be odd for S11 models. For {self.load_name} got n_terms={res}."
+            )
+        return res
 
     @classmethod
     def from_path(
