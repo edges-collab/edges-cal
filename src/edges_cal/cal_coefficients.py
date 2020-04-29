@@ -1746,10 +1746,10 @@ class CalibrationObservation:
 
         with h5py.File(filename, "w") as fl:
             # Write attributes
-            fl.attrs["path"] = self.path
+            fl.attrs["path"] = str(self.path)
             fl.attrs["cterms"] = self.cterms
             fl.attrs["wterms"] = self.wterms
-            fl.attrs["switch_path"] = self.lna.internal_switch.path
+            fl.attrs["switch_path"] = str(self.lna.internal_switch.path)
             fl.attrs["switch_run_num"] = self.lna.internal_switch.run_num
 
             fl["C1"] = self.C1_poly.coefficients
