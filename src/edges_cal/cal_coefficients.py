@@ -1764,8 +1764,10 @@ class CalibrationObservation:
 
 class Calibration:
     def __init__(self, filename):
+        self.calfile = filename
+
         with h5py.File(filename, "r") as fl:
-            self.path = fl.attrs["path"]
+            self.calobs_path = fl.attrs["path"]
             self.cterms = fl.attrs["cterms"]
             self.wterms = fl.attrs["wterms"]
 
