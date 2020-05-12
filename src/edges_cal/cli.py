@@ -1,7 +1,7 @@
-import click
-import logging
-import yaml
 from os.path import join
+
+import click
+import yaml
 
 from edges_cal import cal_coefficients as cc
 
@@ -79,9 +79,6 @@ def run(config, path, out, cache_dir, plot, simulators):
 @click.argument("config", type=click.Path(dir_okay=False, file_okay=True, exists=True))
 @click.argument("path", type=click.Path(dir_okay=True, file_okay=False, exists=True))
 @click.option(
-    "-c", "--max-cterms", type=int, default=20, help="maximum number of cterms"
-)
-@click.option(
     "-w", "--max-wterms", type=int, default=20, help="maximum number of wterms"
 )
 @click.option(
@@ -92,6 +89,12 @@ def run(config, path, out, cache_dir, plot, simulators):
 )
 @click.option(
     "-n/-N", "--runs/--no-runs", default=False, help="explore runs of s11 measurements"
+)
+@click.option(
+    "-c", "--max-cterms", type=int, default=20, help="maximum number of cterms"
+)
+@click.option(
+    "-w", "--max-wterms", type=int, default=20, help="maximum number of wterms"
 )
 @click.option(
     "-t",
