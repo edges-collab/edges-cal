@@ -597,7 +597,7 @@ class LoadSpectrum:
             spec[flags] = np.nan
         return spec
 
-    @cached_property
+    @property
     def variance_Q(self):
         """Variance of Q across time (see averaged_Q)"""
         return self._ave_and_var_spec[1]["Qratio"]
@@ -612,31 +612,31 @@ class LoadSpectrum:
         """Variance of uncalibrated spectrum across time (see averaged_spectrum)"""
         return self.variance_Q * 400 ** 2
 
-    @cached_property
+    @property
     def ancillary(self):
         return self._ave_and_var_spec[2]
 
-    @cached_property
+    @property
     def averaged_p0(self):
         return self._ave_and_var_spec[0]["p0"]
 
-    @cached_property
+    @property
     def averaged_p1(self):
         return self._ave_and_var_spec[0]["p1"]
 
-    @cached_property
+    @property
     def averaged_p2(self):
         return self._ave_and_var_spec[0]["p2"]
 
-    @cached_property
+    @property
     def variance_p0(self):
         return self._ave_and_var_spec[1]["p0"]
 
-    @cached_property
+    @property
     def variance_p1(self):
         return self._ave_and_var_spec[1]["p1"]
 
-    @cached_property
+    @property
     def variance_p2(self):
         return self._ave_and_var_spec[1]["p2"]
 
@@ -1053,7 +1053,7 @@ class CalibrationObservation:
         path: [str, Path],
         semi_rigid_path: [None, str, Path] = None,
         ambient_temp: int = 25,
-        f_low: [None, float] = None,
+        f_low: [None, float] = 40,
         f_high: [None, float] = None,
         run_num: [None, int, dict] = None,
         repeat_num: [None, int, dict] = None,
@@ -1826,3 +1826,82 @@ class Calibration:
     def calibrate_Q(self, freq, Q, ant_s11):
         uncal_temp = 400 * Q + 300
         return self.calibrate_temp(freq, uncal_temp, ant_s11)
+
+
+def perform_term_sweep(
+    calobs: CalibrationObservation,
+    delta_rms_thresh: float = 0,
+    max_cterms: int = 15,
+    max_wterms: int = 15,
+    direc=".",
+    verbose=False,
+) -> CalibrationObservation:
+    """For a given calibration definition, perform a sweep over number of terms.
+
+    There are options to save _every_ calibration solution, or just the "best" one.
+
+    Parameters
+    ----------
+    calobs: class:`CalibrationObservation` instance
+        The definition calibration class. The `cterms` and `wterms` in this instance
+        should define the *lowest* values of the parameters to sweep over.
+    delta_rms_thresh : float
+        The threshold in change in RMS between one set of parameters and the next that
+        will define where to cut off. If zero, will run all sets of parameters up to
+        the maximum terms specified.
+    max_cterms : int, optional
+        The maximum number of cterms to trial.
+    max_wterms : int, optional
+        The maximum number of wterms to trial.
+    direc : str, optional
+        Directory to write resultant :class:`Calibration` file to.
+    verbose : bool, optional
+        Whether to write out the RMS values derived throughout the sweep.
+    """
+
+    cterms = range(calobs.cterms, max_cterms)
+    wterms = range(calobs.wterms, max_wterms)
+
+    rms = np.zeros((len(cterms), len(wterms)))
+    winner = np.zeros(len(cterms), dtype=int)
+
+    for i, c in enumerate(cterms):
+        for j, w in enumerate(wterms):
+            calobs.update(cterms=c, wterms=w)
+            res = calobs.get_load_residuals()
+            dof = sum(len(r) for r in res.values()) - c - w
+
+            rms[i, j] = np.sqrt(
+                sum(np.nansum(np.square(x)) for x in res.values()) / dof
+            )
+
+            if verbose:
+                print(f"Nc = {c:02}, Nw = {w:02}; RMS/dof = {rms[i, j]:1.3e}")
+
+            # If we've decreased by more than the threshold, this #wterms becomes
+            # the new winner (for this number of cterms)
+            if j > 0 and rms[i, j] >= rms[i, j - 1] - delta_rms_thresh:
+                winner[i] = j - 1
+                break
+
+        if i > 0 and rms[i, winner[i]] >= rms[i - 1, winner[i - 1]] - delta_rms_thresh:
+            break
+
+    calobs.update(cterms=cterms[i - 1], wterms=wterms[winner[i - 1]])
+
+    if verbose:
+        print(
+            f"Best parameters found for Nc={cterms[i-1]}, Nw={wterms[winner[i-1]]}, with RMS = {rms[i-1, winner[i-1]]}."
+        )
+
+    if direc is not None:
+        direc = Path(direc)
+        if not direc.exists():
+            direc.mkdir(parents=True)
+
+        pth = Path(calobs.path).parent.name
+
+        pth = str(pth) + f"_c{calobs.cterms}_w{calobs.wterms}.h5"
+        calobs.write(direc / pth)
+
+    return calobs

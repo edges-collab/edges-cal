@@ -1,0 +1,8 @@
+# An example configuration file for the `edges-cal run` and `edges-cal sweep` scripts.
+# All parameters here are passed directly to the instantiator of `CalibrationObservation`,
+# so check the docs there for more parameters.
+
+f_low: 40
+f_high: 190
+cterms: 10
+wterms: 12
