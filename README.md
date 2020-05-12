@@ -26,14 +26,24 @@ data. To use it, do
 $ edges-cal run --help
 ```
 
-Multiple options exist, but the only one required is `PATH`, which should point to
+Multiple options exist, but the only ones required are `CONFIG` and `PATH`. The first
+should point to a YAML configuration for the run, and the second should point to
 a directory in which exists `S11`, `Resistance` and `Spectra` folders. Thus:
 
 ```
-$ edges-cal run .
+$ edges-cal run ~/config.yaml .
 ```
 
 will work if you are in such a directory.
+
+The `config.yaml` consists of a set of parameters passed to `edges_cal.CalibrationObservation`.
+See its docstring for more details.
+
+In addition, you can run a "term sweep" over a given calibration, iterating over number
+of Cterms and Wterms until some threshold is met. This uses the same configuration as
+`edges-cal run`, but you can pass a maximum number of C and W-terms, along with a threshold
+at which to stop the sweep (this is a threshold in absolute RMS over degrees of freedom).
+This will write out a `Calibration` file for the "best" set of parameters.
 
 ### Using the Library
 To import:
