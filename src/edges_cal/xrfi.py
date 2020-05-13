@@ -789,15 +789,21 @@ def xrfi_poly(
 
             # Apply a watershed -- assume surrounding channels will succumb to RFI.
             if watershed is not None:
+                watershed_flags = np.zeros_like(new_flags)
                 for i, flag in enumerate(new_flags):
                     if flag:
                         rng = range(
                             max(0, i - len(watershed) // 2),
                             min(len(new_flags), i + len(watershed) // 2),
                         )
-                        new_flags[rng] |= (
-                            np.abs(res[rng]) > watershed * threshold * model_std[rng]
+                        wrng_min = max(0, -(i - len(watershed) // 2))
+                        wrng = range(wrng_min, wrng_min + len(rng))
+
+                        watershed_flags[rng] |= (
+                            np.abs(res[rng])
+                            > watershed[wrng] * threshold * model_std[rng]
                         )
+                new_flags |= watershed_flags
 
             n_flags_changed = np.sum(flags ^ new_flags)
             flags = new_flags.copy()
