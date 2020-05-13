@@ -671,6 +671,7 @@ def xrfi_poly(
     min_threshold=5,
     inplace=True,
     watershed: [None, int, Tuple[int, float], np.ndarray] = None,
+    return_models=False,
 ):
     """
     Flag RFI by subtracting a smooth polynomial and iteratively removing outliers.
@@ -712,6 +713,8 @@ def xrfi_poly(
         go below ``min_threshold``.
     min_threshold : float, optional
         The minimum threshold to decrement to.
+    return_models : bool, optional
+        Whether to return the full models at each iteration.
 
     Returns
     -------
@@ -763,7 +766,8 @@ def xrfi_poly(
 
         par = np.polyfit(ff, s, n_signal)
         model = np.polyval(par, f)
-        model_list.append(par)
+        if return_models:
+            model_list.append(par)
         if t_log:
             model = np.exp(model)
 
@@ -773,7 +777,8 @@ def xrfi_poly(
             ff, np.abs(res[~flags]), n_resid if n_resid > 0 else n_signal + n_resid
         )
         model_std = np.polyval(par, f)
-        model_std_list.append(par)
+        if return_models:
+            model_std_list.append(par)
 
         if accumulate:
             nflags = np.sum(flags[~flags])
