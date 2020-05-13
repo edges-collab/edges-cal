@@ -839,3 +839,38 @@ def xrfi_poly(
             "model_std": model_std_list,
         },
     )
+
+
+def xrfi_watershed(flags: np.ndarray, tol: [float, Tuple[float]] = 0.2, inplace=False):
+    """Applies a watershed over frequencies and times for flags, making sure
+    that times/freqs with many flags are all flagged.
+
+    Parameters
+    ----------
+    flags : ndarray of bool
+        The existing flags.
+    tol : float or tuple
+        The tolerance -- i.e. the fraction of entries that must be flagged before
+        flagging the whole axis. If a tuple, the first element is for the frequency
+        axis, and the second for the time axis.
+    inplace : bool, optional
+        Whether to update the flags in-place.
+
+    Returns
+    -------
+    ndarray :
+        Boolean array of flags.
+    """
+    fl = flags if inplace else flags.copy()
+
+    if not hasattr(tol, "__len__"):
+        tol = (tol, tol)
+
+    freq_coll = np.sum(flags, axis=1)
+    freq_mask = freq_coll > tol[0] * flags.shape[1]
+    fl[freq_mask] = True
+
+    time_coll = np.sum(fl, axis=0)
+    time_mask = time_coll > tol[1] * flags.shape[0]
+    fl[:, time_mask] = True
+    return fl
