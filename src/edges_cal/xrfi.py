@@ -670,7 +670,7 @@ def xrfi_poly(
     decrement_threshold=0,
     min_threshold=5,
     inplace=True,
-    watershed: [None, Tuple[int, float], np.ndarray] = None,
+    watershed: [None, int, Tuple[int, float], np.ndarray] = None,
 ):
     """
     Flag RFI by subtracting a smooth polynomial and iteratively removing outliers.
@@ -741,8 +741,11 @@ def xrfi_poly(
     if not increase_order:
         assert n_resid < n_signal
 
+    # Set the watershed as a small array that will overlay a flag.
     if watershed is not None and len(watershed) == 2:
         watershed = np.ones(watershed[0] * 2 + 1) * watershed[1]
+    if isinstance(watershed, int):
+        watershed = np.ones(watershed * 2 + 1)
 
     n_flags_changed = 1
     counter = 0
@@ -779,6 +782,7 @@ def xrfi_poly(
         else:
             new_flags = orig_flags | (np.abs(res) > threshold * model_std)
 
+            # Apply a watershed -- assume surrounding channels will succumb to RFI.
             if watershed is not None:
                 for i, flag in enumerate(new_flags):
                     if flag:
@@ -786,7 +790,9 @@ def xrfi_poly(
                             max(0, i - len(watershed) // 2),
                             min(len(new_flags), i + len(watershed) // 2),
                         )
-                        new_flags[rng] |= np.abs(res[rng]) > watershed * model_std[rng]
+                        new_flags[rng] |= (
+                            np.abs(res[rng]) > watershed * threshold * model_std[rng]
+                        )
 
             n_flags_changed = np.sum(flags ^ new_flags)
             flags = new_flags.copy()
