@@ -722,7 +722,7 @@ def xrfi_poly(
         Boolean array of the same shape as ``spectrum`` indicated which channels/times
         have flagged RFI.
     """
-    if min_threshold > threshold:
+    if decrement_threshold > 0 and min_threshold > threshold:
         warnings.warn(
             f"You've set a threshold smaller than the min_threshold of {min_threshold}. Will use threshold={min_threshold}."
         )
@@ -731,7 +731,7 @@ def xrfi_poly(
     if f_log and not f_ratio:
         raise ValueError("If fitting in log(freq), you must provide f_ratio.")
 
-    assert threshold > 3
+    assert threshold > 1.5
 
     nf = spectrum.shape[-1]
     f = np.linspace(-1, 1, nf) if not f_log else np.logspace(0, f_ratio, nf)
