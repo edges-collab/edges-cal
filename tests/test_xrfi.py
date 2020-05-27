@@ -142,7 +142,7 @@ def test_1d_medfilt(sky_model, rfi_model, scale):
     "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
 )
 @pytest.mark.parametrize("scale", [1000, 100])
-@pytest.mark.skip("Not working yet...")
+# @pytest.mark.skip("Not working yet...")
 def test_poly(sky_model, rfi_model, scale):
     std = sky_model / scale
     amp = std.max() * 200
@@ -151,12 +151,47 @@ def test_poly(sky_model, rfi_model, scale):
     sky = sky_model + noise + rfi
 
     true_flags = rfi_model > 0
-    flags = xrfi.xrfi_model(sky)
+    flags, info = xrfi.xrfi_model(sky)
 
     wrong = np.where(true_flags != flags)[0]
 
     if len(wrong) > 0:
         print("RFI false positive(0)/negative(1): ")
+        print(true_flags[wrong])
+        print("Corrupted sky at wrong flags: ")
+        print(sky[wrong])
+        print("Std. dev away from model at wrong flags: ")
+        print((sky[wrong] - sky_model[wrong]) / std[wrong])
+        print("Std. dev of noise away from model at wrong flags: ")
+        print(noise[wrong] / std[wrong])
+        print("Std dev of RFI away from model at wrong flags: ")
+        print(rfi[wrong] / std[wrong])
+
+    assert len(wrong) == 0
+
+
+@parametrize_plus("sky_model", [fxref(sky_pl_1d), fxref(sky_linpoly_1d)])
+@parametrize_plus("rfi_model", [fxref(rfi_regular_1d), fxref(rfi_random_1d)])
+@pytest.mark.parametrize("scale", [100])
+@pytest.mark.skip("Fourier models don't work very well")
+def test_fourier(sky_model, rfi_model, scale):
+    std = sky_model / scale
+    amp = std.max() * 20
+    noise = thermal_noise(sky_model, scale=scale, seed=1010)
+    rfi = rfi_model * amp
+    sky = sky_model + noise + rfi
+
+    true_flags = rfi_model > 0
+    flags, info = xrfi.xrfi_model(sky, model_type="fourier", n_signal=7, n_resid=7)
+
+    wrong = np.where(true_flags != flags)[0]
+
+    if len(wrong) > 0:
+        print(
+            "Total number of flags gotten vs true: ", np.sum(flags), np.sum(true_flags)
+        )
+        print("Indices of wrong flags: ", wrong)
+        print("RFI false positive(False)/negative(True): ")
         print(true_flags[wrong])
         print("Corrupted sky at wrong flags: ")
         print(sky[wrong])

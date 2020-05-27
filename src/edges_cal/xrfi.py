@@ -722,7 +722,8 @@ def xrfi_model(
     """
     if min_threshold > threshold:
         warnings.warn(
-            f"You've set a threshold smaller than the min_threshold of {min_threshold}. Will use threshold={min_threshold}."
+            f"You've set a threshold smaller than the min_threshold of {min_threshold}. "
+            f"Will use threshold={min_threshold}."
         )
         threshold = min_threshold
 
@@ -734,39 +735,53 @@ def xrfi_model(
     nf = spectrum.shape[-1]
     f = np.linspace(-1, 1, nf) if not f_log else np.logspace(0, f_ratio, nf)
 
+    # Initialize some flags, or set them equal to the input
     orig_flags = flags if flags is not None else np.zeros(nf, dtype=bool)
     orig_flags |= (spectrum <= 0) | np.isnan(spectrum) | np.isinf(spectrum)
 
     flags = orig_flags.copy()
 
+    # We assume the residuals are smoother than the signal itself
     if not increase_order:
-        assert n_resid < n_signal
+        assert n_resid <= n_signal
 
     n_flags_changed = 1
     counter = 0
 
+    # Set up a few lists that we can update on each iteration to return info to the user.
     n_flags_changed_list = []
     total_flags_list = []
     model_list = []
     model_std_list = []
+
+    # Iterate until either no flags are changed between iterations, or we get to the
+    # requested maximum iterations, or until we have too few unflagged data to fit appropriately.
     while n_flags_changed > 0 and counter < max_iter and np.sum(~flags) > n_signal * 2:
+        # Only use un-flagged entries in our fit.
         ff = f[~flags]
         s = spectrum[~flags]
 
         if t_log:
             s = np.log(s)
 
+        # Get a model fit to the unflagged data.
+        # Could be polynomial or fourier (or something else...)
         mdl = ModelFit(model_type, xdata=ff, ydata=s, n_terms=n_signal)
         par = mdl.model_parameters
         model = mdl.evaluate(f)
 
         if return_models:
             model_list.append(par)
+
+        # Need to get back to linear space if we logged.
         if t_log:
             model = np.exp(model)
 
         res = spectrum - model
 
+        # Now fit a model to the absolute residuals.
+        # This number is "like" a local standard deviation, since the polynomial does
+        # something like a local average.
         mdl = ModelFit(
             model_type,
             xdata=ff,
@@ -780,10 +795,14 @@ def xrfi_model(
             model_std_list.append(par)
 
         if accumulate:
+            # If we are accumulating flags, we just get the *new* flags and add them
+            # to the original flags
             nflags = np.sum(flags[~flags])
             flags[~flags] |= np.abs(res)[~flags] > threshold * model_std[~flags]
             n_flags_changed = np.sum(flags[~flags]) - nflags
         else:
+            # If we're not accumulating, we just take these flags (along with the fully
+            # original flags).
             new_flags = orig_flags | (np.abs(res) > threshold * model_std)
             n_flags_changed = np.sum(flags ^ new_flags)
             flags = new_flags.copy()
@@ -792,8 +811,10 @@ def xrfi_model(
         if increase_order:
             n_signal += 1
 
+        # decrease the flagging threshold if we want to for next iteration
         threshold = max(threshold - decrement_threshold, min_threshold)
 
+        # Append info to lists for the user's benefit
         n_flags_changed_list.append(n_flags_changed)
         total_flags_list.append(np.sum(flags))
 
