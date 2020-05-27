@@ -3,11 +3,9 @@ from typing import Tuple, Union
 
 import numpy as np
 import yaml
-from astropy.convolution import convolve
 from scipy import ndimage
-from scipy.signal import medfilt, medfilt2d
 
-from .modelling import ModelFit
+from .modelling import Model, ModelFit
 
 
 def _check_convolve_dims(data, half_size: [None, Tuple[int, None]] = None):
@@ -655,25 +653,26 @@ def xrfi_poly_filter(
     return flags
 
 
-def xrfi_poly(
-    spectrum,
-    flags=None,
-    f_ratio=None,
-    f_log=False,
-    t_log=True,
-    n_signal=3,
-    n_resid=-1,
-    threshold=10,
-    max_iter=20,
-    accumulate=False,
-    increase_order=True,
-    decrement_threshold=0,
-    min_threshold=5,
-    return_models=False,
-    inplace=True,
+def xrfi_model(
+    spectrum: np.ndarray,
+    model: [str, Model] = "polynomial",
+    flags: [None, np.ndarray] = None,
+    f_ratio: [None, float] = None,
+    f_log: bool = False,
+    t_log: bool = True,
+    n_signal: int = 3,
+    n_resid: int = -1,
+    threshold: float = 10,
+    max_iter: int = 20,
+    accumulate: bool = False,
+    increase_order: bool = True,
+    decrement_threshold: float = 0,
+    min_threshold: float = 5,
+    return_models: bool = False,
+    inplace: bool = True,
 ):
     """
-    Flag RFI by subtracting a smooth polynomial and iteratively removing outliers.
+    Flag RFI by subtracting a smooth model and iteratively removing outliers.
 
     On each iteration, a polynomial is fit to the unflagged data, and a lower-order
     polynomial is fit to the absolute residuals of the data with the model polynomial.
@@ -685,6 +684,8 @@ def xrfi_poly(
     spectrum : array-like
         A 1D or 2D array, where the last axis corresponds to frequency. The data
         measured at those frequencies.
+    model : str or :class:`Model`, optional
+        A model to fit to the data. Any :class:`Model` is accepted.
     flags : array-like, optional
         The flags associated with the data (same shape as `spectrum`).
     f_ratio : float, optional
@@ -755,8 +756,10 @@ def xrfi_poly(
         if t_log:
             s = np.log(s)
 
-        par = np.polyfit(ff, s, n_signal)
-        model = np.polyval(par, f)
+        mdl = ModelFit(model, xdata=ff, ydata=s, n_terms=n_signal)
+        par = mdl.model_parameters
+        model = mdl.evaluate(f)
+
         if return_models:
             model_list.append(par)
         if t_log:
@@ -764,10 +767,15 @@ def xrfi_poly(
 
         res = spectrum - model
 
-        par = np.polyfit(
-            ff, np.abs(res[~flags]), n_resid if n_resid > 0 else n_signal + n_resid
+        mdl = ModelFit(
+            model,
+            xdata=ff,
+            ydata=np.abs(res[~flags]),
+            n_terms=n_resid if n_resid > 0 else n_signal + n_resid,
         )
-        model_std = np.polyval(par, f)
+        par = mdl.model_parameters
+        model_std = mdl.evaluate(f)
+
         if return_models:
             model_std_list.append(par)
 
@@ -812,3 +820,12 @@ def xrfi_poly(
             "n_iters": counter,
         },
     )
+
+
+def xrfi_poly(*args, **kwargs):
+    warnings.warn(
+        "This function has been deprecated and will be removed at some point. "
+        "Use xrfi_model with model='poly'.",
+        category=DeprecationWarning,
+    )
+    return xrfi_model(args, model="poly", **kwargs)
