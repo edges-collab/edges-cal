@@ -669,6 +669,7 @@ def xrfi_poly(
     increase_order=True,
     decrement_threshold=0,
     min_threshold=5,
+    return_models=False,
     inplace=True,
     watershed: [None, int, Tuple[int, float], np.ndarray] = None,
     return_models=False,
@@ -837,6 +838,7 @@ def xrfi_poly(
             "total_flags": total_flags_list,
             "models": model_list,
             "model_std": model_std_list,
+            "n_iters": counter,
         },
     )
 

@@ -13,6 +13,7 @@ import warnings
 from functools import lru_cache
 from hashlib import md5
 from pathlib import Path
+from typing import Any
 
 import h5py
 import matplotlib.pyplot as plt
@@ -154,6 +155,13 @@ class EdgesFrequencyRange(FrequencyRange):
         return np.arange(0, max_freq, fstep)
 
 
+def _get_val(val: [dict, Any], source: str):
+    try:
+        return val[source]
+    except (KeyError, TypeError):
+        return val
+
+
 class VNA:
     """
     An object representing the measurements of a VNA.
@@ -271,7 +279,12 @@ class SwitchCorrection:
     @cached_property
     def n_terms(self):
         """Number of terms to use (by default) in modelling the S11"""
-        return self._nterms or self.default_nterms.get(self.load_name, None)
+        res = self._nterms or self.default_nterms.get(self.load_name, None)
+        if not (isinstance(res, int) and res % 2):
+            raise ValueError(
+                f"n_terms must be odd for S11 models. For {self.load_name} got n_terms={res}."
+            )
+        return res
 
     @classmethod
     def from_path(
@@ -347,11 +360,9 @@ class SwitchCorrection:
 
         n_terms = n_terms or self.n_terms
 
-        if not isinstance(n_terms, int):
+        if not (isinstance(n_terms, int) and n_terms % 2):
             raise ValueError(
-                "n_terms must be an integer, got {} with load {}".format(
-                    n_terms, self.load_name
-                )
+                f"n_terms must be odd for S11 models. For {self.load_name} got n_terms={n_terms}."
             )
 
         def get_model(mag):
@@ -1039,69 +1050,106 @@ class CalibrationObservation:
 
     def __init__(
         self,
-        path,
-        semi_rigid_path=None,
-        ambient_temp=25,
-        f_low=None,
-        f_high=None,
-        run_num=None,
-        repeat_num=None,
-        resistance_f=50.009,
-        resistance_m=50.166,
-        ignore_times_percent=5,
-        cterms=5,
-        wterms=7,
-        rfi_removal="1D2D",
-        rfi_kernel_width_time=16,
-        rfi_kernel_width_freq=16,
-        rfi_threshold=6,
-        cache_dir=None,
+        path: [str, Path],
+        semi_rigid_path: [None, str, Path] = None,
+        ambient_temp: int = 25,
+        f_low: [None, float] = None,
+        f_high: [None, float] = None,
+        run_num: [None, int, dict] = None,
+        repeat_num: [None, int, dict] = None,
+        resistance_f: float = 50.009,
+        cterms: int = 5,
+        wterms: int = 7,
+        load_kwargs: [None, dict] = None,
+        s11_kwargs: [None, dict] = None,
+        load_spectra: [None, dict] = None,
+        load_s11s: [None, dict] = None,
     ):
         """
-        An composite object representing a full Calibration Observation.
+        A composite object representing a full Calibration Observation.
 
         This includes spectra of all calibrators, and methods to find the calibration
         parameters. It strictly follows Monsalve et al. (2017) in its formalism.
+        While by default the class uses the calibrator sources ("ambient", "hot_load",
+        "open", "short"), it can be modified to take other sources by setting
+        ``CalibrationObservation._sources`` to a new tuple of strings.
 
         Parameters
         ----------
-        path : str
+        path : str or Path
             Path to the directory containing all relevant measurements. It is assumed
             that in this directory is an `S11`, `Resistance` and `Spectra` directory.
-        correction_path : str, optional
-            A root to switch corrections, if different from base root.
         f_low : float, optional
-            Minimum frequency to keep.
+            Minimum frequency to keep for all loads (and their S11's). If for some
+            reason different frequency bounds are desired per-load, one can pass in
+            full load objects through ``load_spectra``.
         f_high : float, optional
-            Maximum frequency to keep.
-        run_num : int, optional
-            Identifier for the measurement files to read.
+            Maximum frequency to keep for all loads (and their S11's). If for some
+            reason different frequency bounds are desired per-load, one can pass in
+            full load objects through ``load_spectra``.
+        run_num : int or dict, optional
+            Which run number to use for the calibrators. Default is to use the last run
+            for each. Passing an int will attempt to use that run for each source. Pass
+            a dict mapping sources to numbers to use different combinations.
+        repeat_num : int or dict, optional
+            Which repeat number to use for the calibrators. Default is to use the last repeat
+            for each. Passing an int will attempt to use that repeat for each source. Pass
+            a dict mapping sources to numbers to use different combinations.
         resistance_f : float, optional
-            Female resistance (Ohms)
-        resistance_m : float, optional
-            Male resistance (Ohms)
-        ignore_times_percent : float, optional
-            Percent of time samples to reject from start of spectrum files.
+            Female resistance (Ohms). Used for the LNA S11.
         cterms : int, optional
-            Number of terms used in the polynomial model for C1 and C2.
+            The number of terms to use for the polynomial fits to the calibration
+            functions.
         wterms : int, optional
-            Number of terms used in the polynomial models for Tunc, Tcos and Tsin.
-        rfi_removal : str, optional, {'1D', '2D', '1D2D'}
-            If given, will perform median and mean-filtered xRFI over either the
-            2D waterfall, or integrated 1D spectrum. The latter is usually reasonable
-            for calibration sources, while the former is good for field data. "1D2D"
-            is a hybrid approach in which the variance per-frequency is determined
-            from the 2D data, but filtering occurs only over frequency.
-        rfi_kernel_width_time : int, optional
-            The kernel width for the detrending of data for
-            RFI removal in the time dimension (only used if `rfi_removal` is "2D").
-        rfi_kernel_width_freq : int, optional
-            The kernel width for the detrending of data for
-            RFI removal in the frequency dimension.
-        rfi_threshold : float, optional
-            The threshold (in equivalent standard deviation units) above which to
-            flag data as RFI.
+            The number of terms to use for the polynomial fits to the noise-wave
+            calibration functions.
+        load_kwargs : dict, optional
+            Keyword arguments used to instantiate the calibrator :class:`LoadSpectrum`
+            objects. See its documentation for relevant parameters. Parameters specified
+            here are used for _all_ calibrator sources.
+        s11_kwargs : dict, optional
+            Keyword arguments used to instantiate the calibrator :class:`SwitchCorrection`
+            objects. See its documentation for relevant parameters. Parameters specified
+            here are used for _all_ calibrator sources.
+        load_spectra : dict, optional
+            A dictionary mapping load names of calibration sources (eg. ambient, short)
+            to either :class:`LoadSpectrum` instances or dictionaries of keywords to
+            instantiate those objects. Useful for individually specifying
+            properties of each load separately. Values in these dictionaries (if supplied)
+            over-ride those given in ``load_kwargs`` (but values in ``load_kwargs`` are
+            still used if not over-ridden).
+        load_s11s : dict, optional
+            A dictionary mapping load names of calibration sources (eg. ambient, short)
+            to :class:`SwitchCorrection` instances or dictionaries of keywords to
+            instantiate those objects. Useful for individually specifying
+            properties of each load separately. Values in these dictionaries (if supplied)
+            over-ride those given in ``s11_kwargs`` (but values in ``s11_kwargs`` are
+            still used if not over-ridden).
+
+        Examples
+        --------
+        This will setup an observation with all default options applied:
+
+        >>> path = '/data5/edges/data/CalibrationObservations/Receiver01_2019_11_26_040_to_200MHz'
+        >>> calobs = CalibrationObservation(path)
+
+        To specify some options for constructing the various calibrator load spectra:
+
+        >>> calobs = CalibrationObservation(path, load_kwargs={"cache_dir":".", "ignore_times_percent": 50})
+
+        But if we typically wanted 50% of times ignored, but in one special case we'd like 80%:
+
+        >>> calobs = CalibrationObservation(path, load_kwargs={"cache_dir":".", "ignore_times_percent": 50},
+        >>>                                 load_spectra={"short": {"ignore_times_percent": 80}})
+
         """
+        load_spectra = load_spectra or {}
+        load_s11s = load_s11s or {}
+        load_kwargs = load_kwargs or {}
+        s11_kwargs = s11_kwargs or {}
+        assert all(name in self._sources for name in load_spectra)
+        assert all(name in self._sources for name in load_s11s)
+
         self.io = io.CalibrationObservation(
             path,
             ambient_temp=ambient_temp,
@@ -1110,7 +1158,7 @@ class CalibrationObservation:
             fix=False,
         )
 
-        self.path = self.io.path
+        self.path = Path(self.io.path)
 
         hot_load_correction = HotLoadCorrection(
             semi_rigid_path
@@ -1123,26 +1171,34 @@ class CalibrationObservation:
 
         self._loads = {}
         for source in self._sources:
-            load = LoadSpectrum(
-                spec_obj=getattr(self.io.spectra, source),
-                resistance_obj=getattr(self.io.resistance, source),
-                f_low=f_low,
-                f_high=f_high,
-                ignore_times_percent=ignore_times_percent,
-                rfi_removal=rfi_removal,
-                rfi_kernel_width_freq=rfi_kernel_width_freq,
-                rfi_kernel_width_time=rfi_kernel_width_time,
-                rfi_threshold=rfi_threshold,
-                cache_dir=cache_dir,
-            )
+            load = load_spectra.get(source, {})
 
-            refl = SwitchCorrection(
-                getattr(self.io.s11, source),
-                self.io.s11.switching_state,
-                f_low=f_low,
-                f_high=f_high,
-                resistance=resistance_m,
-            )
+            if isinstance(load, dict):
+                load = LoadSpectrum(
+                    spec_obj=getattr(self.io.spectra, source),
+                    resistance_obj=getattr(self.io.resistance, source),
+                    f_low=f_low,
+                    f_high=f_high,
+                    **{**load_kwargs, **load},
+                )
+
+            # Ensure that we finally have a LoadSpectrum
+            if not isinstance(load, LoadSpectrum):
+                raise ValueError(
+                    "load_spectra must be a dict of LoadSpectrum or dicts."
+                )
+
+            refl = load_s11s.get(source, {})
+
+            if isinstance(refl, dict):
+                refl = SwitchCorrection(
+                    getattr(self.io.s11, source),
+                    self.io.s11.switching_state,
+                    f_low=f_low,
+                    f_high=f_high,
+                    **{**s11_kwargs, **refl},
+                )
+
             if source == "hot_load":
                 self._loads[source] = Load(
                     load,
@@ -1153,10 +1209,8 @@ class CalibrationObservation:
             else:
                 self._loads[source] = Load(load, refl)
 
-        self.short = self._loads["short"]
-        self.open = self._loads["open"]
-        self.hot_load = self._loads["hot_load"]
-        self.ambient = self._loads["ambient"]
+        for name, load in self._loads.items():
+            setattr(self, name, load)
 
         self.lna = LNA(
             self.io.s11.receiver_reading,
@@ -1166,16 +1220,39 @@ class CalibrationObservation:
             resistance=resistance_f,
         )
 
+        # We must use the most restricted frequency range available from all available
+        # sources as well as the LNA.
+        fmin = max(
+            sum(
+                (
+                    [load.spectrum.freq.min, load.reflections.freq.min]
+                    for load in self._loads.values()
+                ),
+                [],
+            )
+            + [self.lna.freq.min]
+        )
+
+        fmax = min(
+            sum(
+                (
+                    [load.spectrum.freq.max, load.reflections.freq.max]
+                    for load in self._loads.values()
+                ),
+                [],
+            )
+            + [self.lna.freq.max]
+        )
+
+        if fmax <= fmin:
+            raise ValueError(
+                "The inputs loads and S11s have non-overlapping frequency ranges!"
+            )
+
+        self.freq = EdgesFrequencyRange(f_low=fmin, f_high=fmax)
+
         self.cterms = cterms
         self.wterms = wterms
-
-        # Expose a Frequency object
-        self.freq = self.ambient.freq
-
-        if self.lna.freq.min > self.freq.min or self.lna.freq.max < self.freq.max:
-            raise ValueError(
-                f"The LNA S11 measurements have a smaller frequency range than requested from the loads. Set f_low >= {self.lna.freq.min} and f_high <= {self.lna.freq.max}"
-            )
 
     def new_load(
         self,
@@ -1669,10 +1746,10 @@ class CalibrationObservation:
 
         with h5py.File(filename, "w") as fl:
             # Write attributes
-            fl.attrs["path"] = self.path
+            fl.attrs["path"] = str(self.path)
             fl.attrs["cterms"] = self.cterms
             fl.attrs["wterms"] = self.wterms
-            fl.attrs["switch_path"] = self.lna.internal_switch.path
+            fl.attrs["switch_path"] = str(self.lna.internal_switch.path)
             fl.attrs["switch_run_num"] = self.lna.internal_switch.run_num
 
             fl["C1"] = self.C1_poly.coefficients
@@ -1687,8 +1764,10 @@ class CalibrationObservation:
 
 class Calibration:
     def __init__(self, filename):
+        self.calfile = filename
+
         with h5py.File(filename, "r") as fl:
-            self.path = fl.attrs["path"]
+            self.calobs_path = fl.attrs["path"]
             self.cterms = fl.attrs["cterms"]
             self.wterms = fl.attrs["wterms"]
 
