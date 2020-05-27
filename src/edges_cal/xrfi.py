@@ -655,7 +655,7 @@ def xrfi_poly_filter(
 
 def xrfi_model(
     spectrum: np.ndarray,
-    model: [str, Model] = "polynomial",
+    model_type: [str, Model] = "polynomial",
     flags: [None, np.ndarray] = None,
     f_ratio: [None, float] = None,
     f_log: bool = False,
@@ -684,7 +684,7 @@ def xrfi_model(
     spectrum : array-like
         A 1D or 2D array, where the last axis corresponds to frequency. The data
         measured at those frequencies.
-    model : str or :class:`Model`, optional
+    model_type : str or :class:`Model`, optional
         A model to fit to the data. Any :class:`Model` is accepted.
     flags : array-like, optional
         The flags associated with the data (same shape as `spectrum`).
@@ -756,7 +756,7 @@ def xrfi_model(
         if t_log:
             s = np.log(s)
 
-        mdl = ModelFit(model, xdata=ff, ydata=s, n_terms=n_signal)
+        mdl = ModelFit(model_type, xdata=ff, ydata=s, n_terms=n_signal)
         par = mdl.model_parameters
         model = mdl.evaluate(f)
 
@@ -768,7 +768,7 @@ def xrfi_model(
         res = spectrum - model
 
         mdl = ModelFit(
-            model,
+            model_type,
             xdata=ff,
             ydata=np.abs(res[~flags]),
             n_terms=n_resid if n_resid > 0 else n_signal + n_resid,

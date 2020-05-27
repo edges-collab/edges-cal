@@ -11,22 +11,22 @@ from edges_cal import xrfi
 NFREQ = 1000
 
 
-@pytest.fixture("module")
+@pytest.fixture(scope="module")
 def freq():
     return np.linspace(50, 150, NFREQ)
 
 
-@pytest.fixture("module")
+@pytest.fixture(scope="module")
 def sky_pl_1d(freq):
     return 1750 * (freq / 75.0) ** -2.55
 
 
-@pytest.fixture("module")
+@pytest.fixture(scope="module")
 def sky_flat_1d():
     return np.ones(NFREQ)
 
 
-@pytest.fixture("module")
+@pytest.fixture(scope="module")
 def sky_linpoly_1d(freq):
     p = np.poly1d([1750, 0, 3, -2, 7, 5][::-1])
     f = np.linspace(-1, 1, len(freq))
@@ -39,14 +39,14 @@ def thermal_noise(spec, scale=1, seed=None):
     return np.random.normal(0, spec / scale)
 
 
-@pytest.fixture("module")
+@pytest.fixture(scope="module")
 def rfi_regular_1d():
     a = np.zeros(NFREQ)
     a[50::50] = 1
     return a
 
 
-@pytest.fixture("module")
+@pytest.fixture(scope="module")
 def rfi_random_1d():
     a = np.zeros(NFREQ)
     np.random.seed(12345)
@@ -54,7 +54,7 @@ def rfi_random_1d():
     return a
 
 
-@pytest.fixture("module")
+@pytest.fixture(scope="module")
 def rfi_null_1d():
     return np.zeros(NFREQ)
 
@@ -151,7 +151,7 @@ def test_poly(sky_model, rfi_model, scale):
     sky = sky_model + noise + rfi
 
     true_flags = rfi_model > 0
-    flags = xrfi.xrfi_poly(sky)
+    flags = xrfi.xrfi_model(sky)
 
     wrong = np.where(true_flags != flags)[0]
 
