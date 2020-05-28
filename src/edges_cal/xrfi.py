@@ -715,6 +715,16 @@ def xrfi_poly(
         The minimum threshold to decrement to.
     return_models : bool, optional
         Whether to return the full models at each iteration.
+    inplace : bool, optional
+        Whether to fill up given flags array with the updated flags.
+    watershed : int, tuple or ndarray, optional
+        Specify a scheme for identifying channels surrounding a flagged channel as RFI.
+        If an int, that many channels on each side of the flagged channel will be flagged.
+        If a tuple, should be (int, float), where the int specifies the number of channels
+        on each side, and the float specifies a threshold *with respect to* the overall
+        threshold for flagging (so this should be less than one). If an array, the values
+        represent this threshold where the central bin of the array is placed on the
+        flagged channel.
 
     Returns
     -------
@@ -745,10 +755,13 @@ def xrfi_poly(
         assert n_resid < n_signal
 
     # Set the watershed as a small array that will overlay a flag.
-    if watershed is not None and len(watershed) == 2:
-        watershed = np.ones(watershed[0] * 2 + 1) * watershed[1]
     if isinstance(watershed, int):
-        watershed = np.ones(watershed * 2 + 1)
+        # By default, just kill all surrounding channels
+        watershed = np.zeros(watershed * 2 + 1)
+        watershed[len(watershed) // 2] = 1
+    elif watershed is not None and len(watershed) == 2:
+        # Otherwise, can provide weights per-channel.
+        watershed = np.ones(watershed[0] * 2 + 1) * watershed[1]
 
     n_flags_changed = 1
     counter = 0
@@ -790,19 +803,18 @@ def xrfi_poly(
             # Apply a watershed -- assume surrounding channels will succumb to RFI.
             if watershed is not None:
                 watershed_flags = np.zeros_like(new_flags)
-                for i, flag in enumerate(new_flags):
-                    if flag:
-                        rng = range(
-                            max(0, i - len(watershed) // 2),
-                            min(len(new_flags), i + len(watershed) // 2),
-                        )
-                        wrng_min = max(0, -(i - len(watershed) // 2))
-                        wrng = range(wrng_min, wrng_min + len(rng))
+                # Go through each flagged channel
+                for channel in np.where(new_flags)[0]:
+                    rng = range(
+                        max(0, channel - len(watershed) // 2),
+                        min(len(new_flags), channel + len(watershed) // 2 + 1),
+                    )
+                    wrng_min = max(0, -(channel - len(watershed) // 2))
+                    wrng = range(wrng_min, wrng_min + len(rng))
 
-                        watershed_flags[rng] |= (
-                            np.abs(res[rng])
-                            > watershed[wrng] * threshold * model_std[rng]
-                        )
+                    watershed_flags[rng] |= (
+                        np.abs(res[rng]) > watershed[wrng] * threshold * model_std[rng]
+                    )
                 new_flags |= watershed_flags
 
             n_flags_changed = np.sum(flags ^ new_flags)
