@@ -672,7 +672,6 @@ def xrfi_poly(
     return_models=False,
     inplace=True,
     watershed: [None, int, Tuple[int, float], np.ndarray] = None,
-    return_models=False,
 ):
     """
     Flag RFI by subtracting a smooth polynomial and iteratively removing outliers.
