@@ -46,6 +46,18 @@ def rfi_regular_1d():
     return a
 
 
+@pytest.fixture(scope="module")
+def rfi_regular_leaky():
+    """RFI that leaks into neighbouring bins"""
+    a = np.zeros(NFREQ)
+    a[50:-30:50] = 1
+    a[49:-30:50] = (
+        1.0 / 120
+    )  # needs to be smaller than 200 or else it will be flagged outright.
+    a[51:-30:50] = 1.0 / 120
+    return a
+
+
 @pytest.fixture("module")
 def rfi_random_1d():
     a = np.zeros(NFREQ)
@@ -142,7 +154,6 @@ def test_1d_medfilt(sky_model, rfi_model, scale):
     "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
 )
 @pytest.mark.parametrize("scale", [1000, 100])
-@pytest.mark.skip("Not working yet...")
 def test_poly(sky_model, rfi_model, scale):
     std = sky_model / scale
     amp = std.max() * 200
@@ -151,7 +162,7 @@ def test_poly(sky_model, rfi_model, scale):
     sky = sky_model + noise + rfi
 
     true_flags = rfi_model > 0
-    flags = xrfi.xrfi_poly(sky)
+    flags, info = xrfi.xrfi_poly(sky)
 
     wrong = np.where(true_flags != flags)[0]
 
@@ -168,3 +179,82 @@ def test_poly(sky_model, rfi_model, scale):
         print(rfi[wrong] / std[wrong])
 
     assert len(wrong) == 0
+
+
+@parametrize_plus(
+    "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
+)
+@parametrize_plus("rfi_model", [fxref(rfi_regular_leaky)])
+@pytest.mark.parametrize("scale", [1000, 100])
+def test_poly_watershed_strict(sky_model, rfi_model, scale):
+    std = sky_model / scale
+    amp = std.max() * 30
+    noise = thermal_noise(sky_model, scale=scale, seed=1010)
+    rfi = rfi_model * amp
+    sky = sky_model + noise + rfi
+
+    true_flags = rfi_model > 0
+    flags, info = xrfi.xrfi_poly(sky, watershed=1, threshold=10)
+
+    wrong = np.where(true_flags != flags)[0]
+
+    if len(wrong) > 0:
+        print("where it went wrong: ", wrong)
+        print("RFI false positive(False)/negative(True): ")
+        print(true_flags[wrong])
+        print("Corrupted sky at wrong flags: ")
+        print(sky[wrong])
+        print("Std. dev away from model at wrong flags: ")
+        print((sky[wrong] - sky_model[wrong]) / std[wrong])
+        print("Std. dev of noise away from model at wrong flags: ")
+        print(noise[wrong] / std[wrong])
+        print("Std dev of RFI away from model at wrong flags: ")
+        print(rfi[wrong] / std[wrong])
+
+    assert len(wrong) == 0
+
+
+@parametrize_plus(
+    "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
+)
+@parametrize_plus("rfi_model", [fxref(rfi_regular_leaky)])
+@pytest.mark.parametrize("scale", [1000, 100])
+def test_poly_watershed_relaxed(sky_model, rfi_model, scale):
+    std = sky_model / scale
+    amp = std.max() * 500
+    noise = thermal_noise(sky_model, scale=scale, seed=1010)
+    rfi = rfi_model * amp
+    sky = sky_model + noise + rfi
+
+    true_flags = rfi_model > 0
+    flags, info = xrfi.xrfi_poly(sky, watershed=np.array([0.05, 1, 0.05]), threshold=6)
+
+    # here we just assert no *missed* RFI
+    wrong = np.where(true_flags & ~flags)[0]
+
+    if len(wrong) > 0:
+        print("where it went wrong: ", wrong)
+        print("Corrupted sky at wrong flags: ")
+        print(sky[wrong])
+        print("Std. dev away from model at wrong flags: ")
+        print((sky[wrong] - sky_model[wrong]) / std[wrong])
+        print("Std. dev of noise away from model at wrong flags: ")
+        print(noise[wrong] / std[wrong])
+        print("Std dev of RFI away from model at wrong flags: ")
+        print(rfi[wrong] / std[wrong])
+
+    assert len(wrong) == 0
+
+
+def test_watershed():
+    rfi = np.zeros((10, 10), dtype=bool)
+    out = xrfi.xrfi_watershed(rfi)
+    assert not np.any(out)
+
+    rfi = np.ones((10, 10), dtype=bool)
+    out = xrfi.xrfi_watershed(rfi)
+    assert np.all(out)
+
+    rfi = np.repeat([0, 1], 48).reshape((3, 32))
+    out = xrfi.xrfi_watershed(rfi, tol=0.2)
+    assert np.all(out)
