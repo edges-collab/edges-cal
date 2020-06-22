@@ -1064,6 +1064,7 @@ class CalibrationObservation:
         s11_kwargs: [None, dict] = None,
         load_spectra: [None, dict] = None,
         load_s11s: [None, dict] = None,
+        compile_from_def: bool = True,
     ):
         """
         A composite object representing a full Calibration Observation.
@@ -1125,6 +1126,10 @@ class CalibrationObservation:
             properties of each load separately. Values in these dictionaries (if supplied)
             over-ride those given in ``s11_kwargs`` (but values in ``s11_kwargs`` are
             still used if not over-ridden).
+        compile_from_def : bool, optional
+            Whether to attempt compiling a virtual observation from a ``definition.yaml``
+            inside the observation directory. This is the default behaviour, but can
+            be turned off to enforce that the current directory should be used directly.
 
         Examples
         --------
@@ -1156,6 +1161,7 @@ class CalibrationObservation:
             run_num=run_num,
             repeat_num=repeat_num,
             fix=False,
+            compile_from_def=compile_from_def,
         )
 
         self.path = Path(self.io.path)
