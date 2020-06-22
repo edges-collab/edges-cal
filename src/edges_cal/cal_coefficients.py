@@ -588,7 +588,7 @@ class LoadSpectrum:
         Average over time.
         """
         # TODO: should also get weights!
-        spec = self._ave_and_var_spec[0]["Qratio"]
+        spec = self._ave_and_var_spec[0]["Q"]
 
         if self.rfi_removal == "1D":
             flags = xrfi.xrfi_medfilt(
@@ -600,7 +600,7 @@ class LoadSpectrum:
     @cached_property
     def variance_Q(self):
         """Variance of Q across time (see averaged_Q)"""
-        return self._ave_and_var_spec[1]["Qratio"]
+        return self._ave_and_var_spec[1]["Q"]
 
     @property
     def averaged_spectrum(self):
@@ -614,7 +614,7 @@ class LoadSpectrum:
 
     @cached_property
     def ancillary(self):
-        return self._ave_and_var_spec[2]
+        return self.spec_obj.data["meta"]
 
     @cached_property
     def averaged_p0(self):
@@ -661,7 +661,7 @@ class LoadSpectrum:
     def _ave_and_var_spec(self):
         """Get the mean and variance of the spectra"""
         fname = self._get_integrated_filename()
-        kinds = ["p0", "p1", "p2", "Qratio"]
+        kinds = ["p0", "p1", "p2", "Q"]
         if os.path.exists(fname):
             logger.info(
                 "Reading in previously-created integrated {} spectra...".format(
@@ -677,7 +677,7 @@ class LoadSpectrum:
             return means, vars
 
         logger.info("Reducing {} spectra...".format(self.load_name))
-        spectra, anc = self.get_spectra()
+        spectra = self.get_spectra()
 
         means = {}
         vars = {}
@@ -717,17 +717,17 @@ class LoadSpectrum:
                 fl[kind + "_mean"] = means[kind]
                 fl[kind + "_var"] = vars[kind]
 
-        return means, vars, anc
+        return means, vars
 
     def get_spectra(self):
-        spec, anc = self._read_spectrum()
+        spec = self._read_spectrum()
 
         if self.rfi_removal == "2D":
             for key, val in spec.items():
                 # Need to set nans and zeros to inf so that median/mean detrending can work.
                 val[np.isnan(val)] = np.inf
 
-                if key != "Qratio":
+                if key != "Q":
                     val[val == 0] = np.inf
 
                 flags = xrfi.xrfi_medfilt(
@@ -738,7 +738,7 @@ class LoadSpectrum:
                 )
                 val[flags] = np.nan
                 spec[key] = val
-        return spec, anc
+        return spec
 
     def _read_spectrum(self):
         """
@@ -751,22 +751,33 @@ class LoadSpectrum:
                powers of source, load, and load+noise respectively), and ant_temp (the
                uncalibrated, but normalised antenna temperature).
         """
-        out, anc = self.spec_obj.read()
 
-        n_times = len(out["p0"][0])
+        data = self.spec_obj.data
+        if not isinstance(data, list):
+            data = [data]
+
+        n_times = 0
+        for d in data:
+            n_times += len(d["time_ancillary"]["times"])
+
+        out = {
+            "p0": np.empty((len(self.freq.freq), n_times)),
+            "p1": np.empty((len(self.freq.freq), n_times)),
+            "p2": np.empty((len(self.freq.freq), n_times)),
+            "Q": np.empty((len(self.freq.freq), n_times)),
+        }
 
         index_start_spectra = int((self.ignore_times_percent / 100) * n_times)
         for key, val in out.items():
-            out[key] = val[self.freq.mask, index_start_spectra:]
+            nn = 0
+            for d in data:
+                n = len(d["time_ancillary"]["times"])
+                val[:, nn : (nn + n)] = d["spectra"][key][self.freq.mask]
+                nn += n
 
-        for key, val in anc.items():
-            try:
-                if len(val) == n_times:
-                    anc[key] = val[index_start_spectra:]
-            except (TypeError, AttributeError):
-                pass
+            out[key] = val[:, index_start_spectra:]
 
-        return out, anc
+        return out
 
     @cached_property
     def thermistor(self):
