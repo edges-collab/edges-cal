@@ -97,6 +97,15 @@ def run(config, path, out, cache_dir, plot, simulators):
     "-w", "--max-wterms", type=int, default=20, help="maximum number of wterms"
 )
 @click.option(
+    "-r/-R",
+    "--repeats/--no-repeats",
+    default=False,
+    help="explore repeats of switch and receiver s11",
+)
+@click.option(
+    "-n/-N", "--runs/--no-runs", default=False, help="explore runs of s11 measurements"
+)
+@click.option(
     "-t",
     "--delta-rms-thresh",
     type=float,
