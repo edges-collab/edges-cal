@@ -85,6 +85,15 @@ def run(config, path, out, cache_dir, plot, simulators):
     "-w", "--max-wterms", type=int, default=20, help="maximum number of wterms"
 )
 @click.option(
+    "-r/-R",
+    "--repeats/--no-repeats",
+    default=False,
+    help="explore repeats of switch and receiver s11",
+)
+@click.option(
+    "-n/-N", "--runs/--no-runs", default=False, help="explore runs of s11 measurements"
+)
+@click.option(
     "-t",
     "--delta-rms-thresh",
     type=float,
@@ -105,7 +114,17 @@ def run(config, path, out, cache_dir, plot, simulators):
     default=".",
     help="directory in which to keep/search for the cache",
 )
-def sweep(config, path, max_cterms, max_wterms, delta_rms_thresh, out, cache_dir):
+def sweep(
+    config,
+    path,
+    max_cterms,
+    max_wterms,
+    repeats,
+    runs,
+    delta_rms_thresh,
+    out,
+    cache_dir,
+):
     with open(config, "r") as fl:
         settings = yaml.load(fl, Loader=yaml.FullLoader)
 
@@ -113,11 +132,14 @@ def sweep(config, path, max_cterms, max_wterms, delta_rms_thresh, out, cache_dir
         settings.update(cache_dir=cache_dir)
 
     obs = cc.CalibrationObservation(path=path, **settings)
+
     cc.perform_term_sweep(
         obs,
         direc=out,
         verbose=True,
         max_cterms=max_cterms,
         max_wterms=max_wterms,
+        explore_repeat_nums=repeats,
+        explore_run_nums=runs,
         delta_rms_thresh=delta_rms_thresh,
     )

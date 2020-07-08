@@ -10,6 +10,7 @@ functions in other modules.
 
 import os
 import warnings
+from copy import copy
 from functools import lru_cache
 from hashlib import md5
 from pathlib import Path
@@ -1064,6 +1065,8 @@ class CalibrationObservation:
         s11_kwargs: [None, dict] = None,
         load_spectra: [None, dict] = None,
         load_s11s: [None, dict] = None,
+        compile_from_def=True,
+        include_previous=True,
     ):
         """
         A composite object representing a full Calibration Observation.
@@ -1156,7 +1159,11 @@ class CalibrationObservation:
             run_num=run_num,
             repeat_num=repeat_num,
             fix=False,
+            compile_from_def=compile_from_def,
+            include_previous=include_previous,
         )
+        self.compiled_from_def = compile_from_def
+        self.previous_included = include_previous
 
         self.path = Path(self.io.path)
 
@@ -1833,6 +1840,8 @@ def perform_term_sweep(
     delta_rms_thresh: float = 0,
     max_cterms: int = 15,
     max_wterms: int = 15,
+    explore_run_nums: bool = False,
+    explore_repeat_nums: bool = False,
     direc=".",
     verbose=False,
 ) -> CalibrationObservation:
@@ -1853,10 +1862,20 @@ def perform_term_sweep(
         The maximum number of cterms to trial.
     max_wterms : int, optional
         The maximum number of wterms to trial.
+    explore_run_nums : bool, optional
+        Whether to iterate over S11 run numbers to find the best residuals.
+    explore_repeat_nums : bool, optional
+        Whether to iterate over S11 repeat numbers to find the best residuals.
     direc : str, optional
         Directory to write resultant :class:`Calibration` file to.
     verbose : bool, optional
         Whether to write out the RMS values derived throughout the sweep.
+
+    Notes
+    -----
+    When exploring run/repeat nums, run nums are kept constant within a load (i.e. the
+    match/short/open etc. all have either run_num=1 or run_num=2 for the same load.
+    This is physically motivated.
     """
 
     cterms = range(calobs.cterms, max_cterms)
@@ -1865,27 +1884,110 @@ def perform_term_sweep(
     rms = np.zeros((len(cterms), len(wterms)))
     winner = np.zeros(len(cterms), dtype=int)
 
-    for i, c in enumerate(cterms):
-        for j, w in enumerate(wterms):
-            calobs.update(cterms=c, wterms=w)
-            res = calobs.get_load_residuals()
-            dof = sum(len(r) for r in res.values()) - c - w
+    s11_keys = ["switching_state", "receiver_reading"] + list(io.LOAD_ALIASES.keys())
+    if explore_run_nums:
+        # Note that we don't explore run_nums for spectra/resistance, because it's rare
+        # to have those, and they'll only exist if one got completely botched (and that
+        # should be set by the user).
+        run_num = {
+            k: range(1, getattr(calobs.io.s11, k).max_run_num + 1) for k in s11_keys
+        }
+    else:
+        run_num = {k: [getattr(calobs.io.s11, k).run_num] for k in s11_keys}
+    if explore_repeat_nums:
+        rep_num = {
+            "switching_state": range(
+                1, calobs.io.s11.get_highest_rep_num("SwitchingState") + 1
+            ),
+            "receiver_reading": range(
+                1, calobs.io.s11.get_highest_rep_num("ReceiverReading") + 1
+            ),
+        }
+    else:
+        rep_num = {
+            "switching_state": [calobs.io.s11.switching_state.repeat_num],
+            "receiver_reading": [calobs.io.s11.receiver_reading.repeat_num],
+        }
 
-            rms[i, j] = np.sqrt(
-                sum(np.nansum(np.square(x)) for x in res.values()) / dof
-            )
+    for rep_key, rep_nums in rep_num.items():
+        for this_rep_num in rep_nums:
+            for run_key, run_nums in run_num.items():
+                for this_run_num in run_nums:
+                    tmp_run_num = copy(calobs.io.run_num)
+                    tmp_run_num["S11"].update({run_key: this_run_num})
 
-            if verbose:
-                print(f"Nc = {c:02}, Nw = {w:02}; RMS/dof = {rms[i, j]:1.3e}")
+                    # Change the base io.CalObs because it will change with rep/run.
+                    calobs.io = io.CalibrationObservation(
+                        path=calobs.io.path.parent,
+                        ambient_temp=calobs.io.ambient_temp,
+                        run_num=tmp_run_num,
+                        repeat_num={
+                            "switching_state": this_rep_num
+                            if rep_key == "switching_state"
+                            else calobs.io.s11.switching_state.repeat_num,
+                            "receiver_reading": this_rep_num
+                            if rep_key == "receiver_reading"
+                            else calobs.io.s11.receiver_reading.repeat_num,
+                        },
+                        fix=False,
+                        compile_from_def=calobs.compiled_from_def,
+                        include_previous=calobs.previous_included,
+                    )
 
-            # If we've decreased by more than the threshold, this #wterms becomes
-            # the new winner (for this number of cterms)
-            if j > 0 and rms[i, j] >= rms[i, j - 1] - delta_rms_thresh:
-                winner[i] = j - 1
-                break
+                    # If we are changing the receiver reading, we need to update the LNA
+                    if rep_key == "receiver_reading" or run_key == "receiver_reading":
+                        calobs.lna = LNA(
+                            calobs.io.s11.receiver_reading,
+                            internal_switch=calobs.io.s11.switching_state,
+                            f_low=calobs.freq.min,
+                            f_high=calobs.freq.max,
+                            resistance=calobs.lna.resistance,
+                        )
 
-        if i > 0 and rms[i, winner[i]] >= rms[i - 1, winner[i - 1]] - delta_rms_thresh:
-            break
+                    # If we're changing anything else, we need to change each load.
+                    if rep_key == "switching_state" or run_key != "receiver_reading":
+                        for name, load in calobs._loads.items():
+                            load.reflections = SwitchCorrection.from_path(
+                                load_name=io.LOAD_ALIASES[name],
+                                path=calobs.io.s11.path,
+                                run_num_load=this_run_num
+                                if run_key in io.LOAD_ALIASES
+                                else load.reflections.run_num,
+                                run_num_switch=this_run_num
+                                if run_key == "switching_state"
+                                else load.reflections.internal_switch.run_num,
+                                repeat_num=this_rep_num
+                                if rep_key == "switching_state"
+                                else load.reflections.internal_switch.repeat_num,
+                            )
+
+                    for i, c in enumerate(cterms):
+                        for j, w in enumerate(wterms):
+                            calobs.update(cterms=c, wterms=w)
+                            res = calobs.get_load_residuals()
+                            dof = sum(len(r) for r in res.values()) - c - w
+
+                            rms[i, j] = np.sqrt(
+                                sum(np.nansum(np.square(x)) for x in res.values()) / dof
+                            )
+
+                            if verbose:
+                                print(
+                                    f"Nc = {c:02}, Nw = {w:02}; RMS/dof = {rms[i, j]:1.3e}"
+                                )
+
+                            # If we've decreased by more than the threshold, this #wterms becomes
+                            # the new winner (for this number of cterms)
+                            if j > 0 and rms[i, j] >= rms[i, j - 1] - delta_rms_thresh:
+                                winner[i] = j - 1
+                                break
+
+                        if (
+                            i > 0
+                            and rms[i, winner[i]]
+                            >= rms[i - 1, winner[i - 1]] - delta_rms_thresh
+                        ):
+                            break
 
     calobs.update(cterms=cterms[i - 1], wterms=wterms[winner[i - 1]])
 
