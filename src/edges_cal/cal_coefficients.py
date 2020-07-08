@@ -567,15 +567,14 @@ class LoadSpectrum:
     @classmethod
     def from_load_name(cls, load_name, direc, run_num=None, filetype=None, **kwargs):
         """Instantiate the class using a simple form, passing the load_name and direc"""
+        direc = Path(direc)
+
         spec = io.Spectrum.from_load(
-            load=load_name,
-            direc=os.path.join(direc, "Spectra"),
-            run_num=run_num,
-            filetype=filetype,
+            load=load_name, direc=direc / "Spectra", run_num=run_num, filetype=filetype
         )
         res = io.Resistance.from_load(
             load=load_name,
-            direc=os.path.join(direc, "Resistance"),
+            direc=direc / "Resistance",
             run_num=run_num,
             filetype=filetype,
         )
