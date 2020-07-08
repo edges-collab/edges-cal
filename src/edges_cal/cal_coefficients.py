@@ -8,20 +8,19 @@ This is the main module of `cal_coefficients`. It contains wrappers around lower
 functions in other modules.
 """
 
+import h5py
+import numpy as np
 import os
 import warnings
-from functools import lru_cache
-from hashlib import md5
-from pathlib import Path
-from typing import Any
-
-import h5py
-import matplotlib.pyplot as plt
-import numpy as np
 from astropy.convolution import Gaussian1DKernel, convolve
 from edges_io import io
 from edges_io.logging import logger
+from functools import lru_cache
+from hashlib import md5
+from matplotlib import pyplot as plt
+from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
+from typing import Any
 
 from . import S11_correction as s11
 from . import modelling as mdl

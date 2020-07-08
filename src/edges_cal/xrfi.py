@@ -1,11 +1,10 @@
-import warnings
-from typing import Tuple, Union
-
 import numpy as np
+import warnings
 import yaml
 from astropy.convolution import convolve
 from scipy import ndimage
 from scipy.signal import medfilt, medfilt2d
+from typing import Tuple, Union
 
 from .modelling import ModelFit
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from pkg_resources import get_distribution, DistributionNotFound
+from pkg_resources import DistributionNotFound, get_distribution
 
 try:
     __version__ = get_distribution(__name__).version
@@ -10,11 +10,11 @@ finally:
 
 
 from .cal_coefficients import (
-    FrequencyRange,
-    EdgesFrequencyRange,
-    CalibrationObservation,
-    LoadSpectrum,
     VNA,
-    SwitchCorrection,
     Calibration,
+    CalibrationObservation,
+    EdgesFrequencyRange,
+    FrequencyRange,
+    LoadSpectrum,
+    SwitchCorrection,
 )

@@ -1,7 +1,6 @@
+import click
 import logging
 from os.path import join
-
-import click
 
 from edges_cal import cal_coefficients as cc
 

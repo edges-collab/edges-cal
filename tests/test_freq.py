@@ -1,6 +1,7 @@
 import pytest
 
 import numpy as np
+
 from edges_cal import FrequencyRange
 
 

@@ -1,7 +1,6 @@
-import itertools
-
 import pytest
 
+import itertools
 import numpy as np
 from pytest_cases import fixture_ref as fxref
 from pytest_cases import parametrize_plus

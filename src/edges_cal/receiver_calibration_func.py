@@ -126,18 +126,6 @@ def NWP_fit(
 
     return TU, TC, TS
 
-    # # Evaluating TU, TC, and TS
-    # TU = np.zeros(len(f_norm))
-    # TC = np.zeros(len(f_norm))
-    # TS = np.zeros(len(f_norm))
-    #
-    # for i in range(wterms):
-    #     TU = TU + param[i, 0] * f_norm ** i
-    #     TC = TC + param[i + 1 * wterms, 0] * f_norm ** i
-    #     TS = TS + param[i + 2 * wterms, 0] * f_norm ** i
-
-    # return TU, TC, TS
-
 
 def get_F(gamma_rec, gamma_ant):
     """Get the F parameter for a given receiver and antenna"""
