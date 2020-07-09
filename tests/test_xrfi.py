@@ -162,7 +162,7 @@ def test_poly(sky_model, rfi_model, scale):
     sky = sky_model + noise + rfi
 
     true_flags = rfi_model > 0
-    flags, info = xrfi.xrfi_poly(sky)
+    flags, info = xrfi.xrfi_model(sky)
 
     wrong = np.where(true_flags != flags)[0]
 

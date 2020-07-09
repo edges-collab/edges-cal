@@ -3,11 +3,9 @@ from typing import Tuple, Union
 
 import numpy as np
 import yaml
-from astropy.convolution import convolve
 from scipy import ndimage
-from scipy.signal import medfilt, medfilt2d
 
-from .modelling import ModelFit
+from .modelling import Model, ModelFit
 
 
 def _check_convolve_dims(data, half_size: [None, Tuple[int, None]] = None):
@@ -655,26 +653,27 @@ def xrfi_poly_filter(
     return flags
 
 
-def xrfi_poly(
-    spectrum,
-    flags=None,
-    f_ratio=None,
-    f_log=False,
-    t_log=True,
-    n_signal=3,
-    n_resid=-1,
-    threshold=10,
-    max_iter=20,
-    accumulate=False,
-    increase_order=True,
-    decrement_threshold=0,
-    min_threshold=5,
-    return_models=False,
-    inplace=True,
+def xrfi_model(
+    spectrum: np.ndarray,
+    model_type: [str, Model] = "polynomial",
+    flags: [None, np.ndarray] = None,
+    f_ratio: [None, float] = None,
+    f_log: bool = False,
+    t_log: bool = True,
+    n_signal: int = 3,
+    n_resid: int = -1,
+    threshold: float = 10,
+    max_iter: int = 20,
+    accumulate: bool = False,
+    increase_order: bool = True,
+    decrement_threshold: float = 0,
+    min_threshold: float = 5,
+    return_models: bool = False,
+    inplace: bool = True,
     watershed: [None, int, Tuple[int, float], np.ndarray] = None,
 ):
     """
-    Flag RFI by subtracting a smooth polynomial and iteratively removing outliers.
+    Flag RFI by subtracting a smooth model and iteratively removing outliers.
 
     On each iteration, a polynomial is fit to the unflagged data, and a lower-order
     polynomial is fit to the absolute residuals of the data with the model polynomial.
@@ -686,6 +685,8 @@ def xrfi_poly(
     spectrum : array-like
         A 1D or 2D array, where the last axis corresponds to frequency. The data
         measured at those frequencies.
+    model_type : str or :class:`Model`, optional
+        A model to fit to the data. Any :class:`Model` is accepted.
     flags : array-like, optional
         The flags associated with the data (same shape as `spectrum`).
     f_ratio : float, optional
@@ -734,7 +735,8 @@ def xrfi_poly(
     """
     if decrement_threshold > 0 and min_threshold > threshold:
         warnings.warn(
-            f"You've set a threshold smaller than the min_threshold of {min_threshold}. Will use threshold={min_threshold}."
+            f"You've set a threshold smaller than the min_threshold of {min_threshold}. "
+            f"Will use threshold={min_threshold}."
         )
         threshold = min_threshold
 
@@ -746,13 +748,15 @@ def xrfi_poly(
     nf = spectrum.shape[-1]
     f = np.linspace(-1, 1, nf) if not f_log else np.logspace(0, f_ratio, nf)
 
+    # Initialize some flags, or set them equal to the input
     orig_flags = flags if flags is not None else np.zeros(nf, dtype=bool)
     orig_flags |= (spectrum <= 0) | np.isnan(spectrum) | np.isinf(spectrum)
 
     flags = orig_flags.copy()
 
+    # We assume the residuals are smoother than the signal itself
     if not increase_order:
-        assert n_resid < n_signal
+        assert n_resid <= n_signal
 
     # Set the watershed as a small array that will overlay a flag.
     if isinstance(watershed, int):
@@ -766,38 +770,61 @@ def xrfi_poly(
     n_flags_changed = 1
     counter = 0
 
+    # Set up a few lists that we can update on each iteration to return info to the user.
     n_flags_changed_list = []
     total_flags_list = []
     model_list = []
     model_std_list = []
+
+    # Iterate until either no flags are changed between iterations, or we get to the
+    # requested maximum iterations, or until we have too few unflagged data to fit appropriately.
     while n_flags_changed > 0 and counter < max_iter and np.sum(~flags) > n_signal * 2:
+        # Only use un-flagged entries in our fit.
         ff = f[~flags]
         s = spectrum[~flags]
 
         if t_log:
             s = np.log(s)
 
-        par = np.polyfit(ff, s, n_signal)
-        model = np.polyval(par, f)
+        # Get a model fit to the unflagged data.
+        # Could be polynomial or fourier (or something else...)
+        mdl = ModelFit(model_type, xdata=ff, ydata=s, n_terms=n_signal)
+        par = mdl.model_parameters
+        model = mdl.evaluate(f)
+
         if return_models:
             model_list.append(par)
+
+        # Need to get back to linear space if we logged.
         if t_log:
             model = np.exp(model)
 
         res = spectrum - model
 
-        par = np.polyfit(
-            ff, np.abs(res[~flags]), n_resid if n_resid > 0 else n_signal + n_resid
+        # Now fit a model to the absolute residuals.
+        # This number is "like" a local standard deviation, since the polynomial does
+        # something like a local average.
+        mdl = ModelFit(
+            model_type,
+            xdata=ff,
+            ydata=np.abs(res[~flags]),
+            n_terms=n_resid if n_resid > 0 else n_signal + n_resid,
         )
-        model_std = np.polyval(par, f)
+        par = mdl.model_parameters
+        model_std = mdl.evaluate(f)
+
         if return_models:
             model_std_list.append(par)
 
         if accumulate:
+            # If we are accumulating flags, we just get the *new* flags and add them
+            # to the original flags
             nflags = np.sum(flags[~flags])
             flags[~flags] |= np.abs(res)[~flags] > threshold * model_std[~flags]
             n_flags_changed = np.sum(flags[~flags]) - nflags
         else:
+            # If we're not accumulating, we just take these flags (along with the fully
+            # original flags).
             new_flags = orig_flags | (np.abs(res) > threshold * model_std)
 
             # Apply a watershed -- assume surrounding channels will succumb to RFI.
@@ -824,8 +851,10 @@ def xrfi_poly(
         if increase_order:
             n_signal += 1
 
+        # decrease the flagging threshold if we want to for next iteration
         threshold = max(threshold - decrement_threshold, min_threshold)
 
+        # Append info to lists for the user's benefit
         n_flags_changed_list.append(n_flags_changed)
         total_flags_list.append(np.sum(flags))
 
@@ -852,6 +881,15 @@ def xrfi_poly(
             "n_iters": counter,
         },
     )
+
+
+def xrfi_poly(*args, **kwargs):
+    warnings.warn(
+        "This function has been deprecated and will be removed at some point. "
+        "Use xrfi_model with model_type='polynomial'.",
+        category=DeprecationWarning,
+    )
+    return xrfi_model(*args, model_type="polynomial", **kwargs)
 
 
 def xrfi_watershed(flags: np.ndarray, tol: [float, Tuple[float]] = 0.2, inplace=False):
