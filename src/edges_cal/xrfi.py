@@ -886,12 +886,12 @@ def xrfi_model(
 def xrfi_poly(*args, **kwargs):
     warnings.warn(
         "This function has been deprecated and will be removed at some point. "
-        "Use xrfi_model with model='poly'.",
+        "Use xrfi_model with model_type='polynomial'.",
         category=DeprecationWarning,
     )
-    return xrfi_model(args, model="poly", **kwargs)
+    return xrfi_model(*args, model_type="polynomial", **kwargs)
 
-  
+
 def xrfi_watershed(flags: np.ndarray, tol: [float, Tuple[float]] = 0.2, inplace=False):
     """Applies a watershed over frequencies and times for flags, making sure
     that times/freqs with many flags are all flagged.

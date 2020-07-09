@@ -194,15 +194,12 @@ def test_poly_watershed_strict(sky_model, rfi_model, scale):
     sky = sky_model + noise + rfi
 
     true_flags = rfi_model > 0
-    flags, info = xrfi.xrfi_model(sky, model_type="fourier", n_signal=7, n_resid=7)
+    flags, info = xrfi.xrfi_poly(sky, watershed=1, threshold=10)
 
     wrong = np.where(true_flags != flags)[0]
 
     if len(wrong) > 0:
-        print(
-            "Total number of flags gotten vs true: ", np.sum(flags), np.sum(true_flags)
-        )
-        print("Indices of wrong flags: ", wrong)
+        print("where it went wrong: ", wrong)
         print("RFI false positive(False)/negative(True): ")
         print(true_flags[wrong])
         print("Corrupted sky at wrong flags: ")
