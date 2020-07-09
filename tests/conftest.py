@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-    Dummy conftest.py for cal_coefficients.
-
-    If you don't know what this is for, just leave it empty.
-    Read more about conftest.py under:
-    https://pytest.org/latest/plugins.html
+Conftest.
 """
 
-# import pytest
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture(scope="session", autouse=True)
+def data_path():
+    return Path(__file__).parent / "data"

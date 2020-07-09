@@ -568,15 +568,14 @@ class LoadSpectrum:
     @classmethod
     def from_load_name(cls, load_name, direc, run_num=None, filetype=None, **kwargs):
         """Instantiate the class using a simple form, passing the load_name and direc"""
+        direc = Path(direc)
+
         spec = io.Spectrum.from_load(
-            load=load_name,
-            direc=os.path.join(direc, "Spectra"),
-            run_num=run_num,
-            filetype=filetype,
+            load=load_name, direc=direc / "Spectra", run_num=run_num, filetype=filetype
         )
         res = io.Resistance.from_load(
             load=load_name,
-            direc=os.path.join(direc, "Resistance"),
+            direc=direc / "Resistance",
             run_num=run_num,
             filetype=filetype,
         )
@@ -589,7 +588,7 @@ class LoadSpectrum:
         Average over time.
         """
         # TODO: should also get weights!
-        spec = self._ave_and_var_spec[0]["Qratio"]
+        spec = self._ave_and_var_spec[0]["Q"]
 
         if self.rfi_removal == "1D":
             flags = xrfi.xrfi_medfilt(
@@ -601,7 +600,7 @@ class LoadSpectrum:
     @property
     def variance_Q(self):
         """Variance of Q across time (see averaged_Q)"""
-        return self._ave_and_var_spec[1]["Qratio"]
+        return self._ave_and_var_spec[1]["Q"]
 
     @property
     def averaged_spectrum(self):
@@ -615,7 +614,7 @@ class LoadSpectrum:
 
     @property
     def ancillary(self):
-        return self._ave_and_var_spec[2]
+        return self.spec_obj.data["meta"]
 
     @property
     def averaged_p0(self):
@@ -662,7 +661,7 @@ class LoadSpectrum:
     def _ave_and_var_spec(self):
         """Get the mean and variance of the spectra"""
         fname = self._get_integrated_filename()
-        kinds = ["p0", "p1", "p2", "Qratio"]
+        kinds = ["p0", "p1", "p2", "Q"]
         if os.path.exists(fname):
             logger.info(
                 "Reading in previously-created integrated {} spectra...".format(
@@ -678,7 +677,7 @@ class LoadSpectrum:
             return means, vars
 
         logger.info("Reducing {} spectra...".format(self.load_name))
-        spectra, anc = self.get_spectra()
+        spectra = self.get_spectra()
 
         means = {}
         vars = {}
@@ -718,17 +717,17 @@ class LoadSpectrum:
                 fl[kind + "_mean"] = means[kind]
                 fl[kind + "_var"] = vars[kind]
 
-        return means, vars, anc
+        return means, vars
 
     def get_spectra(self):
-        spec, anc = self._read_spectrum()
+        spec = self._read_spectrum()
 
         if self.rfi_removal == "2D":
             for key, val in spec.items():
                 # Need to set nans and zeros to inf so that median/mean detrending can work.
                 val[np.isnan(val)] = np.inf
 
-                if key != "Qratio":
+                if key != "Q":
                     val[val == 0] = np.inf
 
                 flags = xrfi.xrfi_medfilt(
@@ -739,7 +738,7 @@ class LoadSpectrum:
                 )
                 val[flags] = np.nan
                 spec[key] = val
-        return spec, anc
+        return spec
 
     def _read_spectrum(self):
         """
@@ -752,22 +751,33 @@ class LoadSpectrum:
                powers of source, load, and load+noise respectively), and ant_temp (the
                uncalibrated, but normalised antenna temperature).
         """
-        out, anc = self.spec_obj.read()
 
-        n_times = len(out["p0"][0])
+        data = self.spec_obj.data
+        if not isinstance(data, list):
+            data = [data]
+
+        n_times = 0
+        for d in data:
+            n_times += len(d["time_ancillary"]["times"])
+
+        out = {
+            "p0": np.empty((len(self.freq.freq), n_times)),
+            "p1": np.empty((len(self.freq.freq), n_times)),
+            "p2": np.empty((len(self.freq.freq), n_times)),
+            "Q": np.empty((len(self.freq.freq), n_times)),
+        }
 
         index_start_spectra = int((self.ignore_times_percent / 100) * n_times)
         for key, val in out.items():
-            out[key] = val[self.freq.mask, index_start_spectra:]
+            nn = 0
+            for d in data:
+                n = len(d["time_ancillary"]["times"])
+                val[:, nn : (nn + n)] = d["spectra"][key][self.freq.mask]
+                nn += n
 
-        for key, val in anc.items():
-            try:
-                if len(val) == n_times:
-                    anc[key] = val[index_start_spectra:]
-            except (TypeError, AttributeError):
-                pass
+            out[key] = val[:, index_start_spectra:]
 
-        return out, anc
+        return out
 
     @cached_property
     def thermistor(self):
@@ -1065,7 +1075,7 @@ class CalibrationObservation:
         s11_kwargs: [None, dict] = None,
         load_spectra: [None, dict] = None,
         load_s11s: [None, dict] = None,
-        compile_from_def=True,
+        compile_from_def: bool = True,
         include_previous=True,
     ):
         """
@@ -1128,6 +1138,10 @@ class CalibrationObservation:
             properties of each load separately. Values in these dictionaries (if supplied)
             over-ride those given in ``s11_kwargs`` (but values in ``s11_kwargs`` are
             still used if not over-ridden).
+        compile_from_def : bool, optional
+            Whether to attempt compiling a virtual observation from a ``definition.yaml``
+            inside the observation directory. This is the default behaviour, but can
+            be turned off to enforce that the current directory should be used directly.
 
         Examples
         --------
