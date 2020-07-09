@@ -16,7 +16,7 @@ jobs:
     env:
       PYTHON: 3.8
       OS: ubuntu-latest
-    name: Testing
+    name: Downstream Tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
