@@ -670,6 +670,7 @@ def xrfi_model(
     min_threshold: float = 5,
     return_models: bool = False,
     inplace: bool = True,
+    watershed: [None, int, Tuple[int, float], np.ndarray] = None,
 ):
     """
     Flag RFI by subtracting a smooth model and iteratively removing outliers.
@@ -713,6 +714,18 @@ def xrfi_model(
         go below ``min_threshold``.
     min_threshold : float, optional
         The minimum threshold to decrement to.
+    return_models : bool, optional
+        Whether to return the full models at each iteration.
+    inplace : bool, optional
+        Whether to fill up given flags array with the updated flags.
+    watershed : int, tuple or ndarray, optional
+        Specify a scheme for identifying channels surrounding a flagged channel as RFI.
+        If an int, that many channels on each side of the flagged channel will be flagged.
+        If a tuple, should be (int, float), where the int specifies the number of channels
+        on each side, and the float specifies a threshold *with respect to* the overall
+        threshold for flagging (so this should be less than one). If an array, the values
+        represent this threshold where the central bin of the array is placed on the
+        flagged channel.
 
     Returns
     -------
@@ -720,7 +733,7 @@ def xrfi_model(
         Boolean array of the same shape as ``spectrum`` indicated which channels/times
         have flagged RFI.
     """
-    if min_threshold > threshold:
+    if decrement_threshold > 0 and min_threshold > threshold:
         warnings.warn(
             f"You've set a threshold smaller than the min_threshold of {min_threshold}. "
             f"Will use threshold={min_threshold}."
@@ -730,7 +743,7 @@ def xrfi_model(
     if f_log and not f_ratio:
         raise ValueError("If fitting in log(freq), you must provide f_ratio.")
 
-    assert threshold > 3
+    assert threshold > 1.5
 
     nf = spectrum.shape[-1]
     f = np.linspace(-1, 1, nf) if not f_log else np.logspace(0, f_ratio, nf)
@@ -744,6 +757,15 @@ def xrfi_model(
     # We assume the residuals are smoother than the signal itself
     if not increase_order:
         assert n_resid <= n_signal
+
+    # Set the watershed as a small array that will overlay a flag.
+    if isinstance(watershed, int):
+        # By default, just kill all surrounding channels
+        watershed = np.zeros(watershed * 2 + 1)
+        watershed[len(watershed) // 2] = 1
+    elif watershed is not None and len(watershed) == 2:
+        # Otherwise, can provide weights per-channel.
+        watershed = np.ones(watershed[0] * 2 + 1) * watershed[1]
 
     n_flags_changed = 1
     counter = 0
@@ -804,6 +826,24 @@ def xrfi_model(
             # If we're not accumulating, we just take these flags (along with the fully
             # original flags).
             new_flags = orig_flags | (np.abs(res) > threshold * model_std)
+
+            # Apply a watershed -- assume surrounding channels will succumb to RFI.
+            if watershed is not None:
+                watershed_flags = np.zeros_like(new_flags)
+                # Go through each flagged channel
+                for channel in np.where(new_flags)[0]:
+                    rng = range(
+                        max(0, channel - len(watershed) // 2),
+                        min(len(new_flags), channel + len(watershed) // 2 + 1),
+                    )
+                    wrng_min = max(0, -(channel - len(watershed) // 2))
+                    wrng = range(wrng_min, wrng_min + len(rng))
+
+                    watershed_flags[rng] |= (
+                        np.abs(res[rng]) > watershed[wrng] * threshold * model_std[rng]
+                    )
+                new_flags |= watershed_flags
+
             n_flags_changed = np.sum(flags ^ new_flags)
             flags = new_flags.copy()
 
@@ -850,3 +890,38 @@ def xrfi_poly(*args, **kwargs):
         category=DeprecationWarning,
     )
     return xrfi_model(args, model="poly", **kwargs)
+
+  
+def xrfi_watershed(flags: np.ndarray, tol: [float, Tuple[float]] = 0.2, inplace=False):
+    """Applies a watershed over frequencies and times for flags, making sure
+    that times/freqs with many flags are all flagged.
+
+    Parameters
+    ----------
+    flags : ndarray of bool
+        The existing flags.
+    tol : float or tuple
+        The tolerance -- i.e. the fraction of entries that must be flagged before
+        flagging the whole axis. If a tuple, the first element is for the frequency
+        axis, and the second for the time axis.
+    inplace : bool, optional
+        Whether to update the flags in-place.
+
+    Returns
+    -------
+    ndarray :
+        Boolean array of flags.
+    """
+    fl = flags if inplace else flags.copy()
+
+    if not hasattr(tol, "__len__"):
+        tol = (tol, tol)
+
+    freq_coll = np.sum(flags, axis=1)
+    freq_mask = freq_coll > tol[0] * flags.shape[1]
+    fl[freq_mask] = True
+
+    time_coll = np.sum(fl, axis=0)
+    time_mask = time_coll > tol[1] * flags.shape[0]
+    fl[:, time_mask] = True
+    return fl

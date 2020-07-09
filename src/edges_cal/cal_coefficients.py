@@ -10,6 +10,7 @@ functions in other modules.
 
 import os
 import warnings
+from copy import copy
 from functools import lru_cache
 from hashlib import md5
 from pathlib import Path
@@ -567,15 +568,14 @@ class LoadSpectrum:
     @classmethod
     def from_load_name(cls, load_name, direc, run_num=None, filetype=None, **kwargs):
         """Instantiate the class using a simple form, passing the load_name and direc"""
+        direc = Path(direc)
+
         spec = io.Spectrum.from_load(
-            load=load_name,
-            direc=os.path.join(direc, "Spectra"),
-            run_num=run_num,
-            filetype=filetype,
+            load=load_name, direc=direc / "Spectra", run_num=run_num, filetype=filetype
         )
         res = io.Resistance.from_load(
             load=load_name,
-            direc=os.path.join(direc, "Resistance"),
+            direc=direc / "Resistance",
             run_num=run_num,
             filetype=filetype,
         )
@@ -588,7 +588,7 @@ class LoadSpectrum:
         Average over time.
         """
         # TODO: should also get weights!
-        spec = self._ave_and_var_spec[0]["Qratio"]
+        spec = self._ave_and_var_spec[0]["Q"]
 
         if self.rfi_removal == "1D":
             flags = xrfi.xrfi_medfilt(
@@ -597,10 +597,10 @@ class LoadSpectrum:
             spec[flags] = np.nan
         return spec
 
-    @cached_property
+    @property
     def variance_Q(self):
         """Variance of Q across time (see averaged_Q)"""
-        return self._ave_and_var_spec[1]["Qratio"]
+        return self._ave_and_var_spec[1]["Q"]
 
     @property
     def averaged_spectrum(self):
@@ -612,31 +612,31 @@ class LoadSpectrum:
         """Variance of uncalibrated spectrum across time (see averaged_spectrum)"""
         return self.variance_Q * 400 ** 2
 
-    @cached_property
+    @property
     def ancillary(self):
-        return self._ave_and_var_spec[2]
+        return self.spec_obj.data["meta"]
 
-    @cached_property
+    @property
     def averaged_p0(self):
         return self._ave_and_var_spec[0]["p0"]
 
-    @cached_property
+    @property
     def averaged_p1(self):
         return self._ave_and_var_spec[0]["p1"]
 
-    @cached_property
+    @property
     def averaged_p2(self):
         return self._ave_and_var_spec[0]["p2"]
 
-    @cached_property
+    @property
     def variance_p0(self):
         return self._ave_and_var_spec[1]["p0"]
 
-    @cached_property
+    @property
     def variance_p1(self):
         return self._ave_and_var_spec[1]["p1"]
 
-    @cached_property
+    @property
     def variance_p2(self):
         return self._ave_and_var_spec[1]["p2"]
 
@@ -661,7 +661,7 @@ class LoadSpectrum:
     def _ave_and_var_spec(self):
         """Get the mean and variance of the spectra"""
         fname = self._get_integrated_filename()
-        kinds = ["p0", "p1", "p2", "Qratio"]
+        kinds = ["p0", "p1", "p2", "Q"]
         if os.path.exists(fname):
             logger.info(
                 "Reading in previously-created integrated {} spectra...".format(
@@ -677,7 +677,7 @@ class LoadSpectrum:
             return means, vars
 
         logger.info("Reducing {} spectra...".format(self.load_name))
-        spectra, anc = self.get_spectra()
+        spectra = self.get_spectra()
 
         means = {}
         vars = {}
@@ -717,17 +717,17 @@ class LoadSpectrum:
                 fl[kind + "_mean"] = means[kind]
                 fl[kind + "_var"] = vars[kind]
 
-        return means, vars, anc
+        return means, vars
 
     def get_spectra(self):
-        spec, anc = self._read_spectrum()
+        spec = self._read_spectrum()
 
         if self.rfi_removal == "2D":
             for key, val in spec.items():
                 # Need to set nans and zeros to inf so that median/mean detrending can work.
                 val[np.isnan(val)] = np.inf
 
-                if key != "Qratio":
+                if key != "Q":
                     val[val == 0] = np.inf
 
                 flags = xrfi.xrfi_medfilt(
@@ -738,7 +738,7 @@ class LoadSpectrum:
                 )
                 val[flags] = np.nan
                 spec[key] = val
-        return spec, anc
+        return spec
 
     def _read_spectrum(self):
         """
@@ -751,22 +751,33 @@ class LoadSpectrum:
                powers of source, load, and load+noise respectively), and ant_temp (the
                uncalibrated, but normalised antenna temperature).
         """
-        out, anc = self.spec_obj.read()
 
-        n_times = len(out["p0"][0])
+        data = self.spec_obj.data
+        if not isinstance(data, list):
+            data = [data]
+
+        n_times = 0
+        for d in data:
+            n_times += len(d["time_ancillary"]["times"])
+
+        out = {
+            "p0": np.empty((len(self.freq.freq), n_times)),
+            "p1": np.empty((len(self.freq.freq), n_times)),
+            "p2": np.empty((len(self.freq.freq), n_times)),
+            "Q": np.empty((len(self.freq.freq), n_times)),
+        }
 
         index_start_spectra = int((self.ignore_times_percent / 100) * n_times)
         for key, val in out.items():
-            out[key] = val[self.freq.mask, index_start_spectra:]
+            nn = 0
+            for d in data:
+                n = len(d["time_ancillary"]["times"])
+                val[:, nn : (nn + n)] = d["spectra"][key][self.freq.mask]
+                nn += n
 
-        for key, val in anc.items():
-            try:
-                if len(val) == n_times:
-                    anc[key] = val[index_start_spectra:]
-            except (TypeError, AttributeError):
-                pass
+            out[key] = val[:, index_start_spectra:]
 
-        return out, anc
+        return out
 
     @cached_property
     def thermistor(self):
@@ -1053,7 +1064,7 @@ class CalibrationObservation:
         path: [str, Path],
         semi_rigid_path: [None, str, Path] = None,
         ambient_temp: int = 25,
-        f_low: [None, float] = None,
+        f_low: [None, float] = 40,
         f_high: [None, float] = None,
         run_num: [None, int, dict] = None,
         repeat_num: [None, int, dict] = None,
@@ -1064,6 +1075,8 @@ class CalibrationObservation:
         s11_kwargs: [None, dict] = None,
         load_spectra: [None, dict] = None,
         load_s11s: [None, dict] = None,
+        compile_from_def: bool = True,
+        include_previous=True,
     ):
         """
         A composite object representing a full Calibration Observation.
@@ -1125,6 +1138,10 @@ class CalibrationObservation:
             properties of each load separately. Values in these dictionaries (if supplied)
             over-ride those given in ``s11_kwargs`` (but values in ``s11_kwargs`` are
             still used if not over-ridden).
+        compile_from_def : bool, optional
+            Whether to attempt compiling a virtual observation from a ``definition.yaml``
+            inside the observation directory. This is the default behaviour, but can
+            be turned off to enforce that the current directory should be used directly.
 
         Examples
         --------
@@ -1156,7 +1173,11 @@ class CalibrationObservation:
             run_num=run_num,
             repeat_num=repeat_num,
             fix=False,
+            compile_from_def=compile_from_def,
+            include_previous=include_previous,
         )
+        self.compiled_from_def = compile_from_def
+        self.previous_included = include_previous
 
         self.path = Path(self.io.path)
 
@@ -1826,3 +1847,177 @@ class Calibration:
     def calibrate_Q(self, freq, Q, ant_s11):
         uncal_temp = 400 * Q + 300
         return self.calibrate_temp(freq, uncal_temp, ant_s11)
+
+
+def perform_term_sweep(
+    calobs: CalibrationObservation,
+    delta_rms_thresh: float = 0,
+    max_cterms: int = 15,
+    max_wterms: int = 15,
+    explore_run_nums: bool = False,
+    explore_repeat_nums: bool = False,
+    direc=".",
+    verbose=False,
+) -> CalibrationObservation:
+    """For a given calibration definition, perform a sweep over number of terms.
+
+    There are options to save _every_ calibration solution, or just the "best" one.
+
+    Parameters
+    ----------
+    calobs: class:`CalibrationObservation` instance
+        The definition calibration class. The `cterms` and `wterms` in this instance
+        should define the *lowest* values of the parameters to sweep over.
+    delta_rms_thresh : float
+        The threshold in change in RMS between one set of parameters and the next that
+        will define where to cut off. If zero, will run all sets of parameters up to
+        the maximum terms specified.
+    max_cterms : int, optional
+        The maximum number of cterms to trial.
+    max_wterms : int, optional
+        The maximum number of wterms to trial.
+    explore_run_nums : bool, optional
+        Whether to iterate over S11 run numbers to find the best residuals.
+    explore_repeat_nums : bool, optional
+        Whether to iterate over S11 repeat numbers to find the best residuals.
+    direc : str, optional
+        Directory to write resultant :class:`Calibration` file to.
+    verbose : bool, optional
+        Whether to write out the RMS values derived throughout the sweep.
+
+    Notes
+    -----
+    When exploring run/repeat nums, run nums are kept constant within a load (i.e. the
+    match/short/open etc. all have either run_num=1 or run_num=2 for the same load.
+    This is physically motivated.
+    """
+
+    cterms = range(calobs.cterms, max_cterms)
+    wterms = range(calobs.wterms, max_wterms)
+
+    rms = np.zeros((len(cterms), len(wterms)))
+    winner = np.zeros(len(cterms), dtype=int)
+
+    s11_keys = ["switching_state", "receiver_reading"] + list(io.LOAD_ALIASES.keys())
+    if explore_run_nums:
+        # Note that we don't explore run_nums for spectra/resistance, because it's rare
+        # to have those, and they'll only exist if one got completely botched (and that
+        # should be set by the user).
+        run_num = {
+            k: range(1, getattr(calobs.io.s11, k).max_run_num + 1) for k in s11_keys
+        }
+    else:
+        run_num = {k: [getattr(calobs.io.s11, k).run_num] for k in s11_keys}
+    if explore_repeat_nums:
+        rep_num = {
+            "switching_state": range(
+                1, calobs.io.s11.get_highest_rep_num("SwitchingState") + 1
+            ),
+            "receiver_reading": range(
+                1, calobs.io.s11.get_highest_rep_num("ReceiverReading") + 1
+            ),
+        }
+    else:
+        rep_num = {
+            "switching_state": [calobs.io.s11.switching_state.repeat_num],
+            "receiver_reading": [calobs.io.s11.receiver_reading.repeat_num],
+        }
+
+    for rep_key, rep_nums in rep_num.items():
+        for this_rep_num in rep_nums:
+            for run_key, run_nums in run_num.items():
+                for this_run_num in run_nums:
+                    tmp_run_num = copy(calobs.io.run_num)
+                    tmp_run_num["S11"].update({run_key: this_run_num})
+
+                    # Change the base io.CalObs because it will change with rep/run.
+                    calobs.io = io.CalibrationObservation(
+                        path=calobs.io.path.parent,
+                        ambient_temp=calobs.io.ambient_temp,
+                        run_num=tmp_run_num,
+                        repeat_num={
+                            "switching_state": this_rep_num
+                            if rep_key == "switching_state"
+                            else calobs.io.s11.switching_state.repeat_num,
+                            "receiver_reading": this_rep_num
+                            if rep_key == "receiver_reading"
+                            else calobs.io.s11.receiver_reading.repeat_num,
+                        },
+                        fix=False,
+                        compile_from_def=calobs.compiled_from_def,
+                        include_previous=calobs.previous_included,
+                    )
+
+                    # If we are changing the receiver reading, we need to update the LNA
+                    if rep_key == "receiver_reading" or run_key == "receiver_reading":
+                        calobs.lna = LNA(
+                            calobs.io.s11.receiver_reading,
+                            internal_switch=calobs.io.s11.switching_state,
+                            f_low=calobs.freq.min,
+                            f_high=calobs.freq.max,
+                            resistance=calobs.lna.resistance,
+                        )
+
+                    # If we're changing anything else, we need to change each load.
+                    if rep_key == "switching_state" or run_key != "receiver_reading":
+                        for name, load in calobs._loads.items():
+                            load.reflections = SwitchCorrection.from_path(
+                                load_name=io.LOAD_ALIASES[name],
+                                path=calobs.io.s11.path,
+                                run_num_load=this_run_num
+                                if run_key in io.LOAD_ALIASES
+                                else load.reflections.run_num,
+                                run_num_switch=this_run_num
+                                if run_key == "switching_state"
+                                else load.reflections.internal_switch.run_num,
+                                repeat_num=this_rep_num
+                                if rep_key == "switching_state"
+                                else load.reflections.internal_switch.repeat_num,
+                            )
+
+                    for i, c in enumerate(cterms):
+                        for j, w in enumerate(wterms):
+                            calobs.update(cterms=c, wterms=w)
+                            res = calobs.get_load_residuals()
+                            dof = sum(len(r) for r in res.values()) - c - w
+
+                            rms[i, j] = np.sqrt(
+                                sum(np.nansum(np.square(x)) for x in res.values()) / dof
+                            )
+
+                            if verbose:
+                                print(
+                                    f"Nc = {c:02}, Nw = {w:02}; RMS/dof = {rms[i, j]:1.3e}"
+                                )
+
+                            # If we've decreased by more than the threshold, this #wterms becomes
+                            # the new winner (for this number of cterms)
+                            if j > 0 and rms[i, j] >= rms[i, j - 1] - delta_rms_thresh:
+                                winner[i] = j - 1
+                                break
+
+                        if (
+                            i > 0
+                            and rms[i, winner[i]]
+                            >= rms[i - 1, winner[i - 1]] - delta_rms_thresh
+                        ):
+                            break
+
+    calobs.update(cterms=cterms[i - 1], wterms=wterms[winner[i - 1]])
+
+    if verbose:
+        print(
+            f"Best parameters found for Nc={cterms[i-1]}, Nw={wterms[winner[i-1]]}, with RMS = {rms[i-1, winner[i-1]]}."
+        )
+
+    if direc is not None:
+        direc = Path(direc)
+        if not direc.exists():
+            direc.mkdir(parents=True)
+
+        pth = Path(calobs.path).parent.name
+
+        pth = str(pth) + f"_c{calobs.cterms}_w{calobs.wterms}.h5"
+        calobs.write(direc / pth)
+
+    return calobs
