@@ -670,9 +670,7 @@ class LoadSpectrum:
         kinds = ["p0", "p1", "p2", "Q"]
         if os.path.exists(fname):
             logger.info(
-                "Reading in previously-created integrated {} spectra...".format(
-                    self.load_name
-                )
+                f"Reading in previously-created integrated {self.load_name} spectra..."
             )
             means = {}
             vars = {}
@@ -682,7 +680,7 @@ class LoadSpectrum:
                     vars[kind] = fl[kind + "_var"][...]
             return means, vars
 
-        logger.info("Reducing {} spectra...".format(self.load_name))
+        logger.info(f"Reducing {self.load_name} spectra...")
         spectra = self.get_spectra()
 
         means = {}
@@ -696,11 +694,11 @@ class LoadSpectrum:
 
             if self.rfi_removal == "1D2D":
                 nsample = np.sum(~np.isnan(spec), axis=1)
-                varfilt = xrfi.medfilt(
-                    var, kernel_size=2 * self.rfi_kernel_width_freq + 1
+                varfilt = xrfi.flagged_filter(
+                    var, size=2 * self.rfi_kernel_width_freq + 1
                 )
-                resid = mean - xrfi.medfilt(
-                    mean, kernel_size=2 * self.rfi_kernel_width_freq + 1
+                resid = mean - xrfi.flagged_filter(
+                    mean, size=2 * self.rfi_kernel_width_freq + 1
                 )
                 flags = np.logical_or(
                     resid > self.rfi_threshold * np.sqrt(varfilt / nsample),
