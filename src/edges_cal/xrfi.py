@@ -1,9 +1,8 @@
-import warnings
-from typing import Tuple, Union
-
 import numpy as np
+import warnings
 import yaml
 from scipy import ndimage
+from typing import Tuple
 
 from .modelling import Model, ModelFit
 

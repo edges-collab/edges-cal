@@ -1,8 +1,7 @@
-from os import listdir
-
 import numpy as np
 from edges_io.io import S1P
 from matplotlib import pyplot as plt
+from os import listdir
 
 from . import reflection_coefficient as rc
 

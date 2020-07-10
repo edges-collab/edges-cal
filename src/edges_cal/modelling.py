@@ -2,12 +2,11 @@
 """
 Functions for generating least-squares model fits for linear models(and evaluating the models).
 """
-from abc import abstractmethod
-from typing import Sequence, Type
-
 import numpy as np
 import scipy as sp
+from abc import abstractmethod
 from cached_property import cached_property
+from typing import Sequence, Type
 
 F_CENTER = 75.0
 

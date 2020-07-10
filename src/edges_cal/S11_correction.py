@@ -5,10 +5,9 @@ Created on Thu Feb 08 21:07:31 2018
 @author: Nivedita
 """
 
-from os import path
-
 import numpy as np
 from edges_io import io
+from os import path
 
 from . import reflection_coefficient as rc
 from .modelling import ModelFit

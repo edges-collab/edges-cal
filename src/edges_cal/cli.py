@@ -1,7 +1,7 @@
-from os.path import join
-
 import click
+import logging
 import yaml
+from os.path import join
 
 from edges_cal import cal_coefficients as cc
 
