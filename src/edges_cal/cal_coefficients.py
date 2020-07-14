@@ -2364,6 +2364,14 @@ def perform_term_sweep(
                 best_cterms = cterms[i - 1]
                 best_wterms = wterms[winner[i - 1]]
 
+    if verbose and (explore_repeat_nums or explore_run_nums):
+        print("The very best parameters were found were for:")
+        print(f"\tSwitchingState Repeat = {best_run_combo[2]}")
+        print(f"\tReceiverReading Repeat = {best_run_combo[1]}")
+        print(f"\tRun Numbers = {best_run_combo[0]}")
+        print(f"\t# C-terms = {best_cterms}")
+        print(f"\t# W-terms = {best_wterms}")
+
     calobs.update(cterms=best_cterms, wterms=best_wterms)
     calobs.io = io.CalibrationObservation(
         path=calobs.io.path.parent,
