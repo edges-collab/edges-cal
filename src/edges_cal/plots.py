@@ -1,12 +1,27 @@
+"""Plotting utilities."""
 import numpy as np
 from edges_io.io import S1P
 from matplotlib import pyplot as plt
 from os import listdir
+from typing import Sequence
 
 from . import reflection_coefficient as rc
 
 
-def plot_vna_comparison(folders, labels, repeat_num=None):
+def plot_vna_comparison(
+    folders: Sequence[str], labels: Sequence[str], repeat_num: [None, int] = None
+):
+    """Plot a comparison of VNA measurements.
+
+    Parameters
+    ----------
+    folders : sequence of str
+        Paths to folders in which VNA measurements are found.
+    labels : sequence of str
+        Labels for each VNA measurement (same length as ``folders``).
+    repeat_num : int, optional
+        The repeat number to use.
+    """
     assert len(folders) == len(labels)
 
     vna = {}
@@ -23,7 +38,7 @@ def plot_vna_comparison(folders, labels, repeat_num=None):
 
             vna[label][standard], f = S1P.read(fl)
 
-    o_a, s_a, m_a = rc.agilent_85033E(f, 50, m=1, md_value_ps=38)
+    o_a, s_a, m_a = rc.agilent_85033E(f, 50, match_delay=1, md_value_ps=38)
 
     for label, standards in vna.items():
         for standard, s11 in standards.items():

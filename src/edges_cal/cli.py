@@ -1,7 +1,7 @@
-from os.path import join
-
+"""CLI functions for edges-cal."""
 import click
 import yaml
+from os.path import join
 
 from edges_cal import cal_coefficients as cc
 
@@ -39,9 +39,7 @@ main = click.Group()
     help="antenna simulators to create diagnostic plots for.",
 )
 def run(config, path, out, cache_dir, plot, simulators):
-    """
-    Calibrate using lab measurements in PATH, and make all relevant plots.
-    """
+    """Calibrate using lab measurements in PATH, and make all relevant plots."""
     with open(config, "r") as fl:
         settings = yaml.load(fl, Loader=yaml.FullLoader)
 
@@ -137,6 +135,7 @@ def sweep(
     out,
     cache_dir,
 ):
+    """Perform a sweep of number of terms to obtain the best parameter set."""
     with open(config, "r") as fl:
         settings = yaml.load(fl, Loader=yaml.FullLoader)
 

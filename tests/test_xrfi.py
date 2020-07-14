@@ -1,3 +1,4 @@
+"""Tests of the xrfi module."""
 import pytest
 
 import itertools
@@ -12,6 +13,7 @@ NFREQ = 1000
 
 @pytest.fixture(scope="module")
 def freq():
+    """Default frequencies."""
     return np.linspace(50, 150, NFREQ)
 
 

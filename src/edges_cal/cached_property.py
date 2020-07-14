@@ -2,8 +2,9 @@
 from cached_property import cached_property as cp
 
 
-class cached_property(cp):
+class cached_property(cp):  # noqa
     def __get__(self, obj, cls):
+        """Get the store value of the attribute."""
         value = super().__get__(obj, cls)
 
         # Add the name of the decorated func to the _cached_ item of the dict

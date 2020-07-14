@@ -1,46 +1,103 @@
+"""Functions for working with reflection coefficients."""
 import numpy as np
 from edges_io import io
+from pathlib import Path
+from typing import List, Tuple, Union
 
 
-def impedance2gamma(Z, Z0):
-    return (Z - Z0) / (Z + Z0)
+def impedance2gamma(
+    z: [float, np.ndarray], z0: [float, np.ndarray]
+) -> [float, np.ndarray]:
+    """Convert impedance to reflection coefficient.
+
+    Parameters
+    ----------
+    z : float or array
+        Impedance.
+    z0 : float or array
+        Impedance match(?).
+
+    Returns
+    -------
+    gamma : float or array
+        The reflection coefficient.
+    """
+    return (z - z0) / (z + z0)
 
 
-def gamma2impedance(r, Z0):
-    return Z0 * (1 + r) / (1 - r)
+def gamma2impedance(
+    gamma: [float, np.ndarray], z0: [float, np.ndarray]
+) -> [float, np.ndarray]:
+    """Convert reflection coeffiency to impedance.
+
+    Parameters
+    ----------
+    gamma : float or array
+        Reflection coefficient.
+    z0 : float or array
+        Matching impedance (?)
+
+    Returns
+    -------
+    z : float or array
+        The impedance.
+    """
+    return z0 * (1 + gamma) / (1 - gamma)
 
 
-def gamma_de_embed(s11, s12s21, s22, rp):
+def gamma_de_embed(s11, s12s21, s22, rp):  # noqa
     return (rp - s11) / (s22 * (rp - s11) + s12s21)
 
 
-def gamma_shifted(s11, s12s21, s22, r):
+def gamma_shifted(s11, s12s21, s22, r):  # noqa
     return s11 + (s12s21 * r / (1 - s22 * r))
 
 
-def s2p_read(path_filename):
+def s2p_read(
+    path: [str, Path]
+) -> Union[
+    Tuple[np.ndarray, np.ndarray],
+    Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+]:
+    """Read an S2P file format.
 
+    Parameters
+    ----------
+    path : str or Path
+        Path to the file.
+
+    Returns
+    -------
+    gamma : np.ndarray
+        The reflection coefficient
+    gamma1, gamma2, gamma3 : np.ndarray
+        The other reflection coefficients(?!)
+    f : np.ndarray
+        The frequencies at which the gamma was measured.
+    """
     # loading data
-    d, flag = io.S1P._get_kind(path_filename)
+    d, flag = io.S1P._get_kind(path)
     f = d[:, 0]
 
     if flag == "DB":
         r = 10 ** (d[:, 1] / 20) * (
             np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2])
         )
+        return r, f
     if flag == "MA":
         r = d[:, 1] * (
             np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2])
         )
+        return r, f
     if flag == "RI":
         r = d[:, 1] + 1j * d[:, 2]
         r1 = d[:, 3] + 1j * d[:, 4]
         r2 = d[:, 5] + 1j * d[:, 6]
         r3 = d[:, 7] + 1j * d[:, 8]
-    return r, r1, r2, r3, f
+        return r, r1, r2, r3, f
 
 
-def de_embed(r1a, r2a, r3a, r1m, r2m, r3m, rp):
+def de_embed(r1a, r2a, r3a, r1m, r2m, r3m, rp):  # noqa
     # This only works with 1D arrays, where each point in the array is
     # a value at a given frequency
 
@@ -69,7 +126,10 @@ def de_embed(r1a, r2a, r3a, r1m, r2m, r3m, rp):
     return r, s11, s12s21, s22
 
 
-def fiducial_parameters_85033E(R, md=1, md_value_ps=38):
+def fiducial_parameters_85033E(  # noqa: N802
+    r, match_delay: bool = True, md_value_ps: float = 38.0
+):
+    """Get fiducial parameter for the Agilent 85033E standard kit."""
     # Parameters of open
     open_off_Zo = 50
     open_off_delay = 29.243e-12
@@ -107,147 +167,128 @@ def fiducial_parameters_85033E(R, md=1, md_value_ps=38):
     # Parameters of match
     match_off_Zo = 50
 
-    if md == 0:
-        match_off_delay = 0
-    elif md == 1:
-        match_off_delay = md_value_ps * 1e-12  # 38 ps, from Monsalve et al. (2016)
+    match_off_delay = 0 if not match_delay else md_value_ps * 1e-12
     match_off_loss = 2.3 * 1e9
-    match_R = R
+    match_R = r
 
     mp = np.array([match_off_Zo, match_off_delay, match_off_loss, match_R])
 
-    return (op, sp, mp)
+    return op, sp, mp
 
 
-def standard_open(f, par):
+def standard(
+    f: np.ndarray, par: [List[float], np.ndarray], kind: str
+) -> np.ndarray:  # noqa
+    """Compute the standard.
+
+    Parameters
+    ----------
+    f : array-like
+        Frequency in Hz.
+    par : array-like
+        Parameters of the standard.
+    kind : str
+        Either 'open', 'short' or 'match'.
+
+    Returns
+    -------
+    standard : array
+        The standard.
     """
-    frequency in Hz
-    """
+    assert kind in [
+        "open",
+        "short",
+        "match",
+    ], "kind must be one of 'open', 'short', 'match'"
 
-    offset_Zo = par[0]
+    offset_zo = par[0]
     offset_delay = par[1]
     offset_loss = par[2]
-    C0 = par[3]
-    C1 = par[4]
-    C2 = par[5]
-    C3 = par[6]
 
-    # Termination
-    Ct_open = C0 + C1 * f + C2 * f ** 2 + C3 * f ** 3
-    Zt_open = 0 - 1j / (2 * np.pi * f * Ct_open)
-    Rt_open = impedance2gamma(Zt_open, 50)
+    if kind in ["open", "short"]:
+        poly = par[3] + par[4] * f + par[5] * f ** 2 + par[6] * f ** 3
+
+        if kind == "open":
+            impedance_termination = -1j / (2 * np.pi * f * poly)
+        elif kind == "short":
+            impedance_termination = 1j * 2 * np.pi * f * poly
+    else:
+        impedance_termination = par[3]
+
+    gamma_termination = impedance2gamma(impedance_termination, 50)
 
     # Transmission line
-    Zc_open = (
-        offset_Zo + (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
-    ) - 1j * (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
-    temp = ((offset_loss * offset_delay) / (2 * offset_Zo)) * np.sqrt(f / 1e9)
-    gl_open = temp + 1j * ((2 * np.pi * f) * offset_delay + temp)
+    zc = (offset_zo + (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)) - 1j * (
+        offset_loss / (2 * 2 * np.pi * f)
+    ) * np.sqrt(f / 1e9)
+    temp = ((offset_loss * offset_delay) / (2 * offset_zo)) * np.sqrt(f / 1e9)
+    gl = temp + 1j * ((2 * np.pi * f) * offset_delay + temp)
 
     # Combined reflection coefficient
-    R1 = impedance2gamma(Zc_open, 50)
-    ex = np.exp(-2 * gl_open)
-    Rt = Rt_open
-    Ri_open = (R1 * (1 - ex - R1 * Rt) + ex * Rt) / (1 - R1 * (ex * R1 + Rt * (1 - ex)))
-
-    return Ri_open
-
-
-def standard_short(f, par):
-    """
-    frequency in Hz
-    """
-
-    offset_Zo = par[0]
-    offset_delay = par[1]
-    offset_loss = par[2]
-    L0 = par[3]
-    L1 = par[4]
-    L2 = par[5]
-    L3 = par[6]
-
-    # Termination
-    Lt_short = L0 + L1 * f + L2 * f ** 2 + L3 * f ** 3
-    Zt_short = 0 + 1j * 2 * np.pi * f * Lt_short
-    Rt_short = impedance2gamma(Zt_short, 50)
-
-    # Transmission line %%%%
-    Zc_short = (
-        offset_Zo + (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
-    ) - 1j * (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
-    temp = ((offset_loss * offset_delay) / (2 * offset_Zo)) * np.sqrt(f / 1e9)
-    gl_short = temp + 1j * ((2 * np.pi * f) * offset_delay + temp)
-
-    # Combined reflection coefficient %%%%
-    R1 = impedance2gamma(Zc_short, 50)
-    ex = np.exp(-2 * gl_short)
-    Rt = Rt_short
-    Ri_short = (R1 * (1 - ex - R1 * Rt) + ex * Rt) / (
-        1 - R1 * (ex * R1 + Rt * (1 - ex))
+    r1 = impedance2gamma(zc, 50)
+    ex = np.exp(-2 * gl)
+    return (r1 * (1 - ex - r1 * gamma_termination) + ex * gamma_termination) / (
+        1 - r1 * (ex * r1 + gamma_termination * (1 - ex))
     )
 
-    return Ri_short
 
+def agilent_85033E(  # noqa: N802
+    f: np.ndarray,
+    resistance_of_match: float,
+    match_delay: bool = True,
+    md_value_ps: float = 38.0,
+):
+    """Generate open, short and match standards for the Agilent 85033E.
 
-def standard_match(f, par):
+    Parameters
+    ----------
+    f : np.ndarray
+        Frequencies in MHz.
+    resistance_of_match : float
+        Resistance of the match standard, in Ohms.
+    match_delay : bool
+        Whether to match the delay offset.
+    md_value_ps : float
+        Some number that does something to the delay matching.
+
+    Returns
+    -------
+    o, s, m : np.ndarray
+        The open, short and match standards.
     """
-    frequency in Hz
-    """
-
-    offset_Zo = par[0]
-    offset_delay = par[1]
-    offset_loss = par[2]
-    Resistance = par[3]
-
-    # Termination
-    Zt_match = Resistance
-    Rt_match = impedance2gamma(Zt_match, 50)
-
-    # Transmission line
-    Zc_match = (
-        offset_Zo + (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
-    ) - 1j * (offset_loss / (2 * 2 * np.pi * f)) * np.sqrt(f / 1e9)
-    temp = ((offset_loss * offset_delay) / (2 * offset_Zo)) * np.sqrt(f / 1e9)
-    gl_match = temp + 1j * ((2 * np.pi * f) * offset_delay + temp)
-
-    # combined reflection coefficient %%%%
-    R1 = impedance2gamma(Zc_match, 50)
-    ex = np.exp(-2 * gl_match)
-    Rt = Rt_match
-    Ri_match = (R1 * (1 - ex - R1 * Rt) + ex * Rt) / (
-        1 - R1 * (ex * R1 + Rt * (1 - ex))
-    )
-
-    return Ri_match
-
-
-def agilent_85033E(f, resistance_of_match, m=1, md_value_ps=38):
-    """
-    frequency in Hz
-    """
-
     op, sp, mp = fiducial_parameters_85033E(
-        resistance_of_match, md=m, md_value_ps=md_value_ps
+        resistance_of_match, match_delay=match_delay, md_value_ps=md_value_ps
     )
-    o = standard_open(f, op)
-    s = standard_short(f, sp)
-    m = standard_match(f, mp)
+    o = standard(f, op, "open")
+    s = standard(f, sp, "short")
+    m = standard(f, mp, "match")
 
-    return (o, s, m)
+    return o, s, m
 
 
-def input_impedance_transmission_line(Z0, gamma, length, Zload):
+def input_impedance_transmission_line(
+    z0: np.ndarray, gamma: np.ndarray, length: float, z_load: np.ndarray
+) -> np.ndarray:
     """
-    Z0:     complex characteristic impedance
-    gamma:  propagation constant
-    length: length of transmission line
-    Zload:  impedance of termination
-    """
+    Calculate the impedance of a transmission line.
 
-    Zin = (
-        Z0
-        * (Zload + Z0 * np.tanh(gamma * length))
-        / (Zload * np.tanh(gamma * length) + Z0)
+    Parameters
+    ----------
+    z0 : array-like
+        Complex characteristic impedance
+    gamma : array-like
+        Propagation constant
+    length : float
+        Length of transmission line
+    z_load : array-like
+        Impedance of termination.
+
+    Returns
+    -------
+    Impedance of the transmission line.
+    """
+    return (
+        z0
+        * (z_load + z0 * np.tanh(gamma * length))
+        / (z_load * np.tanh(gamma * length) + z0)
     )
-
-    return Zin
