@@ -31,6 +31,11 @@ class Model:
             number of terms).
         default_x : np.ndarray, optional
             A set of default co-ordinates at which to evaluate the model.
+
+        Raises
+        ------
+        ValueError
+            If number of parameters is not consistent with n_terms.
         """
         if parameters:
             self.parameters = list(parameters)
@@ -268,6 +273,11 @@ class ModelFit:
             arbitrary number of terms).
         kwargs
             All other arguments are passed to the chosen model.
+
+        Raises
+        ------
+        ValueError
+            If model_type is not str, or a subclass of :class:`Model`.
         """
         if isinstance(model_type, str):
             self.model = Model._models[model_type.lower()](
