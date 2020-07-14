@@ -300,7 +300,7 @@ class SwitchCorrection:
 
         Raises
         ------
-        ValueError :
+        ValueError
             If n_terms is even.
         """
         res = self._nterms or self.default_nterms.get(self.load_name, None)
@@ -403,7 +403,7 @@ class SwitchCorrection:
 
         Raises
         ------
-        ValueError :
+        ValueError
             If n_terms is not an integer, or not odd.
         """
         n_terms = n_terms or self.n_terms

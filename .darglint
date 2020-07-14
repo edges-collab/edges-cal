@@ -4,6 +4,5 @@ strictness=short
 enable=DAR104
 ignore=
   DAR201
-  DAR401
   DAR103  # Non-matching docstring param type to signature. Fails for "type, optional". Remove when this is fixed.
 ignore_regex=src/edges_cal/cli.py
