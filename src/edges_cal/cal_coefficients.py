@@ -21,7 +21,7 @@ from hashlib import md5
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
-from typing import Any
+from typing import Any, List
 
 from . import S11_correction as s11
 from . import modelling as mdl
@@ -265,7 +265,7 @@ class SwitchCorrection:
                 self,
                 name.lower(),
                 VNA(
-                    s1p=getattr(self.load_s11, name.lower()),
+                    s1p=self.load_s11.children[name.lower()],
                     f_low=f_low,
                     f_high=f_high,
                     switchval=switchvals.get(name.lower(), None),
@@ -460,7 +460,7 @@ class LNA(SwitchCorrection):
         VNA S11 measurements for the load.
         """
         return VNA(
-            self.load_s11.receiverreading,
+            self.load_s11.children["receiverreading"],
             f_low=self.freq.freq.min(),
             f_high=self.freq.freq.max(),
         )
@@ -483,7 +483,7 @@ class LNA(SwitchCorrection):
 class LoadSpectrum:
     def __init__(
         self,
-        spec_obj: io.Spectrum,
+        spec_obj: List[io.Spectrum],
         resistance_obj: io.Resistance,
         switch_correction=None,
         f_low=40,
@@ -533,15 +533,15 @@ class LoadSpectrum:
         self.spec_obj = spec_obj
         self.resistance_obj = resistance_obj
 
-        self.load_name = self.spec_obj.load_name
+        self.load_name = self.spec_obj[0].load_name
         assert (
-            self.spec_obj.load_name == self.resistance_obj.load_name
+            self.load_name == self.resistance_obj.load_name
         ), "spec and resistance load_name must be the same"
 
-        self.spec_files = self.spec_obj.path
+        self.spec_files = (spec_obj.path for spec_obj in self.spec_obj)
         self.resistance_file = self.resistance_obj.path
 
-        self.run_num = self.spec_obj.run_num
+        self.run_num = self.spec_obj[0].run_num
 
         self.cache_dir = cache_dir or os.path.curdir
 
@@ -749,7 +749,7 @@ class LoadSpectrum:
                uncalibrated, but normalised antenna temperature).
         """
 
-        data = self.spec_obj.data
+        data = [spec_obj.data for spec_obj in self.spec_obj]
         if not isinstance(data, list):
             data = [data]
 
@@ -1060,7 +1060,6 @@ class CalibrationObservation:
         self,
         path: [str, Path],
         semi_rigid_path: [None, str, Path] = None,
-        ambient_temp: int = 25,
         f_low: [None, float] = 40,
         f_high: [None, float] = None,
         run_num: [None, int, dict] = None,
@@ -1144,7 +1143,7 @@ class CalibrationObservation:
         --------
         This will setup an observation with all default options applied:
 
-        >>> path = '/data5/edges/data/CalibrationObservations/Receiver01_2019_11_26_040_to_200MHz'
+        >>> path = '/data5/edges/data/CalibrationObservations/Receiver01/Receiver01_25C_2019_11_26_040_to_200MHz'
         >>> calobs = CalibrationObservation(path)
 
         To specify some options for constructing the various calibrator load spectra:
@@ -1166,7 +1165,6 @@ class CalibrationObservation:
 
         self.io = io.CalibrationObservation(
             path,
-            ambient_temp=ambient_temp,
             run_num=run_num,
             repeat_num=repeat_num,
             fix=False,

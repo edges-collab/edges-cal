@@ -33,7 +33,7 @@ repos:
       - flake8-docstrings
       - flake8-rst-docstrings
       - flake8-rst
-      - darglint
+#      - darglint
       - flake8-copyright
       - flake8-ownership
 
