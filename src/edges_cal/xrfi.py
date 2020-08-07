@@ -850,23 +850,30 @@ def xrfi_model(
     )
 
 
-def xrfi_poly(*args, **kwargs):
+def xrfi_poly(spectrum: np.ndarray, **kwargs):
     """An alias for xrfi_model with model_type='polynomial'."""
     warnings.warn(
         "This function has been deprecated and will be removed at some point. "
         "Use xrfi_model with model_type='polynomial'.",
         category=DeprecationWarning,
     )
-    return xrfi_model(*args, model_type="polynomial", **kwargs)
+    return xrfi_model(spectrum, model_type="polynomial", **kwargs)
 
 
-def xrfi_watershed(flags: np.ndarray, tol: [float, Tuple[float]] = 0.2, inplace=False):
+def xrfi_watershed(
+    spectrum: [None, np.ndarray] = None,
+    flags: [None, np.ndarray] = None,
+    tol: [float, Tuple[float]] = 0.2,
+    inplace=False,
+):
     """Apply a watershed over frequencies and times for flags.
 
     Make sure that times/freqs with many flags are all flagged.
 
     Parameters
     ----------
+    spectrum
+        Not used in this routine.
     flags : ndarray of bool
         The existing flags.
     tol : float or tuple
@@ -881,6 +888,9 @@ def xrfi_watershed(flags: np.ndarray, tol: [float, Tuple[float]] = 0.2, inplace=
     ndarray :
         Boolean array of flags.
     """
+    if flags is None:
+        raise ValueError("You must provide flags as an ndarray")
+
     fl = flags if inplace else flags.copy()
 
     if not hasattr(tol, "__len__"):
