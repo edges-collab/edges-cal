@@ -1,3 +1,4 @@
+"""Functions for excising RFI."""
 import numpy as np
 import warnings
 import yaml
@@ -9,6 +10,7 @@ from .modelling import Model, ModelFit
 
 def _check_convolve_dims(data, half_size: [None, Tuple[int, None]] = None):
     """Check the kernel sizes to be used in various convolution-like operations.
+
     If the kernel sizes are too big, replace them with the largest allowable size
     and issue a warning to the user.
 
@@ -55,16 +57,19 @@ def _check_convolve_dims(data, half_size: [None, Tuple[int, None]] = None):
 
 def robust_divide(num, den):
     """Prevent division by zero.
+
     This function will compute division between two array-like objects by setting
     values to infinity when the denominator is small for the given data type. This
     avoids floating point exception warnings that may hide genuine problems
     in the data.
+
     Parameters
     ----------
     num : array
         The numerator.
     den : array
         The denominator.
+
     Returns
     -------
     out : array
@@ -104,12 +109,12 @@ def flagged_filter(
         in `data`.
     kind : str, optional
         The function to apply in each window. Typical options are `mean` and `median`.
-        For this function to work, the function kind chosen here must have a correspdoning
+        For this function to work, the function kind chosen here must have a corresponding
         `nan<function>` implementation in numpy.
     flags : np.ndarray, optional
         A boolean array specifying data to omit from the filtering.
     mode : str, optional
-        The mode of the filter. See ``scipy.ndimage.generic_filter` for details. By default,
+        The mode of the filter. See ``scipy.ndimage.generic_filter`` for details. By default,
         'nearest' if size < data.size otherwise 'reflect'.
     interp_flagged : bool, optional
         Whether to fill in flagged entries with its filtered value. Otherwise,
@@ -213,6 +218,7 @@ def detrend_medfilt(
     compared to the steepness of the spectrum, individual windows can become *almost always*
     monotonic, in which case the randomly non-monotonic bins "stick out" and get wrongly
     flagged. This can be helped three ways:
+
     1) Use a smaller bin width. This helps by reducing the probability that a bin will
        be randomly non-monotonic. However it also loses signal-to-noise on the RFI.
     2) Pre-fit a smooth model that "flattens" the spectrum. This helps by reducing the
@@ -221,7 +227,6 @@ def detrend_medfilt(
     3) Follow the medfilt with a meanfilt: if the medfilt is able to flag most/all of
        the RFI, then a following meanfilt will tend to "unfilter" the wrongly flagged
        parts.
-
     """
     half_size = _check_convolve_dims(data, half_size)
     size = tuple(2 * s + 1 for s in half_size)
@@ -277,7 +282,6 @@ def detrend_meanfilt(
     will perform very poorly when un-flagged RFI still exists. It is often useful to
     precede this with a median filter.
     """
-
     half_size = _check_convolve_dims(data, half_size)
     size = tuple(2 * s + 1 for s in half_size)
 
@@ -373,7 +377,7 @@ def xrfi_medfilt(
     (getting smaller), such that very large blobs are first flagged out, then progressively
     finer detail is added. Use ``xrfi_iterative_medfilt`` for that.
     """
-    iter = 0
+    ii = 0
 
     if flags is None:
         new_flags = np.zeros(spectrum.shape, dtype=bool)
@@ -388,7 +392,7 @@ def xrfi_medfilt(
     resid = spectrum.copy()
 
     size = (kf,) if spectrum.ndim == 1 else (kt, kf)
-    while iter < max_iter and np.sum(new_flags) > nflags:
+    while ii < max_iter and np.sum(new_flags) > nflags:
         nflags = np.sum(new_flags)
 
         if spectrum.ndim == 1 and poly_order:
@@ -431,10 +435,10 @@ def xrfi_medfilt(
         else:
             new_flags = np.abs(significance) > threshold
 
-        iter += 1
+        ii += 1
         nflags_list.append(np.sum(new_flags))
 
-    if 1 < max_iter == iter and np.sum(new_flags) > nflags:
+    if 1 < max_iter == ii and np.sum(new_flags) > nflags:
         warnings.warn("Median filter reached max_iter and is still finding new RFI.")
 
     return (
@@ -442,46 +446,11 @@ def xrfi_medfilt(
         {
             "significance": significance,
             "median_significance": med_significance,
-            "iters": iter,
+            "iters": ii,
             "nflags": nflags_list,
             "residuals": resid_list,
         },
     )
-
-
-def xrfi_iterative_medfilt(
-    spectrum: np.ndarray,
-    threshold: float = 6,
-    flags: [None, np.ndarray] = None,
-    min_kf: [int, None] = 8,
-    min_kt: [int, None] = 8,
-    max_kf: [int, None] = None,
-    max_kt: [int, None] = None,
-    inplace: bool = True,
-    accumulate=False,
-    use_meanfilt=True,
-):
-    """
-    An iterative median filter, in which the window size is progressively reduced.
-
-    Parameters
-    ----------
-    spectrum
-    threshold
-    flags
-    kf
-    kt
-    inplace
-    max_iter
-    poly_order
-    accumulate
-    use_meanfilt
-
-    Returns
-    -------
-
-    """
-    raise NotImplementedError("This has not been implemented yet.")
 
 
 def xrfi_explicit(f, rfi_file=None, extra_rfi=None):
@@ -505,7 +474,6 @@ def xrfi_explicit(f, rfi_file=None, extra_rfi=None):
         Boolean array of the same shape as ``spectrum`` indicated which channels/times
         have flagged RFI.
     """
-
     rfi_freqs = []
     if rfi_file:
         with open(rfi_file, "r") as fl:
@@ -883,6 +851,7 @@ def xrfi_model(
 
 
 def xrfi_poly(*args, **kwargs):
+    """An alias for xrfi_model with model_type='polynomial'."""
     warnings.warn(
         "This function has been deprecated and will be removed at some point. "
         "Use xrfi_model with model_type='polynomial'.",
@@ -892,8 +861,9 @@ def xrfi_poly(*args, **kwargs):
 
 
 def xrfi_watershed(flags: np.ndarray, tol: [float, Tuple[float]] = 0.2, inplace=False):
-    """Applies a watershed over frequencies and times for flags, making sure
-    that times/freqs with many flags are all flagged.
+    """Apply a watershed over frequencies and times for flags.
+
+    Make sure that times/freqs with many flags are all flagged.
 
     Parameters
     ----------

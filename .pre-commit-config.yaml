@@ -1,5 +1,4 @@
-exclude: '^docs/conf.py|^tests/data/'
-
+exclude: '^docs/conf.py|^devel/*.py'
 
 repos:
 - repo: git://github.com/pre-commit/pre-commit-hooks
@@ -18,6 +17,11 @@ repos:
   - id: mixed-line-ending
     args: ['--fix=no']
 
+- repo: https://github.com/psf/black
+  rev: 19.10b0
+  hooks:
+  - id: black
+
 - repo: https://gitlab.com/pycqa/flake8
   rev: 3.8.3  # pick a git hash / tag to point to
   hooks:
@@ -25,22 +29,19 @@ repos:
     additional_dependencies:
       - flake8-quotes
       - flake8-comprehensions
-      - flake8-black
       - flake8-builtins
       - flake8-eradicate
       - pep8-naming
-      - flake8-isort
       - flake8-docstrings
       - flake8-rst-docstrings
       - flake8-rst
-#      - darglint
       - flake8-copyright
       - flake8-ownership
 
-- repo: https://github.com/psf/black
-  rev: 19.10b0
-  hooks:
-  - id: black
+#- repo: https://github.com/terrencepreilly/darglint  Removed until it gets faster.
+#  rev: master
+#  hooks:
+#  - id: darglint
 
 - repo: https://github.com/timothycrosley/isort
   rev: 5.0.5
