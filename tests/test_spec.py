@@ -1,3 +1,6 @@
+"""
+Test spectrum reading.
+"""
 from pathlib import Path
 
 from edges_cal import LoadSpectrum

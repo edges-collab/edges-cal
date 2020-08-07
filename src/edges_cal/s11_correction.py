@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Feb 08 21:07:31 2018
-
-@author: Nivedita
-"""
+"""Functions dealing with correcting S11's."""
 
 import numpy as np
 from edges_io import io
 from os import path
+from pathlib import Path
+from typing import Tuple
 
 from . import reflection_coefficient as rc
 from .modelling import ModelFit
@@ -32,14 +30,37 @@ def _get_parameters_at_temperature(data_path, temp):
             models[kind + "_" + mag_or_ang] = np.polyval(par[:, j + 2 * i], f_norm)
 
 
-def high_band_switch_correction(data_path, ant_s11, sw_temp, poly_order=10):
+def high_band_switch_correction(
+    data_path: [str, Path], ant_s11: np.ndarray, sw_temp: float, poly_order: int = 10
+) -> Tuple[np.ndarray, dict]:
+    """Correct for the switch for high-band receiver.
+
+    Parameters
+    ----------
+    data_path : str or Path
+        The path to a folder containing the file "switch_temperatures.txt".
+    ant_s11 : np.ndarray
+        The uncorrected antenna S11 as a function of frequency.
+    sw_temp : float
+        The switch temperature.
+    poly_order : int
+        The order of the polynomial to fit to the corrected S11.
+
+    Returns
+    -------
+    corr_ant_s11 : np.ndarray
+        The corrected antenna S11.
+    switch : dict
+        The reflection coefficients of the switch.
+    """
+    data_path = Path(data_path)
 
     # frequency
     f = np.arange(50, 200.1, 0.25)
     f_norm = f / 150
 
     # switch temperatures
-    temp_all = np.genfromtxt(path.join(data_path, "switch_temperatures.txt"))
+    temp_all = np.genfromtxt(data_path / "switch_temperatures.txt")
     temp15, temp25, temp35 = temp_all
 
     temps = [15, 25] if sw_temp <= temp25 else [25, 35]
@@ -107,15 +128,15 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
 
 
 def get_switch_correction(
-    ant_s11,
-    internal_switch,
-    f_in=np.zeros([0, 1]),
-    resistance_m=50.166,
-    poly_order=7,
-    model_type="fourier",
-):
+    ant_s11: np.ndarray,
+    internal_switch: io.SwitchingState,
+    f_in: np.ndarray = np.zeros([0, 1]),
+    resistance_m: float = 50.166,
+    poly_order: [int, Tuple] = 7,
+    model_type: str = "fourier",
+) -> Tuple[np.ndarray, dict]:
     """
-    Compute the switch correction
+    Compute the switch correction.
 
     Parameters
     ----------
@@ -123,16 +144,23 @@ def get_switch_correction(
         Array of S11 measurements as a function of frequency
     internal_switch : :class:`io.SwitchingState` instance
         An internal switching state object.
-    f_in
-    resistance_m
+    f_in : np.ndarray
+        The input frequencies
+    resistance_m : float
+        The resistance of the switch.
     poly_order : int or tuple
         Specifies the order of the fitted polynomial for the S11 measurements.
         If a tuple, must be length 3, specifying the order for the s11, s12, s22
         respectively.
+    model_type : str
+        The type of model to fit to the S11.
 
     Returns
     -------
-
+    corr_ant_s11 : np.ndarray
+        The corrected antenna S11.
+    fits : dict
+        Dictionary of fits to the reflection coefficients s11, s12 and s22.
     """
     corrections, sw = _read_data_and_corrections(internal_switch)
 

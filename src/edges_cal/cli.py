@@ -1,5 +1,5 @@
+"""CLI functions for edges-cal."""
 import click
-import logging
 import yaml
 from os.path import join
 
@@ -39,9 +39,7 @@ main = click.Group()
     help="antenna simulators to create diagnostic plots for.",
 )
 def run(config, path, out, cache_dir, plot, simulators):
-    """
-    Calibrate using lab measurements in PATH, and make all relevant plots.
-    """
+    """Calibrate using lab measurements in PATH, and make all relevant plots."""
     with open(config, "r") as fl:
         settings = yaml.load(fl, Loader=yaml.FullLoader)
 
@@ -78,6 +76,18 @@ def run(config, path, out, cache_dir, plot, simulators):
 @main.command()
 @click.argument("config", type=click.Path(dir_okay=False, file_okay=True, exists=True))
 @click.argument("path", type=click.Path(dir_okay=True, file_okay=False, exists=True))
+@click.option(
+    "-w", "--max-wterms", type=int, default=20, help="maximum number of wterms"
+)
+@click.option(
+    "-r/-R",
+    "--repeats/--no-repeats",
+    default=False,
+    help="explore repeats of switch and receiver s11",
+)
+@click.option(
+    "-n/-N", "--runs/--no-runs", default=False, help="explore runs of s11 measurements"
+)
 @click.option(
     "-c", "--max-cterms", type=int, default=20, help="maximum number of cterms"
 )
@@ -125,6 +135,7 @@ def sweep(
     out,
     cache_dir,
 ):
+    """Perform a sweep of number of terms to obtain the best parameter set."""
     with open(config, "r") as fl:
         settings = yaml.load(fl, Loader=yaml.FullLoader)
 
