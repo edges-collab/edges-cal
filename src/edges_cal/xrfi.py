@@ -887,6 +887,8 @@ def xrfi_watershed(
     -------
     ndarray :
         Boolean array of flags.
+    dict :
+        Information about the flagging procedure (empty for this function)
     """
     if flags is None:
         raise ValueError("You must provide flags as an ndarray")
@@ -903,4 +905,4 @@ def xrfi_watershed(
     time_coll = np.sum(fl, axis=0)
     time_mask = time_coll > tol[1] * flags.shape[0]
     fl[:, time_mask] = True
-    return fl
+    return fl, {}
