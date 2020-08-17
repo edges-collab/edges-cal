@@ -4,7 +4,7 @@ import numpy as np
 import scipy as sp
 from abc import abstractmethod
 from cached_property import cached_property
-from typing import Sequence, Type, Union
+from typing import Sequence, Tuple, Type, Union
 
 F_CENTER = 75.0
 
@@ -83,7 +83,11 @@ class Model:
             A 2D array, shape ``(n_terms, len(x))`` with the computed basis functions
             for each term.
         """
-        out = np.zeros((self.n_terms, len(x)))
+        n_terms = (
+            self.n_terms if isinstance(self.n_terms, int) else np.prod(self.n_terms)
+        )
+        x = np.array(x)
+        out = np.zeros((n_terms, x.shape[-1]))
         self._fill_basis_terms(x, out)
         return out
 
@@ -220,6 +224,21 @@ class Polynomial(Foreground):
             out[i] = y ** (i + self.offset)
 
 
+class Polynomial2D(Model):
+    def __init__(self, offset: Tuple[float, float] = (0, 0), **kwargs):
+        self.offset = offset
+        super().__init__(**kwargs)
+
+    def _fill_basis_terms(self, x, out):
+        x, y = x
+
+        for i in range(self.n_terms[0]):
+            for j in range(self.n_terms[1]):
+                out[i * self.n_terms[1] + j] = x.flatten() ** (
+                    i + self.offset[0]
+                ) * y.flatten() ** (j + self.offset[1])
+
+
 class EdgesPoly(Polynomial):
     def __init__(self, offset: float = -2.5, **kwargs):
         """
@@ -253,7 +272,7 @@ class ModelFit:
         xdata: np.ndarray,
         ydata: np.ndarray,
         weights: [None, np.ndarray] = None,
-        n_terms: int = None,
+        n_terms: [None, int, Tuple[int, int]] = None,
         **kwargs,
     ):
         """A class representing a fit of model to data.
@@ -294,22 +313,26 @@ class ModelFit:
             )
 
         self.xdata = xdata
-        self.ydata = ydata
+        self.ydata = ydata.flatten()
         self.weights = weights
 
         if weights is None:
-            self.weights = np.eye(len(self.xdata))
+            self.weights = 1
         elif weights.ndim == 1:
             # if a vector is given
-            assert weights.shape == self.xdata.shape
-            self.weights = np.diag(weights)
+            assert weights.shape == self.ydata.shape
+            self.weights = weights
         elif weights.ndim == 2:
-            assert weights.shape == (len(self.xdata), len(self.xdata))
+            assert weights.shape == (len(self.ydata), len(self.ydata))
             self.weights = weights
 
         self.n_terms = self.model.n_terms
 
-        self.degrees_of_freedom = len(self.xdata) - self.n_terms - 1
+        self.degrees_of_freedom = (
+            len(self.ydata)
+            - (self.n_terms if isinstance(self.n_terms, int) else np.prod(self.n_terms))
+            - 1
+        )
 
     @cached_property
     def model_parameters(self):
@@ -324,8 +347,13 @@ class ModelFit:
         # sqrt of weight matrix
         sqrt_w = np.sqrt(self.weights)
 
-        # A and ydata "tilde"
-        WA = np.dot(sqrt_w, AT.T)
+        if np.isscalar(self.weights):
+            WA = AT.T
+        elif self.weights.ndim == 1:
+            WA = (sqrt_w * AT).T
+        else:
+            # A and ydata "tilde"
+            WA = np.dot(sqrt_w, AT.T)
 
         # solving system using 'short' QR decomposition (see R. Butt, Num. Anal. Using MATLAB)
         q, r = sp.linalg.qr(WA, mode="economic")
@@ -336,9 +364,15 @@ class ModelFit:
         # transposing matrices so data is along columns
         ydata = np.reshape(self.ydata, (-1, 1))
 
-        Wydata = np.dot(np.sqrt(self.weights), ydata)
+        if np.isscalar(self.weights):
+            weighted_ydata = ydata
+        elif self.weights.ndim == 1:
+            weighted_ydata = (np.sqrt(self.weights) * ydata.T).T
+        else:
+            weighted_ydata = np.dot(np.sqrt(self.weights), ydata)
+
         q, r = self.qr
-        return sp.linalg.solve(r, np.dot(q.T, Wydata)).flatten()
+        return sp.linalg.solve(r, np.dot(q.T, weighted_ydata)).flatten()
 
     def evaluate(self, x: [np.ndarray, None] = None) -> np.ndarray:
         """Evaluate the best-fit model.
@@ -368,7 +402,12 @@ class ModelFit:
     @cached_property
     def weighted_chi2(self) -> float:
         """The chi^2 of the weighted fit."""
-        return np.dot(self.residual.T, np.dot(self.weights, self.residual))
+        if np.isscalar(self.weights):
+            return np.sum(self.residual ** 2)
+        elif self.weights.ndim == 1:
+            return np.sum(self.residual * np.sqrt(self.weights)) ** 2
+        else:
+            return np.dot(self.residual.T, np.dot(self.weights, self.residual))
 
     def reduced_weighted_chi2(self) -> float:
         """The weighted chi^2 divided by the degrees of freedom."""
@@ -376,7 +415,12 @@ class ModelFit:
 
     def weighted_rms(self) -> float:
         """The weighted root-mean-square of the residuals."""
-        return np.sqrt(self.weighted_chi2) / np.sum(np.diag(self.weights))
+        if np.isscalar(self.weights):
+            return np.sqrt(self.weighted_chi2)
+        elif self.weights.ndim == 1:
+            return np.sqrt(self.weighted_chi2) / np.sum(self.weights)
+        else:
+            return np.sqrt(self.weighted_chi2) / np.sum(np.diag(self.weights))
 
     def get_covariance(self) -> np.ndarray:
         """The covariance of the parameter estimates at the solution."""
