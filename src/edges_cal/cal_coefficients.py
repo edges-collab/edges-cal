@@ -610,7 +610,7 @@ class LoadSpectrum:
             flag data as RFI.
         cache_dir : str or Path
             An alternative directory in which to load/save cached reduced files. By
-            default, the same as the path to the .mat files. If you don't have
+            default, the current directory. If you don't have
             write permission there, it may be useful to use an alternative path.
         """
         self.spec_obj = spec_obj
@@ -621,7 +621,7 @@ class LoadSpectrum:
             self.load_name == self.resistance_obj.load_name
         ), "spec and resistance load_name must be the same"
 
-        self.spec_files = (spec_obj.path for spec_obj in self.spec_obj)
+        self.spec_files = tuple(spec_obj.path for spec_obj in self.spec_obj)
         self.resistance_file = self.resistance_obj.path
 
         self.run_num = self.spec_obj[0].run_num
@@ -751,6 +751,11 @@ class LoadSpectrum:
         """Variance of the load plus noise-source, averaged over time."""
         return self._ave_and_var_spec[1]["p2"]
 
+    @property
+    def n_integrations(self) -> float:
+        """Number of integrations in the spectra."""
+        return self._ave_and_var_spec[2]
+
     def _get_integrated_filename(self):
         """Determine the relevant unique filename for the reduced data  for this instance."""
         params = (
@@ -782,7 +787,9 @@ class LoadSpectrum:
                 for kind in kinds:
                     means[kind] = fl[kind + "_mean"][...]
                     variances[kind] = fl[kind + "_var"][...]
-            return means, variances
+                    n = fl.attrs["n_integrations"]
+
+            return means, variances, n
 
         logger.info(f"Reducing {self.load_name} spectra...")
         spectra = self.get_spectra()
@@ -795,6 +802,7 @@ class LoadSpectrum:
 
             mean = np.nanmean(spec, axis=1)
             var = np.nanvar(spec, axis=1)
+            n = spec.shape[1]
 
             if self.rfi_removal == "1D2D":
                 nsample = np.sum(~np.isnan(spec), axis=1)
@@ -820,12 +828,13 @@ class LoadSpectrum:
             os.mkdir(self.cache_dir)
 
         with h5py.File(fname, "w") as fl:
-            logger.info("Saving reduced spectra to cache at {}".format(fname))
+            logger.info(f"Saving reduced spectra to cache at {fname}")
             for kind in kinds:
                 fl[kind + "_mean"] = means[kind]
                 fl[kind + "_var"] = variances[kind]
+                fl.attrs["n_integrations"] = n
 
-        return means, variances
+        return means, variances, n
 
     def get_spectra(self) -> dict:
         """Read all spectra and remove RFI.
@@ -1267,6 +1276,7 @@ class CalibrationObservation:
         load_s11s: [None, dict] = None,
         compile_from_def: bool = True,
         include_previous: bool = True,
+        iterative_cal: bool = True,
     ):
         """
         A composite object representing a full Calibration Observation.
@@ -1285,8 +1295,6 @@ class CalibrationObservation:
         semi_rigid_path : str or Path
             Path to a file containing S11 measurements for the semi rigid cable. Used to
             correct the hot load S11. Found automatically if not given.
-        ambient_temp : int
-            Ambient temperature (C) at which measurements were taken.
         f_low : float
             Minimum frequency to keep for all loads (and their S11's). If for some
             reason different frequency bounds are desired per-load, one can pass in
@@ -1471,6 +1479,7 @@ class CalibrationObservation:
 
         self.cterms = cterms
         self.wterms = wterms
+        self.iterative_cal = iterative_cal
 
     def new_load(
         self,
@@ -1594,6 +1603,51 @@ class CalibrationObservation:
             wterms=self.wterms,
         )
         return scale, off, Tu, TC, TS
+
+    @cached_property
+    def _non_iterative_coefficients(self):
+        """Return polynomials for T_NS, T_L and T_LNA based on a simple downhill likelihood fit."""
+        t_ns, t_l, t_lna = rcf.get_calibration_quantities_no_noise_wave(
+            self.freq.freq,
+            q_measured={k: source.averaged_Q for k, source in self._loads.items()},
+            var_q_measured={k: source.variance_Q for k, source in self._loads.items()},
+            temp_ant={k: source.temp_ave for k, source in self._loads.items()},
+            n_terms=self.cterms,
+            alpha=1
+            / (self.freq.df * 13.0),  # TODO: hard-coded 13 seconds integration time!
+            guess=[400, 300, 50],
+        )
+        return t_ns, t_l, t_lna
+
+    @cached_property
+    def t_ns_poly(self):
+        """Noise-source temperature poly coefficients."""
+        return self._non_iterative_coefficients[0]
+
+    @cached_property
+    def t_l_poly(self):
+        """Load temperature poly coefficients."""
+        return self._non_iterative_coefficients[1]
+
+    @cached_property
+    def t_lna_poly(self):
+        """Receiver temperature poly coefficients."""
+        return self._non_iterative_coefficients[2]
+
+    def t_ns(self, f: Optional[Union[float, np.ndarray]] = None):
+        """Noise-source temperature."""
+        f = self.freq.freq if f is None else f
+        return self.t_ns_poly(f)
+
+    def t_l(self, f: Optional[Union[float, np.ndarray]] = None):
+        """Load temperature."""
+        f = self.freq.freq if f is None else f
+        return self.t_l_poly(f)
+
+    def t_lna(self, f: Optional[Union[float, np.ndarray]] = None):
+        """Receiver temperature."""
+        f = self.freq.freq if f is None else f
+        return self.t_lna_poly(f)
 
     @cached_property
     def C1_poly(self):  # noqa: N802

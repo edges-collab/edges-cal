@@ -2,7 +2,9 @@
 """Functions for calibrating the receiver."""
 import numpy as np
 import scipy as sp
-from typing import Iterable
+from scipy.optimize import curve_fit, minimize
+from scipy.stats import norm
+from typing import Dict, Iterable, List, Optional
 
 
 def temperature_thermistor(
@@ -545,3 +547,165 @@ def uncalibrated_antenna_temperature(
         gamma_ant, gamma_rec, sca, off, t_unc, t_cos, t_sin, t_load
     )
     return (temp - b) / a
+
+
+def model_q_no_noise_wave(
+    t_ant: [float, np.ndarray],
+    t_ns: [float, np.ndarray],
+    t_l: [float, np.ndarray],
+    t_lna: [float, np.ndarray],
+    alpha: float,
+) -> [float, np.ndarray]:
+    """
+    Analytic model for Q given internal temperatures, assuming perfect match.
+
+    Parameters
+    ----------
+    t_ant
+        Antenna temperature
+    t_ns
+        Noise-source temperature
+    t_l
+        Load temperature
+    t_lna
+        Receiver/LNA temperature
+    alpha
+        Inverse of effective number of samples in the integration, 1 / (t * df).
+
+    Returns
+    -------
+    Q
+        The 3-position switch ratio model.
+    """
+    front = (t_ant - t_l) / t_ns
+    return front * (
+        1
+        - alpha * (t_l ** 2 + t_lna ** 2) / (t_ns * (t_ant - t_l))
+        + alpha * (2 * t_l ** 2 + t_ns ** 2 + 2 * t_lna ** 2) / t_ns ** 2
+    )
+
+
+def var_q_no_noise_wave(
+    t_ant: [float, np.ndarray],
+    t_ns: [float, np.ndarray],
+    t_l: [float, np.ndarray],
+    t_lna: [float, np.ndarray],
+    alpha: float,
+) -> [float, np.ndarray]:
+    """
+    Analytic model for variance of Q given internal temperatures, assuming perfect match.
+
+    Parameters
+    ----------
+    t_ant
+        Antenna temperature
+    t_ns
+        Noise-source temperature
+    t_l
+        Load temperature
+    t_lna
+        Receiver/LNA temperature
+    alpha
+        Inverse of effective number of samples in the integration, 1 / (t * df).
+
+    Returns
+    -------
+    varQ
+        The 3-position switch ratio variance model.
+    """
+    front = alpha * (t_ant - t_l) ** 2 / t_ns ** 2
+    return front * (
+        (t_ant ** 2 + 2 * t_lna ** 2 + t_l ** 2) / (t_ant - t_l) ** 2
+        - 2 * (t_l ** 2 + t_lna ** 2) / (t_ns * (t_ant - t_l))
+        + (2 * t_l ** 2 + 2 * t_lna ** 2 + t_ns ** 2) / t_ns ** 2
+    )
+
+
+def get_calibration_quantities_no_noise_wave(
+    freq: np.ndarray,
+    q_measured: Dict[str, np.ndarray],
+    temp_ant: Dict[str, np.ndarray],
+    n_terms: int,
+    alpha: float,
+    guess: List[float],
+    var_q_measured: Optional[Dict[str, np.ndarray]] = None,
+):
+    """Obtain calibration quantities using the likelihood formalism in Murray 2020.
+
+    Parameters
+    ----------
+    freq
+    q_measured
+    var_q_measured
+    temp_ant
+    n_terms
+
+    Returns
+    -------
+    t_ns, t_l, t_lna
+        Numpy polynomials for noise-source, load and receiver temperature.
+    """
+
+    def get_poly(p):
+        t_ns = np.poly1d(p[:n_terms])
+        t_l = np.poly1d(p[n_terms : 2 * n_terms])
+        t_lna = np.poly1d(p[2 * n_terms : 3 * n_terms])
+        return t_ns, t_l, t_lna
+
+    # Define a model of Q
+    def q_model(p, t_ant: [float, np.ndarray], get_var=False):
+        t_ns, t_l, t_lna = get_poly(p)
+        t_ns = t_ns(freq)
+        t_l = t_l(freq)
+        t_lna = t_lna(freq)
+        mean = model_q_no_noise_wave(t_ant, t_ns, t_l, t_lna, alpha)
+        if get_var:
+            var = var_q_no_noise_wave(t_ant, t_ns, t_l, t_lna, alpha)
+            return mean, var
+        return mean
+
+    # Set initial positions to be constant temperatures at the "guess"
+    p0 = np.zeros(3 * n_terms)
+    p0[::n_terms] = guess
+
+    if var_q_measured is not None:
+        # Use robust LM method to fit
+
+        # Define the chi^2 log probability
+        def obj_func(freq, *p):
+            out = np.zeros(len(temp_ant) * len(freq))
+
+            for i, (name, temp) in enumerate(temp_ant.items()):
+                mean = q_model(p, temp)
+                out[i * len(freq) : (i + 1) * len(freq)] = mean
+
+            return out
+
+        # Perform a fit
+        ydata = np.zeros(len(temp_ant) * len(freq))
+        sigma = np.zeros(len(temp_ant) * len(freq))
+        for i, (name, temp) in enumerate(q_measured.items()):
+            ydata[i * len(freq) : (i + 1) * len(freq)] = temp
+            sigma[i * len(freq) : (i + 1) * len(freq)] = np.sqrt(var_q_measured[name])
+
+        fit, cov = curve_fit(
+            obj_func, freq, ydata, p0=p0, sigma=sigma, absolute_sigma=True,
+        )
+
+        return get_poly(fit)
+
+    else:
+        # Use standard minimize routine
+        def log_prob(p):
+            lnl = 0
+            for i, (name, temp) in enumerate(temp_ant.items()):
+                mean, var = q_model(p, temp, get_var=True)
+                lnl += np.sum(
+                    norm.logpdf(q_measured[name], loc=mean, scale=np.sqrt(var))
+                )
+
+            return -lnl
+
+        res = minimize(log_prob, p0)
+
+        return get_poly(res.x)
