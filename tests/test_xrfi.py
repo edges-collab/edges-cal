@@ -9,6 +9,7 @@ from pytest_cases import parametrize_plus
 from edges_cal import xrfi
 
 NFREQ = 1000
+NTIME = 100
 
 
 @pytest.fixture(scope="module")
@@ -25,6 +26,17 @@ def sky_pl_1d(freq):
 @pytest.fixture(scope="module")
 def sky_flat_1d():
     return np.ones(NFREQ)
+
+
+@pytest.fixture(scope="module")
+def sky_pl_2d(sky_pl_1d):
+    """2D sky with time dimension linearly drifting."""
+    return np.outer(np.linspace(5, 6, NTIME), sky_pl_1d)
+
+
+@pytest.fixture(scope="module")
+def sky_flat_2d():
+    return np.ones((NTIME, NFREQ))
 
 
 @pytest.fixture(scope="module")
@@ -68,8 +80,19 @@ def rfi_random_1d():
 
 
 @pytest.fixture(scope="module")
+def rfi_random_2d():
+    np.random.seed(54321)
+    return np.random.binomial(1, 0.05, size=(NTIME, NFREQ))
+
+
+@pytest.fixture(scope="module")
 def rfi_null_1d():
     return np.zeros(NFREQ)
+
+
+@pytest.fixture(scope="module")
+def rfi_null_2d():
+    return np.zeros((NTIME, NFREQ))
 
 
 def test_flagged_filter(sky_pl_1d, rfi_regular_1d):
@@ -259,3 +282,72 @@ def test_watershed():
     rfi = np.repeat([0, 1], 48).reshape((3, 32))
     out = xrfi.xrfi_watershed(flags=rfi, tol=0.2)
     assert np.all(out)
+
+
+def test_2d_poly_null(sky_pl_2d):
+    flags, info = xrfi.xrfi_2d_model(sky_pl_2d)
+    assert np.sum(flags) == 0
+
+
+def test_2d_poly_random(sky_pl_2d, rfi_random_2d):
+    scale = 1000
+    std = sky_pl_2d / scale
+    amp = std.max() * 500
+    noise = thermal_noise(sky_pl_2d, scale=scale, seed=1010)
+    rfi = rfi_random_2d * amp
+    sky = sky_pl_2d + noise + rfi
+
+    true_flags = rfi_random_2d > 0
+    flags, info = xrfi.xrfi_2d_model(sky)
+
+    # here we just assert no *missed* RFI
+    wrong = np.where(true_flags & ~flags)[0]
+
+    print(np.where(flags))
+
+    if len(wrong) > 0:
+        print("where it went wrong: ", wrong)
+        print("Corrupted sky at wrong flags: ")
+        print(sky[wrong])
+        print("Std. dev away from model at wrong flags: ")
+        print((sky[wrong] - sky_pl_2d[wrong]) / std[wrong])
+        print("Std. dev of noise away from model at wrong flags: ")
+        print(noise[wrong] / std[wrong])
+        print("Std dev of RFI away from model at wrong flags: ")
+        print(rfi[wrong] / std[wrong])
+
+    assert len(wrong) == 0
+
+
+def test_2d_poly_watershed(sky_pl_2d, rfi_random_2d):
+    scale = 1000
+    std = sky_pl_2d / scale
+    amp = std.max() * 500
+    noise = thermal_noise(sky_pl_2d, scale=scale, seed=1010)
+    rfi = rfi_random_2d * amp
+    sky = sky_pl_2d + noise + rfi
+
+    true_flags = rfi_random_2d > 0
+    flags, info = xrfi.xrfi_2d_model(sky, watershed=0)
+
+    # here we just assert no *missed* RFI
+    wrong = np.where(true_flags & ~flags)[0]
+
+    print(np.where(flags))
+
+    if len(wrong) > 0:
+        print("where it went wrong: ", wrong)
+        print("Corrupted sky at wrong flags: ")
+        print(sky[wrong])
+        print("Std. dev away from model at wrong flags: ")
+        print((sky[wrong] - sky_pl_2d[wrong]) / std[wrong])
+        print("Std. dev of noise away from model at wrong flags: ")
+        print(noise[wrong] / std[wrong])
+        print("Std dev of RFI away from model at wrong flags: ")
+        print(rfi[wrong] / std[wrong])
+
+    assert len(wrong) == 0
+
+    flags_no_watershed, info = xrfi.xrfi_2d_model(sky)
+
+    assert (flags_no_watershed == flags).all()
