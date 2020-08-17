@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 0.4.0
+
+### Added
+- 2D poly filter for xrfi: `xrfi_2d_model`
+
 ## Version 0.3.0
 
 ### Changed
