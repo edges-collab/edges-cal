@@ -249,13 +249,13 @@ def test_poly_watershed_relaxed(sky_model, rfi_model, scale):
 
 def test_watershed():
     rfi = np.zeros((10, 10), dtype=bool)
-    out = xrfi.xrfi_watershed(flags=rfi)
+    out, _ = xrfi.xrfi_watershed(flags=rfi)
     assert not np.any(out)
 
     rfi = np.ones((10, 10), dtype=bool)
-    out = xrfi.xrfi_watershed(flags=rfi)
+    out, _ = xrfi.xrfi_watershed(flags=rfi)
     assert np.all(out)
 
     rfi = np.repeat([0, 1], 48).reshape((3, 32))
-    out = xrfi.xrfi_watershed(flags=rfi, tol=0.2)
+    out, _ = xrfi.xrfi_watershed(flags=rfi, tol=0.2)
     assert np.all(out)
