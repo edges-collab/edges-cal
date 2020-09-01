@@ -2,6 +2,7 @@
 """Functions for generating least-squares model fits for linear models."""
 import numpy as np
 import scipy as sp
+import warnings
 from abc import abstractmethod
 from cached_property import cached_property
 from typing import Sequence, Type, Union
@@ -338,7 +339,9 @@ class ModelFit:
 
         Wydata = np.dot(np.sqrt(self.weights), ydata)
         q, r = self.qr
-        return sp.linalg.solve(r, np.dot(q.T, Wydata)).flatten()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return sp.linalg.solve(r, np.dot(q.T, Wydata)).flatten()
 
     def evaluate(self, x: [np.ndarray, None] = None) -> np.ndarray:
         """Evaluate the best-fit model.
