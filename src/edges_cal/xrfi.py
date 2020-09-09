@@ -863,7 +863,7 @@ def xrfi_poly(spectrum: np.ndarray, **kwargs):
 def xrfi_watershed(
     spectrum: [None, np.ndarray] = None,
     flags: [None, np.ndarray] = None,
-    tol: [float, Tuple[float]] = 0.2,
+    tol: [float, Tuple[float]] = 0.5,
     inplace=False,
 ):
     """Apply a watershed over frequencies and times for flags.
