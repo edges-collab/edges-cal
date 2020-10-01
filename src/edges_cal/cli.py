@@ -44,7 +44,7 @@ def run(config, path, out, cache_dir, plot, simulators):
         settings = yaml.load(fl, Loader=yaml.FullLoader)
 
     if cache_dir != ".":
-        settings.update(cache_dir=cache_dir)
+        settings.update(load_kwargs={"cache_dir": cache_dir})
 
     obs = cc.CalibrationObservation(path=path, **settings)
 

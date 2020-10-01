@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """Functions for generating least-squares model fits for linear models."""
 import numpy as np
-import scipy as sp
-import warnings
 from abc import abstractmethod
 from cached_property import cached_property
+from statsmodels import api as sm
 from typing import Sequence, Type, Union
 
 F_CENTER = 75.0
@@ -89,7 +88,10 @@ class Model:
         return out
 
     def __call__(
-        self, x: [np.ndarray, None] = None, basis: [np.ndarray, None] = None
+        self,
+        x: [np.ndarray, None] = None,
+        basis: [np.ndarray, None] = None,
+        parameters: [np.ndarray, list, None] = None,
     ) -> np.ndarray:
         """Evaluate the model.
 
@@ -100,12 +102,21 @@ class Model:
         basis : np.ndarray, optional
             The basis functions at which to evaluate the model. This is useful if calling
             the model multiple times, as the basis itself can be cached and re-used.
+        parameters :
+            A list/array of parameters at which to evaluate the model. Will use the
+            instance's parameters if available.
 
         Returns
         -------
         model : np.ndarray
             The model evaluated at the input ``x`` or ``basis``.
         """
+        if parameters is None:
+            parameters = self.parameters
+
+        if parameters is None:
+            raise ValueError("You must supply parameters to evaluate the model!")
+
         if x is None and basis is None and self.default_basis is None:
             raise ValueError("You need to provide either 'x' or 'basis'.")
         elif x is None and basis is None:
@@ -113,7 +124,13 @@ class Model:
         elif x is not None:
             basis = self.get_basis(x)
 
-        return np.dot(self.parameters, basis)
+        if len(parameters) != len(basis):
+            raise ValueError(
+                f"number of parameters ({len(parameters)}) does not match "
+                f"the number of basis terms ({len(basis)})."
+            )
+
+        return np.dot(parameters, basis)
 
     @abstractmethod
     def _fill_basis_terms(self, x, out):
@@ -148,7 +165,10 @@ class Foreground(Model, is_meta=True):
         self.with_cmb = with_cmb
 
     def __call__(
-        self, x: [np.ndarray, None] = None, basis: [np.ndarray, None] = None
+        self,
+        x: [np.ndarray, None] = None,
+        basis: [np.ndarray, None] = None,
+        parameters: [np.ndarray, list, None] = None,
     ) -> np.ndarray:
         """Evaluate the model.
 
@@ -159,6 +179,9 @@ class Foreground(Model, is_meta=True):
         basis : np.ndarray, optional
             The basis functions at which to evaluate the model. This is useful if calling
             the model multiple times, as the basis itself can be cached and re-used.
+        parameters :
+            A list/array of parameters at which to evaluate the model. Will use the
+            instance's parameters if available.
 
         Returns
         -------
@@ -284,7 +307,7 @@ class ModelFit:
             self.model = Model._models[model_type.lower()](
                 default_x=xdata, n_terms=n_terms, **kwargs
             )
-        elif issubclass(model_type, Model):
+        elif np.issubclass_(model_type, Model):
             self.model = model_type(default_x=xdata, n_terms=n_terms, **kwargs)
         elif isinstance(model_type, Model):
             self.model = model_type
@@ -299,49 +322,28 @@ class ModelFit:
         self.weights = weights
 
         if weights is None:
-            self.weights = np.eye(len(self.xdata))
+            self.weights = np.ones(len(self.xdata))
         elif weights.ndim == 1:
             # if a vector is given
             assert weights.shape == self.xdata.shape
-            self.weights = np.diag(weights)
-        elif weights.ndim == 2:
-            assert weights.shape == (len(self.xdata), len(self.xdata))
             self.weights = weights
+        elif weights.ndim >= 2:
+            raise NotImplementedError("Can't do covariance weighting yet...")
 
         self.n_terms = self.model.n_terms
 
         self.degrees_of_freedom = len(self.xdata) - self.n_terms - 1
 
     @cached_property
-    def model_parameters(self):
-        """The best-fit model parameters."""
-        return self.get_model_params()
+    def fit(self):
+        """The model fit, as a :class:`statsmodels.regression.linear_model.RegressionResults` object."""
+        model = sm.WLS(self.ydata, self.model.default_basis.T, weights=self.weights)
+        return model.fit()
 
     @cached_property
-    def qr(self):
-        """The QR-decomposition."""
-        AT = self.model.default_basis
-
-        # sqrt of weight matrix
-        sqrt_w = np.sqrt(self.weights)
-
-        # A and ydata "tilde"
-        WA = np.dot(sqrt_w, AT.T)
-
-        # solving system using 'short' QR decomposition (see R. Butt, Num. Anal. Using MATLAB)
-        q, r = sp.linalg.qr(WA, mode="economic")
-        return q, r
-
-    def get_model_params(self) -> np.ndarray:
-        """Obtain the best-fit model parameters."""
-        # transposing matrices so data is along columns
-        ydata = np.reshape(self.ydata, (-1, 1))
-
-        Wydata = np.dot(np.sqrt(self.weights), ydata)
-        q, r = self.qr
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            return sp.linalg.solve(r, np.dot(q.T, Wydata)).flatten()
+    def model_parameters(self):
+        """The best-fit model parameters."""
+        return self.fit.params
 
     def evaluate(self, x: [np.ndarray, None] = None) -> np.ndarray:
         """Evaluate the best-fit model.
@@ -366,12 +368,12 @@ class ModelFit:
     @cached_property
     def residual(self) -> np.ndarray:
         """Residuals of data to model."""
-        return self.ydata - self.evaluate()
+        return self.fit.resid
 
     @cached_property
     def weighted_chi2(self) -> float:
         """The chi^2 of the weighted fit."""
-        return np.dot(self.residual.T, np.dot(self.weights, self.residual))
+        return np.dot(self.residual.T, self.weights * self.residual)
 
     def reduced_weighted_chi2(self) -> float:
         """The weighted chi^2 divided by the degrees of freedom."""
@@ -379,10 +381,8 @@ class ModelFit:
 
     def weighted_rms(self) -> float:
         """The weighted root-mean-square of the residuals."""
-        return np.sqrt(self.weighted_chi2) / np.sum(np.diag(self.weights))
+        return np.sqrt(self.weighted_chi2) / np.sum(self.weights)
 
     def get_covariance(self) -> np.ndarray:
         """The covariance of the parameter estimates at the solution."""
-        r = self.qr[1]
-        inv_pre_cov = np.linalg.inv(np.dot(r.T, r))
-        return self.reduced_weighted_chi2() * inv_pre_cov
+        return self.fit.normalized_cov_params
