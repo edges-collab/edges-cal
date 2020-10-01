@@ -27,154 +27,10 @@ from . import reflection_coefficient as rc
 from . import s11_correction as s11
 from . import tools, xrfi
 from .cached_property import cached_property
+from .tools import EdgesFrequencyRange, FrequencyRange
 
 
-class FrequencyRange:
-    def __init__(
-        self,
-        f: np.ndarray,
-        f_low: Optional[float] = None,
-        f_high: Optional[float] = None,
-    ):
-        """
-        Class defining a set of frequencies.
-
-        A given frequency range can be cut on either end.
-
-        Parameters
-        ----------
-        f : array_like
-            An array of frequencies defining a given spectrum.
-        f_low : float
-            A minimum frequency to keep in the array. Default is min(f).
-        f_high : float
-            A minimum frequency to keep in the array. Default is min(f).
-        """
-        self.freq_full = f
-        self._f_high = f_high or f.max()
-        self._f_low = f_low or f.min()
-
-        if self._f_low >= self._f_high:
-            raise ValueError("Cannot create frequency range: f_low >= f_high")
-
-    @cached_property
-    def n(self) -> int:
-        """The number of frequencies in the (masked) array."""
-        return len(self.freq)
-
-    @cached_property
-    def df(self) -> float:
-        """Resolution of the frequencies."""
-        if not np.allclose(np.diff(self.freq, 2), 0):
-            warnings.warn(
-                "Not all frequency intervals are even, so using df is ill-advised!"
-            )
-        return self.freq[1] - self.freq[0]
-
-    @cached_property
-    def min(self):  # noqa
-        """Minimum frequency in the array."""
-        return self.freq.min()
-
-    @cached_property
-    def max(self):  # noqa
-        """Maximum frequency in the array."""
-        return self.freq.max()
-
-    @cached_property
-    def mask(self):
-        """Mask used to take input frequencies to output frequencies."""
-        return np.logical_and(
-            self.freq_full >= self._f_low, self.freq_full <= self._f_high
-        )
-
-    @cached_property
-    def freq(self):
-        """The frequency array."""
-        return self.freq_full[self.mask]
-
-    @cached_property
-    def range(self):
-        """Full range of the frequencies."""
-        return self.max - self.min
-
-    @cached_property
-    def center(self):
-        """The center of the frequency array."""
-        return self.min + self.range / 2.0
-
-    @cached_property
-    def freq_recentred(self):
-        """The frequency array re-centred so that it extends from -1 to 1."""
-        return self.normalize(self.freq)
-
-    def normalize(self, f):
-        """
-        Normalise a set of frequencies.
-
-        Normalizes such that -1 aligns with ``min`` and +1 aligns with ``max``.
-
-        Parameters
-        ----------
-        f : array_like
-            Frequencies to normalize
-
-        Returns
-        -------
-        array_like, shape [f,]
-            The normalized frequencies.
-        """
-        return 2 * (f - self.center) / self.range
-
-
-class EdgesFrequencyRange(FrequencyRange):
-    def __init__(self, n_channels=16384 * 2, max_freq=200.0, **kwargs):
-        """Subclass of :class:`FrequencyRange` specifying the default EDGES frequencies.
-
-        Parameters
-        ----------
-        n_channels : int
-            Number of channels
-        max_freq : float
-            Maximum frequency in original measurement.
-        kwargs
-            All other arguments passed through to :class:`FrequencyRange`.
-        """
-        f = self.get_edges_freqs(n_channels, max_freq)
-        super().__init__(f, **kwargs)
-
-    @staticmethod
-    def get_edges_freqs(
-        n_channels: int = 16384 * 2, max_freq: float = 200.0
-    ) -> np.ndarray:
-        """
-        Return the raw EDGES frequency array, in MHz.
-
-        Parameters
-        ----------
-        n_channels : int
-            Number of channels in the EDGES spectrum
-        max_freq : float
-            Maximum frequency in the spectrum.
-
-        Returns
-        -------
-        freqs: 1D-array
-            full frequency array from 0 to 200 MHz, at raw resolution
-        """
-        # Full frequency vector
-        fstep = max_freq / n_channels
-        return np.arange(0, max_freq, fstep)
-
-
-def _get_val(val: [dict, Any], source: str):
-    try:
-        return val[source]
-    except (KeyError, TypeError):
-        return val
-
-
-class VNA:
+class S1P:
     def __init__(
         self,
         s1p: [str, Path, io.S1P],
@@ -197,12 +53,16 @@ class VNA:
         switchval : int
             The standard value of the switch for the component.
         """
-        if type(s1p) == str:
+        try:
+            s1p = Path(s1p)
             self.s1p = io.S1P(s1p)
-        elif type(s1p) == io.S1P:
-            self.s1p = s1p
-        else:
-            raise ValueError("s1p must be a path to an s1p file, or an io.S1P object")
+        except TypeError:
+            if isinstance(s1p, io.S1P):
+                self.s1p = s1p
+            else:
+                raise TypeError(
+                    "s1p must be a path to an s1p file, or an io.S1P object"
+                )
 
         self.load_name = self.s1p.kind
         self.run_num = self.s1p.run_num
@@ -221,6 +81,10 @@ class VNA:
             return self._switchval * np.ones_like(self.freq.freq)
         else:
             return None
+
+
+# For backwards compatibility
+VNA = S1P
 
 
 class SwitchCorrection:
@@ -282,7 +146,7 @@ class SwitchCorrection:
             setattr(
                 self,
                 name.lower(),
-                VNA(
+                S1P(
                     s1p=self.load_s11.children[name.lower()],
                     f_low=f_low,
                     f_high=f_high,
@@ -317,7 +181,9 @@ class SwitchCorrection:
         path: [str, Path],
         run_num_load: int = None,
         run_num_switch: int = None,
-        repeat_num: int = None,
+        repeat_num: [None, int] = None,
+        repeat_num_load: int = 1,
+        repeat_num_switch: int = 1,
         **kwargs,
     ):
         """
@@ -343,19 +209,22 @@ class SwitchCorrection:
         s11 : :class:`SwitchCorrection`
             The S11 of the load.
         """
-        antsim = load_name.startswith("ant_sim")
+        antsim = load_name.startswith("AntSim")
+        path = Path(path)
 
         if not antsim:
-            s11_load_dir = io.LoadS11(
-                os.path.join(path, load_name), run_num=run_num_load
-            )
-        else:
-            s11_load_dir = io.AntSimS11(
-                os.path.join(path, load_name), run_num=run_num_load
-            )
+            load_name = io.LOAD_ALIASES[load_name]
+
+        s11_load_dir = (io.AntSimS11 if antsim else io.LoadS11)(
+            path / "S11" / f"{load_name}{repeat_num_load:02}", run_num=run_num_load
+        )
+
+        if repeat_num is not None:
+            warnings.warn("repeat_num is deprecated. Use repeat_num_switch.")
+            repeat_num_switch = repeat_num
 
         internal_switch = io.SwitchingState(
-            os.path.join(path, "SwitchingState{:>02}".format(repeat_num)),
+            path / "S11" / f"SwitchingState{repeat_num_switch:02}",
             run_num=run_num_switch,
         )
         return cls(s11_load_dir, internal_switch=internal_switch, **kwargs)
@@ -504,6 +373,8 @@ class LNA(SwitchCorrection):
     def from_path(
         cls,
         path: [str, Path],
+        repeat_num_load: int = 1,
+        repeat_num_switch: int = 1,
         run_num_load: int = None,
         run_num_switch: int = None,
         **kwargs,
@@ -527,16 +398,23 @@ class LNA(SwitchCorrection):
         lna : :class:`LNA`
             The LNA object.
         """
-        load_s11 = io.ReceiverReading(direc=path, run_num=run_num_load, fix=False)
+        path = Path(path)
+        load_s11 = io.ReceiverReading(
+            path=path / "S11" / f"ReceiverReading{repeat_num_load:02}",
+            run_num=run_num_load,
+            fix=False,
+        )
+
         internal_switch = io.SwitchingState(
-            os.path.dirname(os.path.normpath(path)), run_num=run_num_switch
+            path=path / "S11" / f"SwitchingState{repeat_num_switch:02}",
+            run_num=run_num_switch,
         )
         return cls(load_s11, internal_switch=internal_switch, **kwargs)
 
     @cached_property
     def external(self):
         """VNA S11 measurements for the load."""
-        return VNA(
+        return S1P(
             self.load_s11.children["receiverreading"],
             f_low=self.freq.freq.min(),
             f_high=self.freq.freq.max(),
@@ -626,7 +504,7 @@ class LoadSpectrum:
 
         self.run_num = self.spec_obj[0].run_num
 
-        self.cache_dir = cache_dir or os.path.curdir
+        self.cache_dir = Path(cache_dir or ".")
 
         self.rfi_kernel_width_time = rfi_kernel_width_time
         self.rfi_kernel_width_freq = rfi_kernel_width_freq
@@ -695,8 +573,8 @@ class LoadSpectrum:
         spec = self._ave_and_var_spec[0]["Q"]
 
         if self.rfi_removal == "1D":
-            flags = xrfi.xrfi_medfilt(
-                spec, threshold=self.rfi_threshold, Kf=self.rfi_kernel_width_freq
+            flags, _ = xrfi.xrfi_medfilt(
+                spec, threshold=self.rfi_threshold, kf=self.rfi_kernel_width_freq
             )
             spec[flags] = np.nan
         return spec
@@ -719,7 +597,7 @@ class LoadSpectrum:
     @property
     def ancillary(self) -> dict:
         """Ancillary measurement data."""
-        return self.spec_obj.data["meta"]
+        return [d.data["meta"] for d in self.spec_obj]
 
     @property
     def averaged_p0(self) -> np.ndarray:
@@ -761,18 +639,19 @@ class LoadSpectrum:
             self.ignore_times_percent,
             self.freq.min,
             self.freq.max,
-            self.spec_files,
+            tuple(path.name for path in self.spec_files),
         )
         hsh = md5(str(params).encode()).hexdigest()
 
-        return os.path.join(self.cache_dir, self.load_name + "_" + hsh + ".h5")
+        return self.cache_dir / f"{self.load_name}_{hsh}.h5"
 
     @cached_property
     def _ave_and_var_spec(self):
         """Get the mean and variance of the spectra."""
         fname = self._get_integrated_filename()
+
         kinds = ["p0", "p1", "p2", "Q"]
-        if os.path.exists(fname):
+        if fname.exists():
             logger.info(
                 f"Reading in previously-created integrated {self.load_name} spectra..."
             )
@@ -816,11 +695,11 @@ class LoadSpectrum:
             means[key] = mean
             variances[key] = var
 
-        if not os.path.exists(self.cache_dir):
-            os.mkdir(self.cache_dir)
+        if not self.cache_dir.exists():
+            self.cache_dir.mkdir()
 
         with h5py.File(fname, "w") as fl:
-            logger.info("Saving reduced spectra to cache at {}".format(fname))
+            logger.info(f"Saving reduced spectra to cache at {fname}")
             for kind in kinds:
                 fl[kind + "_mean"] = means[kind]
                 fl[kind + "_var"] = variances[kind]
@@ -846,11 +725,11 @@ class LoadSpectrum:
                 if key != "Q":
                     val[val == 0] = np.inf
 
-                flags = xrfi.xrfi_medfilt(
+                flags, _ = xrfi.xrfi_medfilt(
                     val,
                     threshold=self.rfi_threshold,
-                    Kt=self.rfi_kernel_width_time,
-                    Kf=self.rfi_kernel_width_freq,
+                    kt=self.rfi_kernel_width_time,
+                    kf=self.rfi_kernel_width_freq,
                 )
                 val[flags] = np.nan
                 spec[key] = val
@@ -870,9 +749,6 @@ class LoadSpectrum:
             uncalibrated, but normalised antenna temperature).
         """
         data = [spec_obj.data for spec_obj in self.spec_obj]
-
-        if not isinstance(data, list):
-            data = [data]
 
         n_times = 0
         for d in data:
@@ -926,14 +802,14 @@ class LoadSpectrum:
             If a directory, filename will be <load_name>_averaged_spectrum.h5.
             Default is current directory.
         """
-        direc = path or os.path.curdir
+        path = Path(path or ".")
 
         # Allow to pass in a directory name *or* full path.
-        if os.path.isdir(path):
-            path = os.path.join(direc, self.load_name + "_averaged_spectrum.h5")
+        if path.is_dir():
+            path /= f"{self.load_name}_averaged_spectrum.h5"
 
         with h5py.File(path) as fl:
-            fl["attrs"]["load_name"] = self.load_name
+            fl.attrs["load_name"] = self.load_name
             fl["freq"] = self.freq.freq
             fl["averaged_raw_spectrum"] = self.averaged_spectrum
             fl["temperature"] = self.thermistor_temp
@@ -984,7 +860,7 @@ class HotLoadCorrection:
 
     def __init__(
         self,
-        path: [str, Path],
+        path: [str, Path] = None,
         f_low: [float, None] = None,
         f_high: [float, None] = None,
     ):
@@ -996,16 +872,19 @@ class HotLoadCorrection:
 
         Parameters
         ----------
-        path : str or Path
-            Path to the directory *containing* a file called
-            "semi_rigi_s_parameters_WITH_HEADER.txt".
+        path : str or Path, optional
+            Path to a file containing measurements of the semi-rigid cable reflection
+            parameters (historically, `semi_rigid_s_parameters_WITH_HEADER.txt`)
         f_low, f_high : float
             Lowest/highest frequency to retain from measurements.
         """
-        self.path = path
-        data = np.genfromtxt(
-            os.path.join(path, "semi_rigid_s_parameters_WITH_HEADER.txt")
+        self.path = (
+            Path(path)
+            if path
+            else Path(__file__).parent / "data/semi_rigid_s_parameters_WITH_HEADER.txt"
         )
+
+        data = np.genfromtxt(self.path)
 
         f = data[:, 0]
         self.freq = FrequencyRange(f, f_low, f_high)
@@ -1085,6 +964,10 @@ class HotLoadCorrection:
         assert (
             hot_load_s11.load_name == "hot_load"
         ), "hot_load_s11 must be a hot_load s11"
+
+        print(self.s11_model(freq))
+        print(self.s12_model(freq))
+        print(self.s22_model(freq))
 
         return self.get_power_gain(
             {
@@ -1169,8 +1052,7 @@ class Load:
     @classmethod
     def from_path(
         cls,
-        spec_path: [str, Path],
-        reflection_path: [str, Path],
+        path: [str, Path],
         load_name: str,
         f_low: [float, None] = None,
         f_high: [float, None] = None,
@@ -1182,10 +1064,8 @@ class Load:
 
         Parameters
         ----------
-        spec_path : str or Path
-            Path to the folder of spectra.
-        reflection_path : str or Path
-            Path to the folder of S11's.
+        path : str or Path
+            Path to the top-level calibration observation.
         load_name : str
             Name of a load to define.
         f_low, f_high : float
@@ -1206,11 +1086,11 @@ class Load:
             reflection_kwargs = {}
 
         spec = LoadSpectrum.from_load_name(
-            load_name, spec_path, f_low=f_low, f_high=f_high, **spec_kwargs,
+            load_name, path, f_low=f_low, f_high=f_high, **spec_kwargs,
         )
 
         refl = SwitchCorrection.from_path(
-            load_name, reflection_path, f_low=f_low, f_high=f_high, **reflection_kwargs,
+            load_name, path, f_low=f_low, f_high=f_high, **reflection_kwargs,
         )
 
         return cls(spec, refl)
@@ -1266,7 +1146,7 @@ class CalibrationObservation:
         load_spectra: [None, dict] = None,
         load_s11s: [None, dict] = None,
         compile_from_def: bool = True,
-        include_previous: bool = True,
+        include_previous: bool = False,
     ):
         """
         A composite object representing a full Calibration Observation.
@@ -1282,7 +1162,7 @@ class CalibrationObservation:
         path : str or Path
             Path to the directory containing all relevant measurements. It is assumed
             that in this directory is an `S11`, `Resistance` and `Spectra` directory.
-        semi_rigid_path : str or Path
+        semi_rigid_path : str or Path, optional
             Path to a file containing S11 measurements for the semi rigid cable. Used to
             correct the hot load S11. Found automatically if not given.
         ambient_temp : int
@@ -1378,14 +1258,7 @@ class CalibrationObservation:
 
         self.path = Path(self.io.path)
 
-        hot_load_correction = HotLoadCorrection(
-            semi_rigid_path
-            or os.path.join(
-                io.utils.get_parent_dir(self.path, 2), "SemiRigidCableMeasurements"
-            ),
-            f_low,
-            f_high,
-        )
+        hot_load_correction = HotLoadCorrection(semi_rigid_path, f_low, f_high,)
 
         self._loads = {}
         for source in self._sources:
@@ -1402,9 +1275,7 @@ class CalibrationObservation:
 
             # Ensure that we finally have a LoadSpectrum
             if not isinstance(load, LoadSpectrum):
-                raise ValueError(
-                    "load_spectra must be a dict of LoadSpectrum or dicts."
-                )
+                raise TypeError("load_spectra must be a dict of LoadSpectrum or dicts.")
 
             refl = load_s11s.get(source, {})
 
@@ -1495,10 +1366,8 @@ class CalibrationObservation:
         spec_kwargs : dict
             Keyword arguments to construct the :class:`LoadSpectrum`.
         """
-        if reflection_kwargs is None:
-            reflection_kwargs = {}
-        if spec_kwargs is None:
-            spec_kwargs = {}
+        reflection_kwargs = reflection_kwargs or {}
+        spec_kwargs = spec_kwargs or {}
 
         # Fill up kwargs with keywords from this instance
         if "resistance" not in reflection_kwargs:
@@ -1514,16 +1383,16 @@ class CalibrationObservation:
             if key not in spec_kwargs:
                 spec_kwargs[key] = getattr(self.open.spectrum, key)
 
+        reflection_kwargs["run_num_load"] = run_num_load
+        reflection_kwargs["repeat_num_switch"] = self.io.s11.switching_state.repeat_num
+        reflection_kwargs["run_num_switch"] = self.io.s11.switching_state.run_num
+        spec_kwargs["run_num"] = run_num_spec
+
         return Load.from_path(
-            spec_path=self.io.path,
+            path=self.io.path,
             load_name=load_name,
-            reflection_path=self.io.s11.path,
             f_low=self.freq.min,
             f_high=self.freq.max,
-            run_num_switch=self.io.s11.switching_state.run_num,
-            run_num_load=run_num_load,
-            run_num_spec=run_num_spec,
-            repeat_num=self.io.s11.switching_state.repeat_num,
             reflection_kwargs=reflection_kwargs,
             spec_kwargs=spec_kwargs,
         )
@@ -1949,14 +1818,12 @@ class CalibrationObservation:
             and includes parameters of the class in the filename. By default, current
             directory.
         """
-        path = path or os.path.curdir
+        path = Path(path or ".")
 
-        if os.path.isdir(path):
-            path = os.path.join(
-                path,
-                "calibration_parameters_fmin{}_fmax{}_C{}_W{}.txt".format(
-                    self.freq.freq.min(), self.freq.freq.max(), self.cterms, self.wterms
-                ),
+        if path.is_dir():
+            path /= (
+                f"calibration_parameters_fmin{self.freq.freq.min()}_"
+                f"fmax{self.freq.freq.max()}_C{self.cterms}_W{self.wterms}.txt"
             )
 
         np.savetxt(
@@ -2086,29 +1953,41 @@ class Calibration:
                 fl.attrs["switch_path"], run_num=fl.attrs["switch_run_num"]
             )
 
-    def lna_s11(self, freq):
+    def lna_s11(self, freq=None):
         """Get the LNA S11 at given frequencies."""
+        if freq is None:
+            freq = self.freq.freq
         return self._lna_s11_rl(freq) + 1j * self._lna_s11_im(freq)
 
-    def C1(self, freq):
+    def C1(self, freq=None):
         """Evaluate the Scale polynomial at given frequencies."""
+        if freq is None:
+            freq = self.freq.freq
         return self.C1_poly(self.freq.normalize(freq))
 
-    def C2(self, freq):
+    def C2(self, freq=None):
         """Evaluate the Offset polynomial at given frequencies."""
+        if freq is None:
+            freq = self.freq.freq
         return self.C2_poly(self.freq.normalize(freq))
 
-    def Tcos(self, freq):
+    def Tcos(self, freq=None):
         """Evaluate the cos temperature polynomial at given frequencies."""
+        if freq is None:
+            freq = self.freq.freq
         return self.Tcos_poly(self.freq.normalize(freq))
 
-    def Tsin(self, freq):
+    def Tsin(self, freq=None):
         """Evaluate the sin temperature polynomial at given frequencies."""
-        return self.C1_poly(self.freq.normalize(freq))
+        if freq is None:
+            freq = self.freq.freq
+        return self.Tsin_poly(self.freq.normalize(freq))
 
-    def Tunc(self, freq):
+    def Tunc(self, freq=None):
         """Evaluate the uncorrelated temperature polynomial at given frequencies."""
-        return self.C1_poly(self.freq.normalize(freq))
+        if freq is None:
+            freq = self.freq.freq
+        return self.Tunc_poly(self.freq.normalize(freq))
 
     def _linear_coefficients(self, freq, ant_s11):
         return rcf.get_linear_coefficients(
@@ -2279,8 +2158,7 @@ def perform_term_sweep(
 
             # Change the base io.CalObs because it will change with rep/run.
             calobs.io = io.CalibrationObservation(
-                path=calobs.io.path.parent,
-                ambient_temp=calobs.io.ambient_temp,
+                path=calobs.io.path,
                 run_num=tmp_run_num,
                 repeat_num=this_rep_num,
                 fix=False,
@@ -2299,11 +2177,11 @@ def perform_term_sweep(
             # If we're changing anything else, we need to change each load.
             for name, load in calobs._loads.items():
                 load.reflections = SwitchCorrection.from_path(
-                    load_name=io.LOAD_ALIASES[name],
-                    path=calobs.io.s11.path,
+                    load_name=name,
+                    path=calobs.io.path,
                     run_num_load=this_run_num[name],
                     run_num_switch=this_run_num["switching_state"],
-                    repeat_num=this_rep_num["switching_state"],
+                    repeat_num_switch=this_rep_num["switching_state"],
                 )
 
             if verbose:
@@ -2373,8 +2251,7 @@ def perform_term_sweep(
 
     calobs.update(cterms=best_cterms, wterms=best_wterms)
     calobs.io = io.CalibrationObservation(
-        path=calobs.io.path.parent,
-        ambient_temp=calobs.io.ambient_temp,
+        path=calobs.io.path,
         run_num=best_run_combo[0],
         repeat_num={
             "switching_state": best_run_combo[2],
