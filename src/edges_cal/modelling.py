@@ -133,6 +133,14 @@ class Model:
 
     def get_basis_term(self, indx: int, x: np.ndarray):
         """Get a specific basis function term."""
+        # If using a new passed-in x, don't cache.
+        if (
+            self.default_x is None
+            or x.shape != self.default_x.shape
+            or not np.allclose(x, self.default_x)
+        ):
+            return self._get_basis_term(indx, x)
+
         if indx not in self.__basis_terms:
             self.__basis_terms[indx] = self._get_basis_term(indx, x)
 
