@@ -629,7 +629,7 @@ def xrfi_model(
     t_log: bool = True,
     n_signal: int = 3,
     n_resid: int = -1,
-    threshold: float = 10,
+    threshold: [None, float] = None,
     max_iter: int = 20,
     accumulate: bool = False,
     increase_order: bool = True,
@@ -705,6 +705,11 @@ def xrfi_model(
         Boolean array of the same shape as ``spectrum`` indicated which channels/times
         have flagged RFI.
     """
+    threshold = threshold or (
+        min_threshold
+        if not decrement_threshold
+        else min_threshold + 5 * decrement_threshold
+    )
     if decrement_threshold > 0 and min_threshold > threshold:
         warnings.warn(
             f"You've set a threshold smaller than the min_threshold of {min_threshold}. "
