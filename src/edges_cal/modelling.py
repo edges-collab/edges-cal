@@ -57,6 +57,7 @@ class Model:
             raise ValueError("Need to supply either parameters or n_terms!")
 
         self.default_x = default_x
+        self.__basis_terms = {}
 
     def __init_subclass__(cls, is_meta=False, **kwargs):
         """Initialize a subclass and add it to the registered models."""
@@ -108,9 +109,7 @@ class Model:
         if len(indices) > self.n_terms:
             raise ValueError("Cannot get more indices than n_terms.")
 
-        out = np.zeros((len(indices), len(x)))
-        self._fill_basis_terms(x, out, indices)
-        return out
+        return np.array([self.get_basis_term(indx, x) for indx in indices])
 
     def update_nterms(self, n_terms: int):
         """Update the number of terms in the model.
@@ -131,6 +130,13 @@ class Model:
 
         self.n_terms = n_terms
         return
+
+    def get_basis_term(self, indx: int, x: np.ndarray):
+        """Get a specific basis function term."""
+        if indx not in self.__basis_terms:
+            self.__basis_terms[indx] = self._get_basis_term(indx, x)
+
+        return self.__basis_terms[indx]
 
     def __call__(
         self,
@@ -178,7 +184,7 @@ class Model:
         return np.dot(parameters, basis)
 
     @abstractmethod
-    def _fill_basis_terms(self, x: np.ndarray, out: np.ndarray, indices: list):
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         pass
 
 
@@ -240,21 +246,19 @@ class Foreground(Model, is_meta=True):
 class PhysicalLin(Foreground):
     """Foreground model using a linearized physical model of the foregrounds."""
 
-    def _fill_basis_terms(self, x: np.ndarray, out: np.ndarray, indices: list):
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         y = x / self.f_center
-        if any(i < 3 for i in indices):
+        if indx < 3:
             logy = np.log(y)
             y25 = y ** -2.5
+            return y25 * logy ** indx
 
-        for i, indx in enumerate(indices):
-            if indx < 3:
-                out[i] = y25 * logy ** indx
-            elif indx == 3:
-                out[i] = y ** -4.5
-            elif indx == 4:
-                out[i] = 1 / (y * y)
-            else:
-                raise ValueError("too many terms supplied!")
+        elif indx == 3:
+            return y ** -4.5
+        elif indx == 4:
+            return 1 / (y * y)
+        else:
+            raise ValueError("too many terms supplied!")
 
 
 class Polynomial(Foreground):
@@ -282,13 +286,12 @@ class Polynomial(Foreground):
         self.log_x = log_x
         self.offset = offset
 
-    def _fill_basis_terms(self, x: np.ndarray, out: np.ndarray, indices: list):
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         y = x / self.f_center
         if self.log_x:
             y = np.log(y)
 
-        for i, indx in enumerate(indices):
-            out[i] = y ** (indx + self.offset)
+        return y ** (indx + self.offset)
 
 
 class EdgesPoly(Polynomial):
@@ -309,15 +312,13 @@ class EdgesPoly(Polynomial):
 class Fourier(Model):
     """A Fourier-basis model."""
 
-    def _fill_basis_terms(self, x: np.ndarray, out: np.ndarray, indices: list):
-
-        for i, indx in enumerate(indices):
-            if indx == 0:
-                out[i] = np.ones_like(x)
-            elif indx % 2:
-                out[i] = np.cos((indx + 1) * x)
-            else:
-                out[i] = np.sin((indx + 1) * x)
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        if indx == 0:
+            return np.ones_like(x)
+        elif indx % 2:
+            return np.cos((indx + 1) * x)
+        else:
+            return np.sin((indx + 1) * x)
 
 
 class ModelFit:

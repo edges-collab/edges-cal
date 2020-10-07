@@ -854,18 +854,9 @@ def xrfi_model(
             "models": model_list,
             "model_std": model_std_list,
             "n_iters": counter,
+            "model": model_type,
         },
     )
-
-
-def xrfi_poly(spectrum: np.ndarray, **kwargs):
-    """An alias for xrfi_model with model_type='polynomial'."""
-    warnings.warn(
-        "This function has been deprecated and will be removed at some point. "
-        "Use xrfi_model with model_type='polynomial'.",
-        category=DeprecationWarning,
-    )
-    return xrfi_model(spectrum, model_type="polynomial", **kwargs)
 
 
 def xrfi_watershed(
