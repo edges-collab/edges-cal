@@ -58,6 +58,7 @@ def test_simple_fit():
     model = mdl.PhysicalLin(parameters=[1, 2, 3], default_x=np.linspace(50, 100, 10))
 
     data = model()
+    print(data)
     fit = mdl.ModelFit(model, xdata=model.default_x, ydata=data)
 
     assert np.allclose(fit.model_parameters, [1, 2, 3])

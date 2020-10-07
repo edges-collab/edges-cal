@@ -64,12 +64,31 @@ class Model:
         if not is_meta:
             cls._models[cls.__name__.lower()] = cls
 
-    @cached_property
-    def default_basis(self) -> Union[np.ndarray, None]:
-        """Basis functions defined at the default parameters and co-ordinates."""
-        return self.get_basis(self.default_x) if self.default_x is not None else None
+    @property
+    def default_basis(self) -> [None, np.ndarray]:
+        """The (cached) basis functions at default_x.
 
-    def get_basis(self, x: np.ndarray) -> np.ndarray:
+        If it exists, a 2D array shape (n_terms, x).
+        """
+        try:
+            return self.__default_basis
+        except AttributeError:
+            self.__default_basis = (
+                self.get_basis(self.default_x) if self.default_x is not None else None
+            )
+            return self.__default_basis
+
+    @default_basis.setter
+    def default_basis(self, val):
+        assert isinstance(val, np.ndarray)
+        assert val.ndim == 2
+        self.__default_basis = val
+
+    @default_basis.deleter
+    def default_basis(self):
+        del self.__default_basis
+
+    def get_basis(self, x: np.ndarray, indices: [None, list] = None) -> np.ndarray:
         """Obtain the basis functions.
 
         Parameters
@@ -83,9 +102,35 @@ class Model:
             A 2D array, shape ``(n_terms, len(x))`` with the computed basis functions
             for each term.
         """
-        out = np.zeros((self.n_terms, len(x)))
-        self._fill_basis_terms(x, out)
+        if indices is None:
+            indices = list(range(self.n_terms))
+
+        if len(indices) > self.n_terms:
+            raise ValueError("Cannot get more indices than n_terms.")
+
+        out = np.zeros((len(indices), len(x)))
+        self._fill_basis_terms(x, out, indices)
         return out
+
+    def update_nterms(self, n_terms: int):
+        """Update the number of terms in the model.
+
+        This does it more quickly, without too many repeated calculations.
+        """
+        if self.default_x is None or n_terms == self.n_terms:
+            pass
+        elif n_terms < self.n_terms:
+            self.default_basis = self.default_basis[:n_terms]
+        else:
+            self.default_basis = np.vstack(
+                (
+                    self.default_basis,
+                    self.get_basis(self.default_x, list(range(self.n_terms, n_terms))),
+                )
+            )
+
+        self.n_terms = n_terms
+        return
 
     def __call__(
         self,
@@ -133,7 +178,7 @@ class Model:
         return np.dot(parameters, basis)
 
     @abstractmethod
-    def _fill_basis_terms(self, x, out):
+    def _fill_basis_terms(self, x: np.ndarray, out: np.ndarray, indices: list):
         pass
 
 
@@ -195,18 +240,20 @@ class Foreground(Model, is_meta=True):
 class PhysicalLin(Foreground):
     """Foreground model using a linearized physical model of the foregrounds."""
 
-    def _fill_basis_terms(self, x, out):
+    def _fill_basis_terms(self, x: np.ndarray, out: np.ndarray, indices: list):
         y = x / self.f_center
+        if any(i < 3 for i in indices):
+            logy = np.log(y)
+            y25 = y ** -2.5
 
-        out[0] = y ** -2.5
-        out[1] = y ** -2.5 * np.log(y)
-        out[2] = y ** -2.5 * np.log(y) ** 2
-
-        if self.n_terms >= 4:
-            out[3] = y ** -4.5
-            if self.n_terms == 5:
-                out[4] = y ** -2
-            if self.n_terms > 5:
+        for i, indx in enumerate(indices):
+            if indx < 3:
+                out[i] = y25 * logy ** indx
+            elif indx == 3:
+                out[i] = y ** -4.5
+            elif indx == 4:
+                out[i] = 1 / (y * y)
+            else:
                 raise ValueError("too many terms supplied!")
 
 
@@ -235,13 +282,13 @@ class Polynomial(Foreground):
         self.log_x = log_x
         self.offset = offset
 
-    def _fill_basis_terms(self, x, out):
+    def _fill_basis_terms(self, x: np.ndarray, out: np.ndarray, indices: list):
         y = x / self.f_center
         if self.log_x:
             y = np.log(y)
 
-        for i in range(self.n_terms):
-            out[i] = y ** (i + self.offset)
+        for i, indx in enumerate(indices):
+            out[i] = y ** (indx + self.offset)
 
 
 class EdgesPoly(Polynomial):
@@ -262,20 +309,24 @@ class EdgesPoly(Polynomial):
 class Fourier(Model):
     """A Fourier-basis model."""
 
-    def _fill_basis_terms(self, x, out):
-        out[0] = np.ones_like(x)
+    def _fill_basis_terms(self, x: np.ndarray, out: np.ndarray, indices: list):
 
-        for i in range((self.n_terms - 1) // 2):
-            out[2 * i + 1] = np.cos((i + 1) * x)
-            out[2 * i + 2] = np.sin((i + 1) * x)
+        for i, indx in enumerate(indices):
+            if indx == 0:
+                out[i] = np.ones_like(x)
+            elif indx % 2:
+                out[i] = np.cos((indx + 1) * x)
+            else:
+                out[i] = np.sin((indx + 1) * x)
 
 
 class ModelFit:
     def __init__(
         self,
         model_type: [str, Type[Model], Model],
-        xdata: np.ndarray,
+        *,
         ydata: np.ndarray,
+        xdata: [None, np.ndarray] = None,
         weights: [None, np.ndarray] = None,
         n_terms: int = None,
         **kwargs,
@@ -303,6 +354,11 @@ class ModelFit:
         ValueError
             If model_type is not str, or a subclass of :class:`Model`.
         """
+        if not isinstance(model_type, Model) and xdata is None:
+            raise ValueError(
+                "You must pass xdata unless the model_type is an instance."
+            )
+
         if isinstance(model_type, str):
             self.model = Model._models[model_type.lower()](
                 default_x=xdata, n_terms=n_terms, **kwargs
@@ -311,13 +367,14 @@ class ModelFit:
             self.model = model_type(default_x=xdata, n_terms=n_terms, **kwargs)
         elif isinstance(model_type, Model):
             self.model = model_type
-            self.model.default_x = xdata
+            if xdata is not None:
+                self.model.default_x = xdata
         else:
             raise ValueError(
                 "model_type must be str, Model subclass or Model instance."
             )
 
-        self.xdata = xdata
+        self.xdata = self.model.default_x
         self.ydata = ydata
         self.weights = weights
 
@@ -330,6 +387,9 @@ class ModelFit:
         elif weights.ndim >= 2:
             raise NotImplementedError("Can't do covariance weighting yet...")
 
+        # TODO: might be good to use the flags array to restrict the fitted values?
+        # TODO: would be faster if there's a lot of flags, but slower to do the flagging if not.
+        self.flags = self.weights == 0
         self.n_terms = self.model.n_terms
 
         self.degrees_of_freedom = len(self.xdata) - self.n_terms - 1
@@ -386,3 +446,10 @@ class ModelFit:
     def get_covariance(self) -> np.ndarray:
         """The covariance of the parameter estimates at the solution."""
         return self.fit.normalized_cov_params
+
+    def reset(self):
+        """Resets the fit."""
+        del self.residual
+        del self.weighted_chi2
+        del self.model_parameters
+        del self.fit

@@ -196,7 +196,9 @@ def get_switch_correction(
     ):
         fits[kind] = 0 + 0 * 1j
         for imag in range(2):
-            mdl = ModelFit(model_type, fn, [np.real, np.imag][imag](val), n_terms=npoly)
+            mdl = ModelFit(
+                model_type, xdata=fn, ydata=[np.real, np.imag][imag](val), n_terms=npoly
+            )
             out = mdl.evaluate(fn_in) * (1j if imag else 1)
             fits[kind] += out
 
