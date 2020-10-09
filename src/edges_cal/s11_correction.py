@@ -132,7 +132,7 @@ def get_switch_correction(
     internal_switch: io.SwitchingState,
     f_in: np.ndarray = np.zeros([0, 1]),
     resistance_m: float = 50.166,
-    n_terms: [int, Tuple] = 9,
+    n_terms: [int, Tuple] = 7,
     model_type: str = "polynomial",
 ) -> Tuple[np.ndarray, dict]:
     """

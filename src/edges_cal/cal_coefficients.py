@@ -107,8 +107,9 @@ class SwitchCorrection:
         f_high: Optional[float] = None,
         resistance: float = 50.166,
         n_terms: Optional[int] = None,
-        n_terms_raw: int = 9,
-        model_type_raw: str = "polynomial",
+        model_type: str = "fourier",
+        n_terms_internal_switch: int = 7,
+        model_type_internal_switch: str = "polynomial",
     ):
         """
         A class representing relevant switch corrections for a load.
@@ -159,8 +160,9 @@ class SwitchCorrection:
         # Expose one of the frequency objects
         self.freq = self.open.freq
         self._nterms = int(n_terms) if n_terms is not None else None
-        self.n_terms_raw = n_terms_raw
-        self.model_type_raw = model_type_raw
+        self.n_terms_internal_switch = n_terms_internal_switch
+        self.model_type_internal_switch = model_type_internal_switch
+        self.model_type = model_type
 
     @cached_property
     def n_terms(self):
@@ -254,13 +256,13 @@ class SwitchCorrection:
             self.internal_switch,
             f_in=self.freq.freq,
             resistance_m=self.resistance,
-            n_terms=self.n_terms_raw,
-            model_type=self.model_type_raw,
+            n_terms=self.n_terms_internal_switch,
+            model_type=self.model_type_internal_switch,
         )[0]
 
     @lru_cache()
     def get_s11_correction_model(
-        self, n_terms: [int, None] = None, model_type: str = "fourier",
+        self, n_terms: [int, None] = None, model_type: [None, str] = None,
     ):
         """Generate a callable model for the S11 correction.
 
@@ -284,6 +286,7 @@ class SwitchCorrection:
             If n_terms is not an integer, or not odd.
         """
         n_terms = n_terms or self.n_terms
+        model_type = model_type or self.model_type
 
         if not (isinstance(n_terms, int) and n_terms % 2):
             raise ValueError(
