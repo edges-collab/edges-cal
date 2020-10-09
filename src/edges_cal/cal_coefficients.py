@@ -791,7 +791,7 @@ class LoadSpectrum:
     @cached_property
     def temp_ave(self):
         """Average thermistor temperature (over time and frequency)."""
-        return np.mean(self.thermistor_temp)
+        return np.nanmean(self.thermistor_temp)
 
     def write(self, path=None):
         """
@@ -968,10 +968,6 @@ class HotLoadCorrection:
         assert (
             hot_load_s11.load_name == "hot_load"
         ), "hot_load_s11 must be a hot_load s11"
-
-        print(self.s11_model(freq))
-        print(self.s12_model(freq))
-        print(self.s22_model(freq))
 
         return self.get_power_gain(
             {
