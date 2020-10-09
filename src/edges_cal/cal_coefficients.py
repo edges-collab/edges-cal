@@ -107,6 +107,8 @@ class SwitchCorrection:
         f_high: Optional[float] = None,
         resistance: float = 50.166,
         n_terms: Optional[int] = None,
+        n_terms_raw: int = 9,
+        model_type_raw: str = "polynomial",
     ):
         """
         A class representing relevant switch corrections for a load.
@@ -157,6 +159,8 @@ class SwitchCorrection:
         # Expose one of the frequency objects
         self.freq = self.open.freq
         self._nterms = int(n_terms) if n_terms is not None else None
+        self.n_terms_raw = n_terms_raw
+        self.model_type_raw = model_type_raw
 
     @cached_property
     def n_terms(self):
@@ -243,17 +247,21 @@ class SwitchCorrection:
         )
 
     @cached_property
-    def s11_correction(self):
+    def s11_correction(self) -> np.ndarray:
         """The correction required for the S11 due to the switch."""
         return s11.get_switch_correction(
             self.switch_corrections[0],
             self.internal_switch,
             f_in=self.freq.freq,
             resistance_m=self.resistance,
+            n_terms=self.n_terms_raw,
+            model_type=self.model_type_raw,
         )[0]
 
     @lru_cache()
-    def get_s11_correction_model(self, n_terms=None):
+    def get_s11_correction_model(
+        self, n_terms: [int, None] = None, model_type: str = "fourier",
+    ):
         """Generate a callable model for the S11 correction.
 
         This should closely match :method:`s11_correction`.
@@ -282,16 +290,18 @@ class SwitchCorrection:
                 f"n_terms must be odd for S11 models. For {self.load_name} got n_terms={n_terms}."
             )
 
+        s11_correction = self.s11_correction
+
         def get_model(mag):
             # Returns a callable function that will evaluate a model onto a set of
             # un-normalised frequencies.
             if mag:
-                d = np.abs(self.s11_correction)
+                d = np.abs(s11_correction)
             else:
-                d = np.unwrap(np.angle(self.s11_correction))
+                d = np.unwrap(np.angle(s11_correction))
 
             fit = mdl.ModelFit(
-                "fourier", xdata=self.freq.freq_recentred, ydata=d, n_terms=n_terms
+                model_type, xdata=self.freq.freq_recentred, ydata=d, n_terms=n_terms
             )
             return lambda x: fit.evaluate(x)
 
@@ -309,7 +319,9 @@ class SwitchCorrection:
         """The S11 model."""
         return self.get_s11_correction_model()
 
-    def plot_residuals(self) -> plt.Figure:
+    def plot_residuals(
+        self, n_terms_correction: int = 9, model_type_correction="polynomial"
+    ) -> plt.Figure:
         """
         Make a plot of the residuals of the S11 model and the correction data.
 
