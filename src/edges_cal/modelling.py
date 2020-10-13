@@ -406,7 +406,11 @@ class ModelFit:
     @cached_property
     def fit(self):
         """The model fit, as a :class:`statsmodels.regression.linear_model.RegressionResults` object."""
-        model = sm.WLS(self.ydata, self.model.default_basis.T, weights=self.weights)
+        model = sm.WLS(
+            self.ydata[~self.flags],
+            self.model.default_basis.T[~self.flags],
+            weights=self.weights[~self.flags],
+        )
         return model.fit()
 
     @cached_property
@@ -437,7 +441,7 @@ class ModelFit:
     @cached_property
     def residual(self) -> np.ndarray:
         """Residuals of data to model."""
-        return self.fit.resid
+        return self.ydata - self.evaluate()
 
     @cached_property
     def weighted_chi2(self) -> float:
