@@ -411,7 +411,7 @@ class ModelFit:
             self.model.default_basis.T[~self.flags],
             weights=self.weights[~self.flags],
         )
-        return model.fit()
+        return model.fit(method="qr")
 
     @cached_property
     def model_parameters(self):

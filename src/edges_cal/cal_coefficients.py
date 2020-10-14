@@ -340,7 +340,8 @@ class SwitchCorrection:
         )
         for axx in ax:
             axx.xaxis.set_ticks(
-                [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180], []
+                [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180],
+                minor=[],
             )
             axx.grid(True)
         ax[-1].set_xlabel("Frequency [MHz]")
