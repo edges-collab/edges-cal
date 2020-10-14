@@ -317,6 +317,19 @@ class EdgesPoly(Polynomial):
         super().__init__(offset=offset, **kwargs)
 
 
+class LinLog(Polynomial):
+    def __init__(self, beta: float = -2.5, **kwargs):
+        self.beta = beta
+        kwargs["log_x"] = True
+        kwargs["offset"] = 0
+
+        super().__init__(**kwargs)
+
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        term = super()._get_basis_term(indx, x)
+        return term * (x / self.f_center) ** self.beta
+
+
 class Fourier(Model):
     """A Fourier-basis model."""
 
