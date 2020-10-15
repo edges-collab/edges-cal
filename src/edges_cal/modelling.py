@@ -195,6 +195,17 @@ class Model:
     def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         pass
 
+    def fit(
+        self, ydata: np.ndarray, weights: [None, np.ndarray, float] = None, xdata=None
+    ):
+        """Create a linear-regression fit object."""
+        return ModelFit(
+            self,
+            ydata=ydata,
+            xdata=xdata if xdata is not None else None,
+            weights=weights,
+        )
+
 
 class Foreground(Model, is_meta=True):
     def __init__(
@@ -337,9 +348,9 @@ class Fourier(Model):
         if indx == 0:
             return np.ones_like(x)
         elif indx % 2:
-            return np.cos((indx + 1) * x)
+            return np.cos((indx + 1) // 2 * x)
         else:
-            return np.sin((indx + 1) * x)
+            return np.sin((indx + 1) // 2 * x)
 
 
 class ModelFit:
@@ -401,28 +412,34 @@ class ModelFit:
         self.weights = weights
 
         if weights is None:
-            self.weights = np.ones(len(self.xdata))
+            self.weights = np.eye(len(self.xdata))
+            self.data_cov = np.eye(len(self.xdata))
         elif weights.ndim == 1:
             # if a vector is given
             assert weights.shape == self.xdata.shape
+            self.weights = np.diag(weights)
+            self.data_cov = np.diag(1 / weights ** 2)
+        elif weights.ndim == 2:
+            assert weights.shape == (len(self.xdata), len(self.xdata))
             self.weights = weights
-        elif weights.ndim >= 2:
-            raise NotImplementedError("Can't do covariance weighting yet...")
+            self.data_cov = 1 / weights ** 2
+        else:
+            raise ValueError("weights must be scalar, 1D or 2D")
 
         # TODO: might be good to use the flags array to restrict the fitted values?
         # TODO: would be faster if there's a lot of flags, but slower to do the flagging if not.
-        self.flags = self.weights == 0
+        self.flags = np.diag(self.weights) == 0
         self.n_terms = self.model.n_terms
 
         self.degrees_of_freedom = len(self.xdata) - self.n_terms - 1
 
     @cached_property
-    def fit(self):
-        """The model fit, as a :class:`statsmodels.regression.linear_model.RegressionResults` object."""
-        model = sm.WLS(
-            self.ydata[~self.flags],
-            self.model.default_basis.T[~self.flags],
-            weights=self.weights[~self.flags],
+    def fit(self) -> sm.regression.linear_model.RegressionResults:
+        """The model fit."""
+        cov = self.data_cov[~self.flags][:, ~self.flags]
+
+        model = sm.GLS(
+            self.ydata[~self.flags], self.model.default_basis.T[~self.flags], sigma=cov,
         )
         return model.fit(method="qr")
 

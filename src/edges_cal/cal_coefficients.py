@@ -1356,6 +1356,10 @@ class CalibrationObservation:
 
         self.freq = EdgesFrequencyRange(f_low=fmin, f_high=fmax)
 
+        # Now make everything actually consistent in its frequency range.
+        for load in self._loads.values():
+            load.spectrum.freq = self.freq
+
         self.cterms = cterms
         self.wterms = wterms
 
