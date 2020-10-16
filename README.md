@@ -1,7 +1,7 @@
 # edges_cal
 
-[![Build Status](https://travis-ci.org/edges-collab/cal_coefficients.svg?branch=master)](https://travis-ci.org/edges-collab/cal_coefficients)
-[![codecov](https://codecov.io/gh/edges-collab/cal_coefficients/branch/master/graph/badge.svg)](https://codecov.io/gh/edges-collab/cal_coefficients)
+[![Build Status](https://travis-ci.org/edges-collab/edges-cal.svg?branch=master)](https://travis-ci.org/edges-collab/edges-cal)
+[![codecov](https://codecov.io/gh/edges-collab/edges-cal/branch/master/graph/badge.svg)](https://codecov.io/gh/edges-collab/edges-cal)
 
 **Calculate calibration coefficients for EDGES Calibration Observations**
 
