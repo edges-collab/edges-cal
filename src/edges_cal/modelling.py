@@ -88,6 +88,7 @@ class Model:
     @default_basis.deleter
     def default_basis(self):
         del self.__default_basis
+        self.__basis_terms = {}
 
     def get_basis(self, x: np.ndarray, indices: [None, list] = None) -> np.ndarray:
         """Obtain the basis functions.
@@ -368,15 +369,18 @@ class ModelFit:
 
         Parameters
         ----------
-        model_type : str or :class:`Model`
+        model_type
             The type of model to fit to the data.
-        xdata : np.ndarray
+        xdata
             The co-ordinates of the measured data.
-        ydata : np.ndarray
+        ydata
             The values of the measured data.
-        weights : np.ndarray, optional
-            The weight of the measured data at each point.
-        n_terms : int, optional
+        weights
+            The weight of the measured data at each point. This corresponds to the
+            *variance* of the measurement (not the standard deviation). This is appropriate
+            if the weights represent the number of measurements going into each piece
+            of data.
+        n_terms
             The number of terms to use in the model (useful for models with an
             arbitrary number of terms).
         kwargs
@@ -412,35 +416,48 @@ class ModelFit:
         self.weights = weights
 
         if weights is None:
-            self.weights = np.eye(len(self.xdata))
-            self.data_cov = np.eye(len(self.xdata))
+            weights = 1
+
+        if np.isscalar(weights):
+            self.weights = weights
         elif weights.ndim == 1:
             # if a vector is given
             assert weights.shape == self.xdata.shape
-            self.weights = np.diag(weights)
-            self.data_cov = np.diag(1 / weights ** 2)
+            self.weights = weights
+            self.flags = self.weights == 0
         elif weights.ndim == 2:
             assert weights.shape == (len(self.xdata), len(self.xdata))
             self.weights = weights
-            self.data_cov = 1 / weights ** 2
+            self.flags = np.diag(self.weights) == 0
         else:
             raise ValueError("weights must be scalar, 1D or 2D")
 
         # TODO: might be good to use the flags array to restrict the fitted values?
         # TODO: would be faster if there's a lot of flags, but slower to do the flagging if not.
-        self.flags = np.diag(self.weights) == 0
-        self.n_terms = self.model.n_terms
 
+        self.n_terms = self.model.n_terms
         self.degrees_of_freedom = len(self.xdata) - self.n_terms - 1
 
     @cached_property
     def fit(self) -> sm.regression.linear_model.RegressionResults:
         """The model fit."""
-        cov = self.data_cov[~self.flags][:, ~self.flags]
+        if np.isscalar(self.weights):
+            model = sm.OLS(self.ydata, self.model.default_basis.T)
+        elif self.weights.ndim == 1:
+            model = sm.WLS(
+                self.ydata[~self.flags],
+                self.model.default_basis.T[~self.flags],
+                weights=self.weights[~self.flags],
+            )
+        else:
+            cov = 1 / self.weights
+            cov = cov[~self.flags][:, ~self.flags]
 
-        model = sm.GLS(
-            self.ydata[~self.flags], self.model.default_basis.T[~self.flags], sigma=cov,
-        )
+            model = sm.GLS(
+                self.ydata[~self.flags],
+                self.model.default_basis.T[~self.flags],
+                sigma=cov,
+            )
         return model.fit(method="qr")
 
     @cached_property
