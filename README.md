@@ -46,6 +46,26 @@ of Cterms and Wterms until some threshold is met. This uses the same configurati
 at which to stop the sweep (this is a threshold in absolute RMS over degrees of freedom).
 This will write out a `Calibration` file for the "best" set of parameters.
 
+You can also create full Jupyter notebook reports (and convert them to PDF!) using the
+CLI. Do this by running
+
+```
+$ edges-cal report PATH --config ~/config.yaml
+```
+
+(obviously there are other parameters -- use `edges-cal report --help` for help).
+The `PATH` should again be a calibration observation directory. The config can be the
+same file as in `edges-cal run`. By default, both a notebook and a PDF will be produced,
+in the `outputs/` directory of the observation. You can turn off the PDF production with
+a `-R` flag.
+
+Similarly, you can *compare* two observations as a report notebook with
+
+```
+$ edges-cal compare PATH COMPARE --config ~/config.yaml --config-cmp ~/config.yaml
+```
+
+
 ### Using the Library
 To import:
 
