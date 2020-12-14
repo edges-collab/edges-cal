@@ -209,7 +209,7 @@ def report(config, path, out, cache_dir, report):
         out.mkdir()
 
     # Describe the filename...
-    fname = Path(f"calibration_{datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}.ipynb")
+    fname = Path(f"calibration_{datetime.now().strftime('%Y-%m-%d-%H.%M.%S')}.ipynb")
 
     if config is not None:
         with open(config, "r") as fl:
@@ -297,7 +297,7 @@ def compare(path, cmppath, config, config_cmp, out, cache_dir, report):
 
     # Describe the filename...
     fname = Path(
-        f"calibration-compare-{cmppath.name}_{datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}.ipynb"
+        f"calibration-compare-{cmppath.name}_{datetime.now().strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
     )
 
     if config is not None:

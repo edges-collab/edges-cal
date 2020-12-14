@@ -308,7 +308,15 @@ class SwitchCorrection:
         return self.get_s11_correction_model()
 
     def plot_residuals(
-        self, fig=None, ax=None, color_abs="C0", color_diff="g", label=None
+        self,
+        fig=None,
+        ax=None,
+        color_abs="C0",
+        color_diff="g",
+        label=None,
+        title=None,
+        decade_ticks=True,
+        ylabels=True,
     ) -> plt.Figure:
         """
         Make a plot of the residuals of the S11 model and the correction data.
@@ -325,11 +333,13 @@ class SwitchCorrection:
                 4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="w"
             )
 
-        for axx in ax:
-            axx.xaxis.set_ticks(
-                [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180], []
-            )
-            axx.grid(True)
+        if decade_ticks:
+            for axx in ax:
+                axx.xaxis.set_ticks(
+                    [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180],
+                    minor=[],
+                )
+                axx.grid(True)
         ax[-1].set_xlabel("Frequency [MHz]")
 
         corr = self.s11_correction
@@ -339,24 +349,32 @@ class SwitchCorrection:
         ax[0].plot(
             self.freq.freq, 20 * np.log10(np.abs(model)), color=color_abs, label=label
         )
-        ax[0].set_ylabel(r"$|S_{11}|$")
+        if ylabels:
+            ax[0].set_ylabel(r"$|S_{11}|$")
 
         ax[1].plot(self.freq.freq, np.abs(model) - np.abs(corr), color_diff)
-        ax[1].set_ylabel(r"\Delta $S_{11}$")
+        if ylabels:
+            ax[1].set_ylabel(r"$\Delta  |S_{11}|$")
 
         ax[2].plot(
             self.freq.freq, np.unwrap(np.angle(model)) * 180 / np.pi, color=color_abs
         )
-        ax[2].set_ylabel(r"$\angle S_{11}$")
+        if ylabels:
+            ax[2].set_ylabel(r"$\angle S_{11}$")
 
         ax[3].plot(
             self.freq.freq,
             np.unwrap(np.angle(model)) - np.unwrap(np.angle(corr)),
             color_diff,
         )
-        ax[3].set_ylabel(r"$\Delta \angle S_{11}$")
+        if ylabels:
+            ax[3].set_ylabel(r"$\Delta \angle S_{11}$")
 
-        fig.suptitle(f"{self.load_name} Reflection Coefficient Models", fontsize=14)
+        if title is None:
+            title = f"{self.load_name} Reflection Coefficient Models"
+
+        if title:
+            fig.suptitle(f"{self.load_name} Reflection Coefficient Models", fontsize=14)
         if label:
             ax[0].legend()
 
