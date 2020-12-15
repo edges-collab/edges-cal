@@ -1,5 +1,11 @@
 # Changelog
 
+## Dev
+
+### Added
+
+- Automatic notebook reports for calibration
+
 ## Version 0.3.0
 
 ### Changed
