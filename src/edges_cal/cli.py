@@ -194,7 +194,19 @@ def sweep(
     help="directory in which to keep/search for the cache",
 )
 @click.option("-r/-R", "--report/--no-report", default=True)
-def report(config, path, out, cache_dir, report):
+@click.option("-u/-U", "--upload/--no-upload", default=False, help="auto-upload file")
+@click.option("-t", "--title", type=str, help="title of the memo", default=None)
+@click.option(
+    "-a",
+    "--author",
+    type=str,
+    help="adds an author to the author list",
+    default=None,
+    multiple=True,
+)
+@click.option("-n", "--memo", type=int, help="which memo number to use", default=None)
+@click.option("-q/-Q", "--quiet/--loud", default=False)
+def report(config, path, out, cache_dir, report, upload, title, memo, quiet):
     """Make a full notebook report on a given calibration."""
     single_notebook = Path(__file__).parent / "notebooks/calibrate-observation.ipynb"
 
@@ -232,20 +244,9 @@ def report(config, path, out, cache_dir, report):
     )
     console.print(f"Saved interactive notebook to '{out/fname}'")
 
-    # Now output the notebook to pdf
-    if report:
-
-        c = Config()
-        c.TemplateExporter.exclude_input_prompt = True
-        c.TemplateExporter.exclude_output_prompt = True
-        c.TemplateExporter.exclude_input = True
-
-        exporter = PDFExporter(config=c)
-        body, resources = exporter.from_filename(out / fname)
-        with open(out / fname.with_suffix(".pdf"), "wb") as fl:
-            fl.write(body)
-
-        console.print(f"Saved PDF to '{out / fname.with_suffix('.pdf')}'")
+    make_pdf(out, fname)
+    if upload:
+        upload_memo(out / fname.with_suffix(".pdf"), title, memo, quiet)
 
 
 @main.command()
@@ -280,7 +281,31 @@ def report(config, path, out, cache_dir, report):
     help="directory in which to keep/search for the cache",
 )
 @click.option("-r/-R", "--report/--no-report", default=True)
-def compare(path, cmppath, config, config_cmp, out, cache_dir, report):
+@click.option("-u/-U", "--upload/--no-upload", default=False, help="auto-upload file")
+@click.option("-t", "--title", type=str, help="title of the memo", default=None)
+@click.option(
+    "-a",
+    "--author",
+    type=str,
+    help="adds an author to the author list",
+    default=None,
+    multiple=True,
+)
+@click.option("-n", "--memo", type=int, help="which memo number to use", default=None)
+@click.option("-q/-Q", "--quiet/--loud", default=False)
+def compare(
+    path,
+    cmppath,
+    config,
+    config_cmp,
+    out,
+    cache_dir,
+    report,
+    upload,
+    title,
+    memo,
+    quiet,
+):
     """Make a full notebook comparison report between two observations."""
     single_notebook = Path(__file__).parent / "notebooks/compare-observation.ipynb"
 
@@ -339,6 +364,14 @@ def compare(path, cmppath, config, config_cmp, out, cache_dir, report):
     console.print(f"Saved interactive notebook to '{out/fname}'")
 
     # Now output the notebook to pdf
+    make_pdf(out, fname)
+    if upload:
+        upload_memo(out / fname.with_suffix(".pdf"), title, memo, quiet)
+
+
+def make_pdf(out, fname):
+    """Make a PDF out of an ipynb."""
+    # Now output the notebook to pdf
     if report:
 
         c = Config()
@@ -352,3 +385,24 @@ def compare(path, cmppath, config, config_cmp, out, cache_dir, report):
             fl.write(body)
 
         console.print(f"Saved PDF to '{out / fname.with_suffix('.pdf')}'")
+
+
+def upload_memo(fname, title, memo, quiet):
+    """Upload as memo to loco.lab.asu.edu."""
+    try:
+        import upload_memo
+    except ImportError:
+        raise ImportError(
+            "You need to manually install upload-memo to use this option."
+        )
+
+    opts = ["memo", "upload", "-f", str(fname)]
+    if title:
+        opts.extend(["-t", title])
+
+    if memo:
+        opts.extend(["-n", memo])
+    if quiet:
+        opts.append("-q")
+
+    run(opts)
