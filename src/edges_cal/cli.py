@@ -206,7 +206,7 @@ def sweep(
 )
 @click.option("-n", "--memo", type=int, help="which memo number to use", default=None)
 @click.option("-q/-Q", "--quiet/--loud", default=False)
-def report(config, path, out, cache_dir, report, upload, title, memo, quiet):
+def report(config, path, out, cache_dir, report, upload, title, author, memo, quiet):
     """Make a full notebook report on a given calibration."""
     single_notebook = Path(__file__).parent / "notebooks/calibrate-observation.ipynb"
 
@@ -303,6 +303,7 @@ def compare(
     report,
     upload,
     title,
+    author,
     memo,
     quiet,
 ):
