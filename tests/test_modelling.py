@@ -133,10 +133,11 @@ def test_bad_xdata():
 
 
 def test_2d_weights():
-    xdata = np.linspace(0, 1, 100)
+    xdata = np.linspace(50, 100, 100)
     m = mdl.LinLog(n_terms=4, default_x=xdata, parameters=(1, 2, 3, 4))
 
-    weights = np.exp(np.add.outer(xdata, -xdata) ** 2 / (2 * 0.1 ** 2))
+    weights = np.random.rand(100, 100)
+    weights = np.dot(weights, weights.T)
     fit = m.fit(ydata=m(), weights=1 / weights)
     assert fit.weights.ndim == 2
-    # TODO: not actually testing the fit yet...
+    assert np.allclose(fit.model_parameters, [1, 2, 3, 4])
