@@ -826,7 +826,7 @@ class LoadSpectrum:
         if path.is_dir():
             path /= f"{self.load_name}_averaged_spectrum.h5"
 
-        with h5py.File(path) as fl:
+        with h5py.File(path, "w") as fl:
             fl.attrs["load_name"] = self.load_name
             fl["freq"] = self.freq.freq
             fl["averaged_raw_spectrum"] = self.averaged_spectrum
