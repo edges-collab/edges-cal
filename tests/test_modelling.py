@@ -58,6 +58,7 @@ def test_simple_fit():
     model = mdl.PhysicalLin(parameters=[1, 2, 3], default_x=np.linspace(50, 100, 10))
 
     data = model()
+    print(data)
     fit = mdl.ModelFit(model, xdata=model.default_x, ydata=data)
 
     assert np.allclose(fit.model_parameters, [1, 2, 3])
@@ -77,3 +78,66 @@ def test_weighted_fit():
     fit = mdl.ModelFit(model, xdata=model.default_x, ydata=data, weights=1 / sigmas)
 
     assert np.allclose(fit.model_parameters, [1, 2, 3], rtol=0.05)
+
+
+def test_wrong_params():
+    with pytest.raises(ValueError):
+        mdl.Polynomial(n_terms=5, parameters=(1, 2, 3, 4, 5, 6))
+
+
+def test_no_nterms():
+    with pytest.raises(ValueError):
+        mdl.Polynomial()
+
+
+def test_del_default_basis():
+    m = mdl.Polynomial(n_terms=3, default_x=np.linspace(0, 1, 10))
+    assert m.default_basis.shape == (3, 10)
+    del m.default_basis
+    m.update_nterms(4)
+    assert m.default_basis.shape == (4, 10)
+
+
+def test_get_bad_indx():
+    m = mdl.Polynomial(n_terms=3)
+
+    with pytest.raises(ValueError):
+        m.get_basis(x=np.linspace(0, 1, 10), indices=list(range(4)))
+
+
+def test_model_fit_intrinsic():
+    m = mdl.Polynomial(n_terms=2, default_x=np.linspace(0, 1, 10))
+    fit = m.fit(ydata=np.linspace(0, 1, 10))
+    assert np.allclose(fit.evaluate(m.default_x), fit.ydata)
+
+
+def test_physical_lin():
+    m = mdl.PhysicalLin(f_center=1, n_terms=5, default_x=np.array([1 / np.e, 1, np.e]))
+
+    basis = m.default_basis
+    assert np.allclose(basis[0], [np.e ** 2.5, 1, np.e ** -2.5])
+    assert np.allclose(basis[1], [-np.e ** 2.5, 0, np.e ** -2.5])
+    assert np.allclose(basis[2], [np.e ** 2.5, 0, np.e ** -2.5])
+    assert np.allclose(basis[3], [np.e ** 4.5, 1, np.e ** -4.5])
+    assert np.allclose(basis[4], [np.e ** 2, 1, np.e ** -2])
+
+
+def test_linlog():
+    m = mdl.LinLog(f_center=1, n_terms=3, default_x=np.array([0.5, 1, 2]))
+    assert m.default_basis.shape == (3, 3)
+
+
+def test_bad_xdata():
+    with pytest.raises(ValueError):
+        mdl.ModelFit(model_type="linlog", ydata=np.linspace(0, 1, 10))
+
+
+def test_2d_weights():
+    xdata = np.linspace(50, 100, 100)
+    m = mdl.LinLog(n_terms=4, default_x=xdata, parameters=(1, 2, 3, 4))
+
+    weights = np.random.rand(100, 100)
+    weights = np.dot(weights, weights.T)
+    fit = m.fit(ydata=m(), weights=1 / weights)
+    assert fit.weights.ndim == 2
+    assert np.allclose(fit.model_parameters, [1, 2, 3, 4])

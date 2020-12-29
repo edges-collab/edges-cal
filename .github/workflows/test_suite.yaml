@@ -7,10 +7,15 @@ on:
   push:
     tags-ignore:
       - 'v*'
+    paths:
+      - 'src/**'
+      - 'tests/**'
   pull_request:
     branches:
       - 'master'
-
+    paths:
+      - 'src/**'
+      - 'tests/**'
 jobs:
   tests:
     env:

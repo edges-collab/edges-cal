@@ -107,6 +107,9 @@ class SwitchCorrection:
         f_high: Optional[float] = None,
         resistance: float = 50.166,
         n_terms: Optional[int] = None,
+        model_type: str = "fourier",
+        n_terms_internal_switch: int = 7,
+        model_type_internal_switch: str = "polynomial",
     ):
         """
         A class representing relevant switch corrections for a load.
@@ -157,6 +160,9 @@ class SwitchCorrection:
         # Expose one of the frequency objects
         self.freq = self.open.freq
         self._nterms = int(n_terms) if n_terms is not None else None
+        self.n_terms_internal_switch = n_terms_internal_switch
+        self.model_type_internal_switch = model_type_internal_switch
+        self.model_type = model_type
 
     @cached_property
     def n_terms(self):
@@ -243,17 +249,21 @@ class SwitchCorrection:
         )
 
     @cached_property
-    def s11_correction(self):
+    def s11_correction(self) -> np.ndarray:
         """The correction required for the S11 due to the switch."""
         return s11.get_switch_correction(
             self.switch_corrections[0],
             self.internal_switch,
             f_in=self.freq.freq,
             resistance_m=self.resistance,
+            n_terms=self.n_terms_internal_switch,
+            model_type=self.model_type_internal_switch,
         )[0]
 
     @lru_cache()
-    def get_s11_correction_model(self, n_terms=None):
+    def get_s11_correction_model(
+        self, n_terms: [int, None] = None, model_type: [None, str] = None,
+    ):
         """Generate a callable model for the S11 correction.
 
         This should closely match :method:`s11_correction`.
@@ -276,21 +286,26 @@ class SwitchCorrection:
             If n_terms is not an integer, or not odd.
         """
         n_terms = n_terms or self.n_terms
+        model_type = model_type or self.model_type
 
         if not (isinstance(n_terms, int) and n_terms % 2):
             raise ValueError(
                 f"n_terms must be odd for S11 models. For {self.load_name} got n_terms={n_terms}."
             )
 
+        s11_correction = self.s11_correction
+
         def get_model(mag):
             # Returns a callable function that will evaluate a model onto a set of
             # un-normalised frequencies.
             if mag:
-                d = np.abs(self.s11_correction)
+                d = np.abs(s11_correction)
             else:
-                d = np.unwrap(np.angle(self.s11_correction))
+                d = np.unwrap(np.angle(s11_correction))
 
-            fit = mdl.ModelFit("fourier", self.freq.freq_recentred, d, n_terms=n_terms)
+            fit = mdl.ModelFit(
+                model_type, xdata=self.freq.freq_recentred, ydata=d, n_terms=n_terms
+            )
             return lambda x: fit.evaluate(x)
 
         mag = get_model(True)
@@ -307,7 +322,9 @@ class SwitchCorrection:
         """The S11 model."""
         return self.get_s11_correction_model()
 
-    def plot_residuals(self) -> plt.Figure:
+    def plot_residuals(
+        self, n_terms_correction: int = 9, model_type_correction="polynomial"
+    ) -> plt.Figure:
         """
         Make a plot of the residuals of the S11 model and the correction data.
 
@@ -323,7 +340,8 @@ class SwitchCorrection:
         )
         for axx in ax:
             axx.xaxis.set_ticks(
-                [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180], []
+                [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180],
+                minor=[],
             )
             axx.grid(True)
         ax[-1].set_xlabel("Frequency [MHz]")
@@ -789,7 +807,7 @@ class LoadSpectrum:
     @cached_property
     def temp_ave(self):
         """Average thermistor temperature (over time and frequency)."""
-        return np.mean(self.thermistor_temp)
+        return np.nanmean(self.thermistor_temp)
 
     def write(self, path=None):
         """
@@ -808,7 +826,7 @@ class LoadSpectrum:
         if path.is_dir():
             path /= f"{self.load_name}_averaged_spectrum.h5"
 
-        with h5py.File(path) as fl:
+        with h5py.File(path, "w") as fl:
             fl.attrs["load_name"] = self.load_name
             fl["freq"] = self.freq.freq
             fl["averaged_raw_spectrum"] = self.averaged_spectrum
@@ -907,7 +925,9 @@ class HotLoadCorrection:
         """
         d = self.data[:, self._kinds[kind]]
         d = np.abs(d) if mag else np.unwrap(np.angle(d))
-        mag = mdl.ModelFit("polynomial", self.freq.freq_recentred, d, n_terms=21)
+        mag = mdl.ModelFit(
+            "polynomial", xdata=self.freq.freq_recentred, ydata=d, n_terms=21
+        )
 
         def out(f):
             ff = self.freq.normalize(f)
@@ -964,10 +984,6 @@ class HotLoadCorrection:
         assert (
             hot_load_s11.load_name == "hot_load"
         ), "hot_load_s11 must be a hot_load s11"
-
-        print(self.s11_model(freq))
-        print(self.s12_model(freq))
-        print(self.s22_model(freq))
 
         return self.get_power_gain(
             {
@@ -1339,6 +1355,10 @@ class CalibrationObservation:
             )
 
         self.freq = EdgesFrequencyRange(f_low=fmin, f_high=fmax)
+
+        # Now make everything actually consistent in its frequency range.
+        for load in self._loads.values():
+            load.spectrum.freq = self.freq
 
         self.cterms = cterms
         self.wterms = wterms

@@ -37,6 +37,12 @@ class Model:
         ValueError
             If number of parameters is not consistent with n_terms.
         """
+        if n_terms:
+            if self.n_terms and n_terms != self.n_terms:
+                raise ValueError(f"n_terms must be {self.n_terms}")
+
+            self.n_terms = n_terms
+
         if parameters:
             self.parameters = list(parameters)
             if self.n_terms and len(self.parameters) != self.n_terms:
@@ -47,16 +53,11 @@ class Model:
         else:
             self.parameters = None
 
-        if n_terms:
-            if self.n_terms and n_terms != self.n_terms:
-                raise ValueError(f"n_terms must be {self.n_terms}")
-
-            self.n_terms = n_terms
-
         if not self.n_terms:
             raise ValueError("Need to supply either parameters or n_terms!")
 
         self.default_x = default_x
+        self.__basis_terms = {}
 
     def __init_subclass__(cls, is_meta=False, **kwargs):
         """Initialize a subclass and add it to the registered models."""
@@ -64,12 +65,32 @@ class Model:
         if not is_meta:
             cls._models[cls.__name__.lower()] = cls
 
-    @cached_property
-    def default_basis(self) -> Union[np.ndarray, None]:
-        """Basis functions defined at the default parameters and co-ordinates."""
-        return self.get_basis(self.default_x) if self.default_x is not None else None
+    @property
+    def default_basis(self) -> [None, np.ndarray]:
+        """The (cached) basis functions at default_x.
 
-    def get_basis(self, x: np.ndarray) -> np.ndarray:
+        If it exists, a 2D array shape (n_terms, x).
+        """
+        try:
+            return self.__default_basis
+        except AttributeError:
+            self.__default_basis = (
+                self.get_basis(self.default_x) if self.default_x is not None else None
+            )
+            return self.__default_basis
+
+    @default_basis.setter
+    def default_basis(self, val):
+        assert isinstance(val, np.ndarray)
+        assert val.ndim == 2
+        self.__default_basis = val
+
+    @default_basis.deleter
+    def default_basis(self):
+        del self.__default_basis
+        self.__basis_terms = {}
+
+    def get_basis(self, x: np.ndarray, indices: [None, list] = None) -> np.ndarray:
         """Obtain the basis functions.
 
         Parameters
@@ -83,9 +104,48 @@ class Model:
             A 2D array, shape ``(n_terms, len(x))`` with the computed basis functions
             for each term.
         """
-        out = np.zeros((self.n_terms, len(x)))
-        self._fill_basis_terms(x, out)
-        return out
+        if indices is None:
+            indices = list(range(self.n_terms))
+
+        if len(indices) > self.n_terms:
+            raise ValueError("Cannot get more indices than n_terms.")
+
+        return np.array([self.get_basis_term(indx, x) for indx in indices])
+
+    def update_nterms(self, n_terms: int):
+        """Update the number of terms in the model.
+
+        This does it more quickly, without too many repeated calculations.
+        """
+        if self.default_x is None or n_terms == self.n_terms:
+            pass
+        elif n_terms < self.n_terms:
+            self.default_basis = self.default_basis[:n_terms]
+        else:
+            self.default_basis = np.vstack(
+                (
+                    self.default_basis,
+                    self.get_basis(self.default_x, list(range(self.n_terms, n_terms))),
+                )
+            )
+
+        self.n_terms = n_terms
+        return
+
+    def get_basis_term(self, indx: int, x: np.ndarray):
+        """Get a specific basis function term."""
+        # If using a new passed-in x, don't cache.
+        if (
+            self.default_x is None
+            or x.shape != self.default_x.shape
+            or not np.allclose(x, self.default_x)
+        ):
+            return self._get_basis_term(indx, x)
+
+        if indx not in self.__basis_terms:
+            self.__basis_terms[indx] = self._get_basis_term(indx, x)
+
+        return self.__basis_terms[indx]
 
     def __call__(
         self,
@@ -133,8 +193,19 @@ class Model:
         return np.dot(parameters, basis)
 
     @abstractmethod
-    def _fill_basis_terms(self, x, out):
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         pass
+
+    def fit(
+        self, ydata: np.ndarray, weights: [None, np.ndarray, float] = None, xdata=None
+    ):
+        """Create a linear-regression fit object."""
+        return ModelFit(
+            self,
+            ydata=ydata,
+            xdata=xdata if xdata is not None else None,
+            weights=weights,
+        )
 
 
 class Foreground(Model, is_meta=True):
@@ -195,19 +266,19 @@ class Foreground(Model, is_meta=True):
 class PhysicalLin(Foreground):
     """Foreground model using a linearized physical model of the foregrounds."""
 
-    def _fill_basis_terms(self, x, out):
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         y = x / self.f_center
+        if indx < 3:
+            logy = np.log(y)
+            y25 = y ** -2.5
+            return y25 * logy ** indx
 
-        out[0] = y ** -2.5
-        out[1] = y ** -2.5 * np.log(y)
-        out[2] = y ** -2.5 * np.log(y) ** 2
-
-        if self.n_terms >= 4:
-            out[3] = y ** -4.5
-            if self.n_terms == 5:
-                out[4] = y ** -2
-            if self.n_terms > 5:
-                raise ValueError("too many terms supplied!")
+        elif indx == 3:
+            return y ** -4.5
+        elif indx == 4:
+            return 1 / (y * y)
+        else:
+            raise ValueError("too many terms supplied!")
 
 
 class Polynomial(Foreground):
@@ -235,13 +306,12 @@ class Polynomial(Foreground):
         self.log_x = log_x
         self.offset = offset
 
-    def _fill_basis_terms(self, x, out):
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         y = x / self.f_center
         if self.log_x:
             y = np.log(y)
 
-        for i in range(self.n_terms):
-            out[i] = y ** (i + self.offset)
+        return y ** (indx + self.offset)
 
 
 class EdgesPoly(Polynomial):
@@ -259,23 +329,38 @@ class EdgesPoly(Polynomial):
         super().__init__(offset=offset, **kwargs)
 
 
+class LinLog(Polynomial):
+    def __init__(self, beta: float = -2.5, **kwargs):
+        self.beta = beta
+        kwargs["log_x"] = True
+        kwargs["offset"] = 0
+
+        super().__init__(**kwargs)
+
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        term = super()._get_basis_term(indx, x)
+        return term * (x / self.f_center) ** self.beta
+
+
 class Fourier(Model):
     """A Fourier-basis model."""
 
-    def _fill_basis_terms(self, x, out):
-        out[0] = np.ones_like(x)
-
-        for i in range((self.n_terms - 1) // 2):
-            out[2 * i + 1] = np.cos((i + 1) * x)
-            out[2 * i + 2] = np.sin((i + 1) * x)
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        if indx == 0:
+            return np.ones_like(x)
+        elif indx % 2:
+            return np.cos((indx + 1) // 2 * x)
+        else:
+            return np.sin((indx + 1) // 2 * x)
 
 
 class ModelFit:
     def __init__(
         self,
         model_type: [str, Type[Model], Model],
-        xdata: np.ndarray,
+        *,
         ydata: np.ndarray,
+        xdata: [None, np.ndarray] = None,
         weights: [None, np.ndarray] = None,
         n_terms: int = None,
         **kwargs,
@@ -284,15 +369,18 @@ class ModelFit:
 
         Parameters
         ----------
-        model_type : str or :class:`Model`
+        model_type
             The type of model to fit to the data.
-        xdata : np.ndarray
+        xdata
             The co-ordinates of the measured data.
-        ydata : np.ndarray
+        ydata
             The values of the measured data.
-        weights : np.ndarray, optional
-            The weight of the measured data at each point.
-        n_terms : int, optional
+        weights
+            The weight of the measured data at each point. This corresponds to the
+            *variance* of the measurement (not the standard deviation). This is appropriate
+            if the weights represent the number of measurements going into each piece
+            of data.
+        n_terms
             The number of terms to use in the model (useful for models with an
             arbitrary number of terms).
         kwargs
@@ -303,6 +391,11 @@ class ModelFit:
         ValueError
             If model_type is not str, or a subclass of :class:`Model`.
         """
+        if not isinstance(model_type, Model) and xdata is None:
+            raise ValueError(
+                "You must pass xdata unless the model_type is an instance."
+            )
+
         if isinstance(model_type, str):
             self.model = Model._models[model_type.lower()](
                 default_x=xdata, n_terms=n_terms, **kwargs
@@ -311,34 +404,61 @@ class ModelFit:
             self.model = model_type(default_x=xdata, n_terms=n_terms, **kwargs)
         elif isinstance(model_type, Model):
             self.model = model_type
-            self.model.default_x = xdata
+            if xdata is not None:
+                self.model.default_x = xdata
         else:
             raise ValueError(
                 "model_type must be str, Model subclass or Model instance."
             )
 
-        self.xdata = xdata
+        self.xdata = self.model.default_x
         self.ydata = ydata
         self.weights = weights
 
         if weights is None:
-            self.weights = np.ones(len(self.xdata))
+            weights = 1
+
+        if np.isscalar(weights):
+            self.weights = weights
         elif weights.ndim == 1:
             # if a vector is given
             assert weights.shape == self.xdata.shape
             self.weights = weights
-        elif weights.ndim >= 2:
-            raise NotImplementedError("Can't do covariance weighting yet...")
+            self.flags = self.weights == 0
+        elif weights.ndim == 2:
+            assert weights.shape == (len(self.xdata), len(self.xdata))
+            self.weights = weights
+            self.flags = np.diag(self.weights) == 0
+        else:
+            raise ValueError("weights must be scalar, 1D or 2D")
+
+        # TODO: might be good to use the flags array to restrict the fitted values?
+        # TODO: would be faster if there's a lot of flags, but slower to do the flagging if not.
 
         self.n_terms = self.model.n_terms
-
         self.degrees_of_freedom = len(self.xdata) - self.n_terms - 1
 
     @cached_property
-    def fit(self):
-        """The model fit, as a :class:`statsmodels.regression.linear_model.RegressionResults` object."""
-        model = sm.WLS(self.ydata, self.model.default_basis.T, weights=self.weights)
-        return model.fit()
+    def fit(self) -> sm.regression.linear_model.RegressionResults:
+        """The model fit."""
+        if np.isscalar(self.weights):
+            model = sm.OLS(self.ydata, self.model.default_basis.T)
+        elif self.weights.ndim == 1:
+            model = sm.WLS(
+                self.ydata[~self.flags],
+                self.model.default_basis.T[~self.flags],
+                weights=self.weights[~self.flags],
+            )
+        else:
+            cov = 1 / self.weights
+            cov = cov[~self.flags][:, ~self.flags]
+
+            model = sm.GLS(
+                self.ydata[~self.flags],
+                self.model.default_basis.T[~self.flags],
+                sigma=cov,
+            )
+        return model.fit(method="qr")
 
     @cached_property
     def model_parameters(self):
@@ -368,7 +488,7 @@ class ModelFit:
     @cached_property
     def residual(self) -> np.ndarray:
         """Residuals of data to model."""
-        return self.fit.resid
+        return self.ydata - self.evaluate()
 
     @cached_property
     def weighted_chi2(self) -> float:
@@ -386,3 +506,10 @@ class ModelFit:
     def get_covariance(self) -> np.ndarray:
         """The covariance of the parameter estimates at the solution."""
         return self.fit.normalized_cov_params
+
+    def reset(self):
+        """Resets the fit."""
+        del self.residual
+        del self.weighted_chi2
+        del self.model_parameters
+        del self.fit
