@@ -78,3 +78,34 @@ def test_weighted_fit():
     fit = mdl.ModelFit(model, xdata=model.default_x, ydata=data, weights=1 / sigmas)
 
     assert np.allclose(fit.model_parameters, [1, 2, 3], rtol=0.05)
+
+
+def test_wrong_params():
+    with pytest.raises(ValueError):
+        mdl.Polynomial(n_terms=5, parameters=(1, 2, 3, 4, 5, 6))
+
+
+def test_no_nterms():
+    with pytest.raises(ValueError):
+        mdl.Polynomial()
+
+
+def test_del_default_basis():
+    m = mdl.Polynomial(n_terms=3, default_x=np.linspace(0, 1, 10))
+    assert m.default_basis.shape == (3, 10)
+    del m.default_basis
+    m.update_nterms(4)
+    assert m.default_basis.shape == (4, 10)
+
+
+def test_get_bad_indx():
+    m = mdl.Polynomial(n_terms=3)
+
+    with pytest.raises(ValueError):
+        m.get_basis(x=np.linspace(0, 1, 10), indices=list(range(4)))
+
+
+def test_model_fit_intrinsic():
+    m = mdl.Polynomial(n_terms=2, default_x=np.linspace(0, 1, 10))
+    fit = m.fit(ydata=np.linspace(0, 1, 10))
+    assert np.allclose(fit.evaluate(m.default_x), fit.ydata)
