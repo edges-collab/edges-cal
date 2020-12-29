@@ -37,6 +37,12 @@ class Model:
         ValueError
             If number of parameters is not consistent with n_terms.
         """
+        if n_terms:
+            if self.n_terms and n_terms != self.n_terms:
+                raise ValueError(f"n_terms must be {self.n_terms}")
+
+            self.n_terms = n_terms
+
         if parameters:
             self.parameters = list(parameters)
             if self.n_terms and len(self.parameters) != self.n_terms:
@@ -46,12 +52,6 @@ class Model:
             self.n_terms = len(self.parameters)
         else:
             self.parameters = None
-
-        if n_terms:
-            if self.n_terms and n_terms != self.n_terms:
-                raise ValueError(f"n_terms must be {self.n_terms}")
-
-            self.n_terms = n_terms
 
         if not self.n_terms:
             raise ValueError("Need to supply either parameters or n_terms!")

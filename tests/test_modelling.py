@@ -109,3 +109,34 @@ def test_model_fit_intrinsic():
     m = mdl.Polynomial(n_terms=2, default_x=np.linspace(0, 1, 10))
     fit = m.fit(ydata=np.linspace(0, 1, 10))
     assert np.allclose(fit.evaluate(m.default_x), fit.ydata)
+
+
+def test_physical_lin():
+    m = mdl.PhysicalLin(f_center=1, n_terms=5, default_x=np.array([1 / np.e, 1, np.e]))
+
+    basis = m.default_basis
+    assert np.allclose(basis[0], [np.e ** 2.5, 1, np.e ** -2.5])
+    assert np.allclose(basis[1], [-np.e ** 2.5, 0, np.e ** -2.5])
+    assert np.allclose(basis[2], [np.e ** 2.5, 0, np.e ** -2.5])
+    assert np.allclose(basis[3], [np.e ** 4.5, 1, np.e ** -4.5])
+    assert np.allclose(basis[4], [np.e ** 2, 1, np.e ** -2])
+
+
+def test_linlog():
+    m = mdl.LinLog(f_center=1, n_terms=3, default_x=np.array([0.5, 1, 2]))
+    assert m.default_basis.shape == (3, 3)
+
+
+def test_bad_xdata():
+    with pytest.raises(ValueError):
+        mdl.ModelFit(model_type="linlog", ydata=np.linspace(0, 1, 10))
+
+
+def test_2d_weights():
+    xdata = np.linspace(0, 1, 100)
+    m = mdl.LinLog(n_terms=4, default_x=xdata, parameters=(1, 2, 3, 4))
+
+    weights = np.exp(np.add.outer(xdata, -xdata) ** 2 / (2 * 0.1 ** 2))
+    fit = m.fit(ydata=m(), weights=1 / weights)
+    assert fit.weights.ndim == 2
+    # TODO: not actually testing the fit yet...
