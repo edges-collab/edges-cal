@@ -1,0 +1,12 @@
+
+name: Automerge
+on:
+  pull_request:
+    branches:
+      - master
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Exit with success
+        run: exit 0
