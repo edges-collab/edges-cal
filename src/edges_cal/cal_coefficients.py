@@ -332,8 +332,8 @@ class SwitchCorrection:
         title=None,
         decade_ticks=True,
         ylabels=True,
-        n_terms_correction: int = 9, 
-        model_type_correction="polynomial"
+        n_terms_correction: int = 9,
+        model_type_correction="polynomial",
     ) -> plt.Figure:
         """
         Make a plot of the residuals of the S11 model and the correction data.
