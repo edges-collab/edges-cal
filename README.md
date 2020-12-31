@@ -47,7 +47,16 @@ at which to stop the sweep (this is a threshold in absolute RMS over degrees of 
 This will write out a `Calibration` file for the "best" set of parameters.
 
 You can also create full Jupyter notebook reports (and convert them to PDF!) using the
-CLI. Do this by running
+CLI. To get this to work, you must install `edges-cal` with `pip install edges-cal[report]`.
+Then you must do the following:
+
+1. Activate the environment you wish to use to generate the reports (usually `conda activate edges`)
+2. Run `python -m ipykernel install --user --name edges --display-name "edges"`
+
+Note that in the second command, calling it "edges" is necessary (regardless of the name
+of your environment!).
+
+Now you can run
 
 ```
 $ edges-cal report PATH --config ~/config.yaml

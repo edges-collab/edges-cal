@@ -16,7 +16,7 @@ from traitlets.config import Config
 
 from edges_cal import cal_coefficients as cc
 
-console = Console(width=100)
+console = Console()
 
 main = click.Group()
 
@@ -216,6 +216,8 @@ def report(config, path, out, cache_dir, report, upload, title, author, memo, qu
 
     if out is None:
         out = path / "outputs"
+    else:
+        out = Path(out)
 
     if not out.exists():
         out.mkdir()
@@ -317,6 +319,8 @@ def compare(
 
     if out is None:
         out = path / "outputs"
+    else:
+        out = Path(out)
 
     if not out.exists():
         out.mkdir()
@@ -347,8 +351,13 @@ def compare(
         console.print(f"\t{k}: {v}")
 
     if cache_dir != ".":
-        settings.update(cache_dir=cache_dir)
-        settings_cmp.update(cache_dir=cache_dir)
+        lk = settings.get("load_kwargs", {})
+        lk.update(cache_dir=cache_dir)
+        settings.update(load_kwargs=lk)
+
+        lk = settings_cmp.get("load_kwargs", {})
+        lk.update(cache_dir=cache_dir)
+        settings_cmp.update(load_kwargs=lk)
 
     # This actually runs the notebook itself.
     pm.execute_notebook(
@@ -388,7 +397,7 @@ def make_pdf(out, fname):
         console.print(f"Saved PDF to '{out / fname.with_suffix('.pdf')}'")
 
 
-def upload_memo(fname, title, memo, quiet):
+def upload_memo(fname, title, memo, quiet):  # pragma: nocover
     """Upload as memo to loco.lab.asu.edu."""
     try:
         import upload_memo
