@@ -260,7 +260,7 @@ class Foreground(Model, is_meta=True):
             The model evaluated at the input ``x`` or ``basis``.
         """
         t = 2.725 if self.with_cmb else 0
-        return t + super().__call__(x)
+        return t + super().__call__(x=x, basis=basis, parameters=parameters)
 
 
 class PhysicalLin(Foreground):
