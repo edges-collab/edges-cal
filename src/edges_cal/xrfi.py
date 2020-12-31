@@ -629,7 +629,7 @@ def xrfi_model(
     t_log: bool = True,
     n_signal: int = 3,
     n_resid: int = -1,
-    threshold: float = 10,
+    threshold: [None, float] = None,
     max_iter: int = 20,
     accumulate: bool = False,
     increase_order: bool = True,
@@ -638,6 +638,7 @@ def xrfi_model(
     return_models: bool = False,
     inplace: bool = True,
     watershed: [None, int, Tuple[int, float], np.ndarray] = None,
+    **model_kwargs,
 ):
     """
     Flag RFI by subtracting a smooth model and iteratively removing outliers.
@@ -694,12 +695,21 @@ def xrfi_model(
         represent this threshold where the central bin of the array is placed on the
         flagged channel.
 
+    Other Parameters
+    ----------------
+    All other parameters passed to construct the ``Model`` instance.
+
     Returns
     -------
     flags : array-like
         Boolean array of the same shape as ``spectrum`` indicated which channels/times
         have flagged RFI.
     """
+    threshold = threshold or (
+        min_threshold
+        if not decrement_threshold
+        else min_threshold + 5 * decrement_threshold
+    )
     if decrement_threshold > 0 and min_threshold > threshold:
         warnings.warn(
             f"You've set a threshold smaller than the min_threshold of {min_threshold}. "
@@ -743,19 +753,26 @@ def xrfi_model(
     model_list = []
     model_std_list = []
 
+    if isinstance(model_type, str):
+        model_type = Model._models[model_type.lower()](
+            default_x=f, n_terms=n_signal, **model_kwargs
+        )
+
+    orig_weights = (~flags).astype(float)
+
+    spec = np.log(spectrum) if t_log else spectrum
+
     # Iterate until either no flags are changed between iterations, or we get to the
     # requested maximum iterations, or until we have too few unflagged data to fit appropriately.
     while n_flags_changed > 0 and counter < max_iter and np.sum(~flags) > n_signal * 2:
-        # Only use un-flagged entries in our fit.
-        ff = f[~flags]
-        s = spectrum[~flags]
 
-        if t_log:
-            s = np.log(s)
+        model_type.update_nterms(n_signal)
+        weights = np.where(flags, 0, orig_weights)
 
         # Get a model fit to the unflagged data.
         # Could be polynomial or fourier (or something else...)
-        mdl = ModelFit(model_type, xdata=ff, ydata=s, n_terms=n_signal)
+        mdl = ModelFit(model_type, ydata=spec, weights=weights)
+
         par = mdl.model_parameters
         model = mdl.evaluate(f)
 
@@ -771,12 +788,8 @@ def xrfi_model(
         # Now fit a model to the absolute residuals.
         # This number is "like" a local standard deviation, since the polynomial does
         # something like a local average.
-        mdl = ModelFit(
-            model_type,
-            xdata=ff,
-            ydata=np.abs(res[~flags]),
-            n_terms=n_resid if n_resid > 0 else n_signal + n_resid,
-        )
+        model_type.update_nterms(n_resid if n_resid > 0 else n_signal + n_resid)
+        mdl = ModelFit(model_type, ydata=np.abs(res), weights=weights)
         par = mdl.model_parameters
         model_std = mdl.evaluate(f)
 
@@ -846,18 +859,9 @@ def xrfi_model(
             "models": model_list,
             "model_std": model_std_list,
             "n_iters": counter,
+            "model": model_type,
         },
     )
-
-
-def xrfi_poly(spectrum: np.ndarray, **kwargs):
-    """An alias for xrfi_model with model_type='polynomial'."""
-    warnings.warn(
-        "This function has been deprecated and will be removed at some point. "
-        "Use xrfi_model with model_type='polynomial'.",
-        category=DeprecationWarning,
-    )
-    return xrfi_model(spectrum, model_type="polynomial", **kwargs)
 
 
 def xrfi_watershed(

@@ -6,6 +6,12 @@
 
 - Automatic notebook reports for calibration
 
+## Version 0.4.0
+
+### Changed
+
+- Much faster modeling via re-use of basis function evaluations
+
 ## Version 0.3.0
 
 ### Changed

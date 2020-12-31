@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Tuple
 
 from . import reflection_coefficient as rc
-from .modelling import ModelFit
+from .modelling import Model, ModelFit
 
 
 def _get_parameters_at_temperature(data_path, temp):
@@ -132,8 +132,8 @@ def get_switch_correction(
     internal_switch: io.SwitchingState,
     f_in: np.ndarray = np.zeros([0, 1]),
     resistance_m: float = 50.166,
-    poly_order: [int, Tuple] = 7,
-    model_type: str = "fourier",
+    n_terms: [int, Tuple] = 7,
+    model_type: str = "polynomial",
 ) -> Tuple[np.ndarray, dict]:
     """
     Compute the switch correction.
@@ -148,7 +148,7 @@ def get_switch_correction(
         The input frequencies
     resistance_m : float
         The resistance of the switch.
-    poly_order : int or tuple
+    n_terms : int or tuple
         Specifies the order of the fitted polynomial for the S11 measurements.
         If a tuple, must be length 3, specifying the order for the s11, s12, s22
         respectively.
@@ -186,19 +186,20 @@ def get_switch_correction(
 
     fn_in = f_in / f_center if len(f_in) > 10 else fn
 
-    poly_order = (poly_order,) * 3 if not hasattr(poly_order, "__len__") else poly_order
-    assert len(poly_order) == 3
+    n_terms = (n_terms,) * 3 if not hasattr(n_terms, "__len__") else n_terms
+    assert len(n_terms) == 3
 
     # Polynomial fits
     fits = {}
-    for ikind, (kind, val, npoly) in enumerate(
-        zip(["s11", "s12s21", "s22"], [s11, s12s21, s22], poly_order)
+    model = Model._models[model_type.lower()](n_terms=n_terms[0], default_x=fn)
+    for ikind, (kind, val, n) in enumerate(
+        zip(["s11", "s12s21", "s22"], [s11, s12s21, s22], n_terms)
     ):
-        fits[kind] = 0 + 0 * 1j
-        for imag in range(2):
-            mdl = ModelFit(model_type, fn, [np.real, np.imag][imag](val), n_terms=npoly)
-            out = mdl.evaluate(fn_in) * (1j if imag else 1)
-            fits[kind] += out
+        model.update_nterms(n)
+
+        fits[kind] = ModelFit(model, ydata=np.real(val)).evaluate(
+            fn_in
+        ) + 1j * ModelFit(model, ydata=np.imag(val)).evaluate(fn_in)
 
     # Corrected antenna S11
     return rc.gamma_de_embed(fits["s11"], fits["s12s21"], fits["s22"], ant_s11), fits
