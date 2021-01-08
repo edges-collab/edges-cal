@@ -206,7 +206,10 @@ def sweep(
 )
 @click.option("-n", "--memo", type=int, help="which memo number to use", default=None)
 @click.option("-q/-Q", "--quiet/--loud", default=False)
-def report(config, path, out, cache_dir, report, upload, title, author, memo, quiet):
+@click.option("-p/-P", "--pdf/--no-pdf", default=True)
+def report(
+    config, path, out, cache_dir, report, upload, title, author, memo, quiet, pdf
+):
     """Make a full notebook report on a given calibration."""
     single_notebook = Path(__file__).parent / "notebooks/calibrate-observation.ipynb"
 
@@ -246,9 +249,10 @@ def report(config, path, out, cache_dir, report, upload, title, author, memo, qu
     )
     console.print(f"Saved interactive notebook to '{out/fname}'")
 
-    make_pdf(out, fname)
-    if upload:
-        upload_memo(out / fname.with_suffix(".pdf"), title, memo, quiet)
+    if pdf:
+        make_pdf(out, fname)
+        if upload:
+            upload_memo(out / fname.with_suffix(".pdf"), title, memo, quiet)
 
 
 @main.command()
@@ -295,6 +299,7 @@ def report(config, path, out, cache_dir, report, upload, title, author, memo, qu
 )
 @click.option("-n", "--memo", type=int, help="which memo number to use", default=None)
 @click.option("-q/-Q", "--quiet/--loud", default=False)
+@click.option("-p/-P", "--pdf/--no-pdf", default=True)
 def compare(
     path,
     cmppath,
@@ -308,6 +313,7 @@ def compare(
     author,
     memo,
     quiet,
+    pdf,
 ):
     """Make a full notebook comparison report between two observations."""
     single_notebook = Path(__file__).parent / "notebooks/compare-observation.ipynb"
@@ -374,9 +380,10 @@ def compare(
     console.print(f"Saved interactive notebook to '{out/fname}'")
 
     # Now output the notebook to pdf
-    make_pdf(out, fname)
-    if upload:
-        upload_memo(out / fname.with_suffix(".pdf"), title, memo, quiet)
+    if pdf:
+        make_pdf(out, fname)
+        if upload:
+            upload_memo(out / fname.with_suffix(".pdf"), title, memo, quiet)
 
 
 def make_pdf(out, fname):

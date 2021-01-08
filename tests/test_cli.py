@@ -45,6 +45,7 @@ def test_report(data_path: Path, tmpdir: Path):
             str(outdir),
             "--cache-dir",
             str(outdir),
+            "--no-pdf",
         ],
         catch_exceptions=False,
     )
@@ -71,6 +72,7 @@ def test_compare(data_path: Path, tmpdir: Path):
             str(outdir),
             "--cache-dir",
             str(outdir),
+            "--no-pdf",
         ],
         catch_exceptions=False,
     )
