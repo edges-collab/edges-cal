@@ -249,7 +249,7 @@ def report(
     )
     console.print(f"Saved interactive notebook to '{out/fname}'")
 
-    if pdf:
+    if pdf:  # pragma: nocover
         make_pdf(out, fname)
         if upload:
             upload_memo(out / fname.with_suffix(".pdf"), title, memo, quiet)
@@ -380,7 +380,7 @@ def compare(
     console.print(f"Saved interactive notebook to '{out/fname}'")
 
     # Now output the notebook to pdf
-    if pdf:
+    if pdf:  # pragma: nocover
         make_pdf(out, fname)
         if upload:
             upload_memo(out / fname.with_suffix(".pdf"), title, memo, quiet)
