@@ -187,7 +187,7 @@ def sweep(
     help="output directory",
 )
 @click.option(
-    "-c",
+    "-d",
     "--cache-dir",
     type=click.Path(dir_okay=True, file_okay=False),
     default=".",
@@ -280,7 +280,7 @@ def report(
     help="output directory",
 )
 @click.option(
-    "-c",
+    "-d",
     "--cache-dir",
     type=click.Path(dir_okay=True, file_okay=False),
     default=".",
