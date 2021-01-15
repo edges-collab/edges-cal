@@ -1154,7 +1154,7 @@ class CalibrationObservation:
         f_high: [None, float] = None,
         run_num: [None, int, dict] = None,
         repeat_num: [None, int, dict] = None,
-        resistance_f: float = 50.009,
+        resistance_f: [None, float] = None,
         cterms: int = 5,
         wterms: int = 7,
         load_kwargs: [None, dict] = None,
@@ -1301,6 +1301,9 @@ class CalibrationObservation:
                     self.io.s11.switching_state,
                     f_low=f_low,
                     f_high=f_high,
+                    resistance=self.io.definition["measurements"]["resistance_m"][
+                        self.io.s11.switching_state.repeat_num
+                    ],
                     **{**s11_kwargs, **refl},
                 )
 
@@ -1322,7 +1325,10 @@ class CalibrationObservation:
             internal_switch=self.io.s11.switching_state,
             f_low=f_low,
             f_high=f_high,
-            resistance=resistance_f,
+            resistance=resistance_f
+            or self.io.definition["measurements"]["resistance_f"][
+                self.io.s11.receiver_reading.repeat_num
+            ],
         )
 
         # We must use the most restricted frequency range available from all available
