@@ -495,7 +495,7 @@ def _get_mad(x):
     return np.median(np.abs(x - med)) / np.sqrt(0.456)
 
 
-def xrfi_poly_filter(
+def xrfi_model_sweep(
     spectrum,
     weights=None,
     window_width=100,
@@ -605,7 +605,7 @@ def xrfi_poly_filter(
         window += 1
 
     if flip:
-        flip_flags = xrfi_poly_filter(
+        flip_flags = xrfi_model_sweep(
             np.flip(spectrum),
             np.flip(weights) if weights is not None else None,
             window_width=window_width,
