@@ -6,6 +6,11 @@
 
 - Automatic notebook reports for calibration
 
+### Fixed
+
+- xRFI doesn't assume that input spectrum is all positive (could be residuals, and
+  therefore have negatives).
+
 ## Version 0.4.0
 
 ### Changed
