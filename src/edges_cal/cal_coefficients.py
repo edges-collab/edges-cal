@@ -1767,6 +1767,7 @@ class CalibrationObservation:
             )
         else:
             freq_ave_cal = temp_calibrated
+        freq_ave_cal[np.isinf(freq_ave_cal)] = np.nan
 
         rms = np.sqrt(np.mean((freq_ave_cal - np.mean(freq_ave_cal)) ** 2))
 
@@ -1786,7 +1787,7 @@ class CalibrationObservation:
                 label="Average thermistor temp",
             )
 
-        ax.set_ylim([np.min(freq_ave_cal), np.max(freq_ave_cal)])
+        ax.set_ylim([np.nanmin(freq_ave_cal), np.nanmax(freq_ave_cal)])
         if xlabel:
             ax.set_xlabel("Frequency [MHz]")
 
