@@ -325,11 +325,15 @@ def get_calibration_quantities_iterative(
         1D polynomial fits for each of the Scale (C_1), Offset (C_2), and noise-wave
         temperatures for uncorrelated, cos and sin components.
     """
-    mask = (
-        (~np.isnan(temp_raw["short"]))
-        * (~np.isnan(temp_raw["ambient"]))
-        * (~np.isnan(temp_raw["hot_load"]))
-        * ~np.isnan(temp_raw["open"])
+    mask = ~(
+        np.isnan(temp_raw["short"])
+        | np.isinf(temp_raw["short"])
+        | np.isnan(temp_raw["ambient"])
+        | np.isinf(temp_raw["ambient"])
+        | np.isnan(temp_raw["hot_load"])
+        | np.isinf(temp_raw["hot_load"])
+        | np.isnan(temp_raw["open"])
+        | np.isinf(temp_raw["open"])
     )
 
     fmask = f_norm[mask]

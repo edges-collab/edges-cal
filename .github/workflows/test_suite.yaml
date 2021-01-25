@@ -37,6 +37,7 @@ jobs:
         run: |
           pip install -U coverage
           pip install .[dev]
+          python -m ipykernel install --user --name edges --display-name "edges"
       - name: Run Tests
         run: |
           python -m pytest --cov=edges_cal --cov-config=.coveragerc --cov-report xml:./coverage.xml --durations=25

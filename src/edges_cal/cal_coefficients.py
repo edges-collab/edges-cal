@@ -323,7 +323,17 @@ class SwitchCorrection:
         return self.get_s11_correction_model()
 
     def plot_residuals(
-        self, n_terms_correction: int = 9, model_type_correction="polynomial"
+        self,
+        fig=None,
+        ax=None,
+        color_abs="C0",
+        color_diff="g",
+        label=None,
+        title=None,
+        decade_ticks=True,
+        ylabels=True,
+        n_terms_correction: int = 9,
+        model_type_correction="polynomial",
     ) -> plt.Figure:
         """
         Make a plot of the residuals of the S11 model and the correction data.
@@ -335,36 +345,56 @@ class SwitchCorrection:
         fig :
             Matplotlib Figure handle.
         """
-        fig, ax = plt.subplots(
-            4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="w"
-        )
-        for axx in ax:
-            axx.xaxis.set_ticks(
-                [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180],
-                minor=[],
+        if fig is None or ax is None or len(ax) != 4:
+            fig, ax = plt.subplots(
+                4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="w"
             )
-            axx.grid(True)
+
+        if decade_ticks:
+            for axx in ax:
+                axx.xaxis.set_ticks(
+                    [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180],
+                    minor=[],
+                )
+                axx.grid(True)
         ax[-1].set_xlabel("Frequency [MHz]")
 
         corr = self.s11_correction
         model = self.s11_model
         model = model(self.freq.freq)
 
-        ax[0].plot(self.freq.freq, 20 * np.log10(np.abs(model)))
-        ax[0].set_ylabel(r"$|S_{11}|$")
+        ax[0].plot(
+            self.freq.freq, 20 * np.log10(np.abs(model)), color=color_abs, label=label
+        )
+        if ylabels:
+            ax[0].set_ylabel(r"$|S_{11}|$")
 
-        ax[1].plot(self.freq.freq, np.abs(model) - np.abs(corr), "g")
-        ax[1].set_ylabel(r"\Delta $S_{11}$")
+        ax[1].plot(self.freq.freq, np.abs(model) - np.abs(corr), color_diff)
+        if ylabels:
+            ax[1].set_ylabel(r"$\Delta  |S_{11}|$")
 
-        ax[2].plot(self.freq.freq, np.unwrap(np.angle(model)) * 180 / np.pi)
-        ax[2].set_ylabel(r"$\angle S_{11}$")
+        ax[2].plot(
+            self.freq.freq, np.unwrap(np.angle(model)) * 180 / np.pi, color=color_abs
+        )
+        if ylabels:
+            ax[2].set_ylabel(r"$\angle S_{11}$")
 
         ax[3].plot(
-            self.freq.freq, np.unwrap(np.angle(model)) - np.unwrap(np.angle(corr)), "g"
+            self.freq.freq,
+            np.unwrap(np.angle(model)) - np.unwrap(np.angle(corr)),
+            color_diff,
         )
-        ax[3].set_ylabel(r"$\Delta \angle S_{11}$")
+        if ylabels:
+            ax[3].set_ylabel(r"$\Delta \angle S_{11}$")
 
-        fig.suptitle(f"{self.load_name} Reflection Coefficient Models", fontsize=14)
+        if title is None:
+            title = f"{self.load_name} Reflection Coefficient Models"
+
+        if title:
+            fig.suptitle(f"{self.load_name} Reflection Coefficient Models", fontsize=14)
+        if label:
+            ax[0].legend()
+
         return fig
 
 
@@ -768,10 +798,7 @@ class LoadSpectrum:
         """
         data = [spec_obj.data for spec_obj in self.spec_obj]
 
-        n_times = 0
-        for d in data:
-            n_times += len(d["time_ancillary"]["times"])
-
+        n_times = sum(len(d["time_ancillary"]["times"]) for d in data)
         out = {
             "p0": np.empty((len(self.freq.freq), n_times)),
             "p1": np.empty((len(self.freq.freq), n_times)),
@@ -794,15 +821,14 @@ class LoadSpectrum:
     @cached_property
     def thermistor(self) -> np.ndarray:
         """The thermistor readings."""
-        return self.resistance_obj.read()[0]
+        ary = self.resistance_obj.read()[0]
+
+        return ary[int((self.ignore_times_percent / 100) * len(ary)) :]
 
     @cached_property
     def thermistor_temp(self):
         """The associated thermistor temperature in K."""
-        temp_spectrum = rcf.temperature_thermistor(self.thermistor["load_resistance"])
-        return temp_spectrum[
-            int((self.ignore_times_percent / 100) * len(temp_spectrum)) :
-        ]
+        return rcf.temperature_thermistor(self.thermistor["load_resistance"])
 
     @cached_property
     def temp_ave(self):
@@ -1452,7 +1478,7 @@ class CalibrationObservation:
 
         return fig
 
-    def plot_s11_models(self):
+    def plot_s11_models(self, **kwargs):
         """
         Plot residuals of S11 models for all sources.
 
@@ -1462,10 +1488,10 @@ class CalibrationObservation:
             Each entry has a key of the source name, and the value is a matplotlib figure.
         """
         out = {
-            name: source.reflections.plot_residuals()
+            name: source.reflections.plot_residuals(**kwargs)
             for name, source in self._loads.items()
         }
-        out.update({"lna": self.lna.plot_residuals()})
+        out.update({"lna": self.lna.plot_residuals(**kwargs)})
         return out
 
     @cached_property
@@ -1741,6 +1767,7 @@ class CalibrationObservation:
             )
         else:
             freq_ave_cal = temp_calibrated
+        freq_ave_cal[np.isinf(freq_ave_cal)] = np.nan
 
         rms = np.sqrt(np.mean((freq_ave_cal - np.mean(freq_ave_cal)) ** 2))
 
@@ -1760,7 +1787,7 @@ class CalibrationObservation:
                 label="Average thermistor temp",
             )
 
-        ax.set_ylim([np.min(freq_ave_cal), np.max(freq_ave_cal)])
+        ax.set_ylim([np.nanmin(freq_ave_cal), np.nanmax(freq_ave_cal)])
         if xlabel:
             ax.set_xlabel("Frequency [MHz]")
 
@@ -1799,7 +1826,7 @@ class CalibrationObservation:
             out[name] = np.sqrt(np.nanmean(res ** 2))
         return out
 
-    def plot_calibrated_temps(self, bins=64):
+    def plot_calibrated_temps(self, bins=64, fig=None, ax=None):
         """
         Plot all calibrated temperatures in a single figure.
 
@@ -1813,13 +1840,14 @@ class CalibrationObservation:
         fig :
             Matplotlib figure that was created.
         """
-        fig, ax = plt.subplots(
-            len(self._sources),
-            1,
-            sharex=True,
-            gridspec_kw={"hspace": 0.05},
-            figsize=(10, 12),
-        )
+        if fig is None or ax is None or len(ax) != len(self._sources):
+            fig, ax = plt.subplots(
+                len(self._sources),
+                1,
+                sharex=True,
+                gridspec_kw={"hspace": 0.05},
+                figsize=(10, 12),
+            )
 
         for i, source in enumerate(self._sources):
             self.plot_calibrated_temp(
