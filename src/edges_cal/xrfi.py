@@ -626,7 +626,7 @@ def xrfi_model(
     flags: [None, np.ndarray] = None,
     f_ratio: [None, float] = None,
     f_log: bool = False,
-    t_log: bool = True,
+    t_log: [None, bool] = None,
     n_signal: int = 3,
     n_resid: int = -1,
     threshold: [None, float] = None,
@@ -643,16 +643,16 @@ def xrfi_model(
     """
     Flag RFI by subtracting a smooth model and iteratively removing outliers.
 
-    On each iteration, a polynomial is fit to the unflagged data, and a lower-order
-    polynomial is fit to the absolute residuals of the data with the model polynomial.
-    Bins with absolute residuals greater than `n_abs_resid_threshold` are flagged,
-    and the process is repeated until no new flags are found.
+    On each iteration, a model is fit to the unflagged data, and another model is fit
+    to the absolute residuals. Bins with absolute residuals greater than
+    `n_abs_resid_threshold` are flagged, and the process is repeated until no new flags
+    are found.
 
     Parameters
     ----------
     spectrum : array-like
-        A 1D or 2D array, where the last axis corresponds to frequency. The data
-        measured at those frequencies.
+        A 1D spectrum. Note that instead of a spectrum, model residuals can be passed.
+        The function does *not* assume the input is positive.
     model_type : str or :class:`Model`, optional
         A model to fit to the data. Any :class:`Model` is accepted.
     flags : array-like, optional
@@ -663,7 +663,9 @@ def xrfi_model(
     f_log : bool, optional
         Whether to fit the signal with log-spaced frequency values.
     t_log : bool, optional
-        Whether to fit the signal with log temperature.
+        Whether to fit the signal with log temperature. By default, True if the ``spectrum``
+        is all positive, otherwise False. If manually set to True, negative/zero values
+        of the ``spectrum`` will be treated as flagged.
     n_signal : int, optional
         The number of polynomial terms to use to fit the signal.
     n_resid : int, optional
@@ -720,16 +722,13 @@ def xrfi_model(
     if f_log and not f_ratio:
         raise ValueError("If fitting in log(freq), you must provide f_ratio.")
 
+    if t_log is None:
+        t_log = not np.any(spectrum <= 0)
+
     assert threshold > 1.5
 
     nf = spectrum.shape[-1]
     f = np.linspace(-1, 1, nf) if not f_log else np.logspace(0, f_ratio, nf)
-
-    # Initialize some flags, or set them equal to the input
-    orig_flags = flags if flags is not None else np.zeros(nf, dtype=bool)
-    orig_flags |= (spectrum <= 0) | np.isnan(spectrum) | np.isinf(spectrum)
-
-    flags = orig_flags.copy()
 
     # We assume the residuals are smoother than the signal itself
     if not increase_order:
@@ -753,14 +752,21 @@ def xrfi_model(
     model_list = []
     model_std_list = []
 
+    # Create the model that will fit the spectrum/residuals
     if isinstance(model_type, str):
         model_type = Model._models[model_type.lower()](
             default_x=f, n_terms=n_signal, **model_kwargs
         )
 
-    orig_weights = (~flags).astype(float)
-
     spec = np.log(spectrum) if t_log else spectrum
+
+    # Initialize some flags, or set them equal to the input
+    orig_flags = flags if flags is not None else np.zeros(nf, dtype=bool)
+    orig_flags |= np.isnan(spectrum) | np.isinf(spectrum)
+
+    flags = orig_flags.copy()
+
+    orig_weights = (~flags).astype(float)
 
     # Iterate until either no flags are changed between iterations, or we get to the
     # requested maximum iterations, or until we have too few unflagged data to fit appropriately.
