@@ -2003,9 +2003,12 @@ class Calibration:
             self._lna_s11_rl = Spline(self.freq.freq, fl["lna_s11_real"][...])
             self._lna_s11_im = Spline(self.freq.freq, fl["lna_s11_imag"][...])
 
-            self.internal_switch = io.SwitchingState(
-                fl.attrs["switch_path"], run_num=fl.attrs["switch_run_num"]
-            )
+            try:
+                self.internal_switch = io.SwitchingState(
+                    fl.attrs["switch_path"], run_num=fl.attrs["switch_run_num"],
+                )
+            except (ValueError, io.utils.FileStructureError):
+                self.internal_switch = None
 
     def lna_s11(self, freq=None):
         """Get the LNA S11 at given frequencies."""
@@ -2123,6 +2126,7 @@ class Calibration:
             The calibrated temperature.
         """
         uncal_temp = 400 * q + 300
+
         return self.calibrate_temp(freq, uncal_temp, ant_s11)
 
 
