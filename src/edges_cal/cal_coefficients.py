@@ -2005,9 +2005,7 @@ class Calibration:
 
             try:
                 self.internal_switch = io.SwitchingState(
-                    fl.attrs["switch_path"],
-                    run_num=fl.attrs["switch_run_num"],
-                    check=False,
+                    fl.attrs["switch_path"], run_num=fl.attrs["switch_run_num"],
                 )
             except ValueError:
                 self.internal_switch = None
