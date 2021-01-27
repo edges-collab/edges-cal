@@ -263,6 +263,12 @@ def test_calibration_init(cal_data: Path, tmpdir: Path):
         cal.decalibrate_temp(calobs.freq.freq, cal_temp, s11)[mask], temp[mask]
     )
 
+    with h5py.File(tmpdir / "calfile.h5", "a") as fl:
+        fl.attrs["switch_path"] = "/doesnt/exist"
+
+    cal = cc.Calibration(tmpdir / "calfile.h5")
+    assert cal.internal_switch is None
+
 
 def test_term_sweep(cal_data: Path, tmpdir: Path):
     cache = tmpdir / "cal-coeff-cache"

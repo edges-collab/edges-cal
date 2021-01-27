@@ -2007,7 +2007,7 @@ class Calibration:
                 self.internal_switch = io.SwitchingState(
                     fl.attrs["switch_path"], run_num=fl.attrs["switch_run_num"],
                 )
-            except ValueError:
+            except (ValueError, io.utils.FileStructureError):
                 self.internal_switch = None
 
     def lna_s11(self, freq=None):
