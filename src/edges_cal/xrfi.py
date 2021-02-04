@@ -546,8 +546,8 @@ def xrfi_model_sweep(
         The number of sigma away from the fitted model must be before it is flagged.
         Higher numbers get less false positives, but may miss some true flags.
     which_bin
-        Which bin to flag in each window. May be "last" (default), "first", "centre"
-        or "all". In each window, only this bin will be flagged.
+        Which bin to flag in each window. May be "last" (default), "all".
+        In each window, only this bin will be flagged (or all bins will be if "all").
     watershed
         The number of bins beside each flagged RFI that are assumed to also be RFI.
     max_iter
@@ -618,10 +618,6 @@ def xrfi_model_sweep(
     # Get which pixel will be flagged.
     if which_bin == "last":
         pixel = window_width - 1
-    elif which_bin == "first":
-        pixel = 0
-    elif which_bin == "centre":
-        pixel = window_width // 2
     elif which_bin == "all":
         pixel = np.arange(window_width)
 
