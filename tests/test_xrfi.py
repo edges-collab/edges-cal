@@ -155,7 +155,7 @@ def test_1d_medfilt(sky_model, rfi_model, scale):
     "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
 )
 @pytest.mark.parametrize("scale", [1000, 100])
-def test_poly(sky_model, rfi_model, scale):
+def test_xrfi_model(sky_model, rfi_model, scale):
     std = sky_model / scale
     amp = std.max() * 200
     noise = thermal_noise(sky_model, scale=scale, seed=1010)
@@ -259,3 +259,126 @@ def test_watershed():
     rfi = np.repeat([0, 1], 48).reshape((3, 32))
     out, _ = xrfi.xrfi_watershed(flags=rfi, tol=0.2)
     assert np.all(out)
+
+
+@parametrize_plus(
+    "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
+)
+@parametrize_plus(
+    "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
+)
+@pytest.mark.parametrize("scale", [1000, 100])
+def test_xrfi_model_sweep(sky_model, rfi_model, scale):
+    std = sky_model / scale
+    amp = std.max() * 200
+    noise = thermal_noise(sky_model, scale=scale, seed=1010)
+    rfi = rfi_model * amp
+    sky = sky_model + noise + rfi
+
+    true_flags = rfi_model > 0
+    flags, info = xrfi.xrfi_model_sweep(
+        sky, max_iter=10, threshold=5, use_median=True  # which_bin='centre',
+    )
+
+    # Only consider flags after bin 100 (since that's the bin width)
+    wrong = np.where(true_flags[100:] != flags[100:])[0]
+
+    if len(wrong) > 0:
+        print("Indices of WRONG flags:")
+        print(100 + wrong)
+        print("RFI false positive(0)/negative(1): ")
+        print(true_flags[wrong])
+        print("Corrupted sky at wrong flags: ")
+        print(sky[wrong])
+        print("Std. dev away from model at wrong flags: ")
+        print((sky[wrong] - sky_model[wrong]) / std[wrong])
+        print("Std. dev of noise away from model at wrong flags: ")
+        print(noise[wrong] / std[wrong])
+        print("Std dev of RFI away from model at wrong flags: ")
+        print(rfi[wrong] / std[wrong])
+        print("Measured Std Dev: ")
+        print(min(info["std"]), max(info["std"]))
+        print("Actual Std Dev (for uniform):", np.std(noise))
+    assert len(wrong) == 0
+
+
+@parametrize_plus(
+    "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
+)
+@parametrize_plus(
+    "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
+)
+@pytest.mark.parametrize("scale", [1000, 100])
+def test_xrfi_model_sweep_all(sky_model, rfi_model, scale):
+    std = sky_model / scale
+    amp = std.max() * 200
+    noise = thermal_noise(sky_model, scale=scale, seed=1010)
+    rfi = rfi_model * amp
+    sky = sky_model + noise + rfi
+
+    true_flags = rfi_model > 0
+    flags, info = xrfi.xrfi_model_sweep(
+        sky, max_iter=10, which_bin="all", threshold=5, use_median=True
+    )
+
+    # Only consider flags after bin 100 (since that's the bin width)
+    wrong = np.where(true_flags[100:] != flags[100:])[0]
+
+    if len(wrong) > 0:
+        print("Indices of WRONG flags:")
+        print(100 + wrong)
+        print("RFI false positive(0)/negative(1): ")
+        print(true_flags[wrong])
+        print("Corrupted sky at wrong flags: ")
+        print(sky[wrong])
+        print("Std. dev away from model at wrong flags: ")
+        print((sky[wrong] - sky_model[wrong]) / std[wrong])
+        print("Std. dev of noise away from model at wrong flags: ")
+        print(noise[wrong] / std[wrong])
+        print("Std dev of RFI away from model at wrong flags: ")
+        print(rfi[wrong] / std[wrong])
+        print("Measured Std Dev: ")
+        print(min(info["std"]), max(info["std"]))
+        print("Actual Std Dev (for uniform):", np.std(noise))
+    assert len(wrong) == 0
+
+
+@parametrize_plus(
+    "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
+)
+@parametrize_plus(
+    "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
+)
+@pytest.mark.parametrize("scale", [1000, 100])
+def test_xrfi_model_sweep_watershed(sky_model, rfi_model, scale):
+    std = sky_model / scale
+    amp = std.max() * 200
+    noise = thermal_noise(sky_model, scale=scale, seed=1010)
+    rfi = rfi_model * amp
+    sky = sky_model + noise + rfi
+
+    true_flags = rfi_model > 0
+    flags, info = xrfi.xrfi_model_sweep(
+        sky, max_iter=10, which_bin="all", threshold=5, use_median=True, watershed=3
+    )
+
+    # Only consider flags after bin 100 (since that's the bin width)
+    wrong = np.where(true_flags[100:] & ~flags[100:])[0]
+
+    if len(wrong) > 0:
+        print("Indices of WRONG flags:")
+        print(100 + wrong)
+        print("RFI false positive(0)/negative(1): ")
+        print(true_flags[wrong])
+        print("Corrupted sky at wrong flags: ")
+        print(sky[wrong])
+        print("Std. dev away from model at wrong flags: ")
+        print((sky[wrong] - sky_model[wrong]) / std[wrong])
+        print("Std. dev of noise away from model at wrong flags: ")
+        print(noise[wrong] / std[wrong])
+        print("Std dev of RFI away from model at wrong flags: ")
+        print(rfi[wrong] / std[wrong])
+        print("Measured Std Dev: ")
+        print(min(info["std"]), max(info["std"]))
+        print("Actual Std Dev (for uniform):", np.std(noise))
+    assert len(wrong) == 0

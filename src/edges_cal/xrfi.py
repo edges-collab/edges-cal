@@ -497,14 +497,21 @@ def _get_mad(x):
 
 def xrfi_model_sweep(
     spectrum,
-    weights=None,
-    window_width=100,
-    n_poly=4,
-    n_bootstrap=20,
-    n_sigma=2.5,
-    use_median=False,
-    flip=False,
-):
+    flags: [None, np.ndarray] = None,
+    weights: [None, np.ndarray] = None,
+    model_type: [str, Model] = "polynomial",
+    window_width: int = 100,
+    use_median: bool = True,
+    n_bootstrap: int = 20,
+    flip: bool = False,
+    n_terms: int = 3,
+    threshold: [None, float] = 3,
+    which_bin: str = "last",
+    inplace: bool = True,
+    watershed: [None, int, Tuple[int, float], np.ndarray] = None,
+    max_iter=1,
+    **model_kwargs,
+) -> Tuple[np.ndarray, dict]:
     """
     Flag RFI by using a moving window and a low-order polynomial to detrend.
 
@@ -517,113 +524,193 @@ def xrfi_model_sweep(
     spectrum : array-like
         A 1D or 2D array, where the last axis corresponds to frequency. The data
         measured at those frequencies.
+    flags : array-like
+        The boolean array of flags.
     weights : array-like
         The weights associated with the data (same shape as `spectrum`).
+    model_type
+        The kind of model to use to fit each window. If a string, it must be the name
+        of a :class:`~modelling.Model`.
     window_width : int, optional
         The width of the moving window in number of channels.
-    n_poly : int, optional
-        Number of polynomial terms to fit in each sliding window. Should be significantly
-        smaller than ``window_width``.
+    use_median : bool, optional
+        Instead of using bootstrap for the initial window, use Median Absolute Deviation.
+        If True, ``n_bootstrap`` is not used. Note that this is typically more robust
+        than bootstrap.
     n_bootstrap : int, optional
         Number of bootstrap samples to take to estimate the standard deviation of
         the data without RFI.
-    n_sigma : float, optional
-        The number of sigma at which to threshold RFI.
-    use_median : bool, optional
-        Instead of using bootstrap for the initial window, use Median Absolute Deviation.
-    flip : bool, optional
-        Whether to *also* do the analysis backwards, doing a logical OR on the final
-        flags.
+    n_terms
+        The number of terms in the model (if applicable).
+    threshold
+        The number of sigma away from the fitted model must be before it is flagged.
+        Higher numbers get less false positives, but may miss some true flags.
+    which_bin
+        Which bin to flag in each window. May be "last" (default), "first", "centre"
+        or "all". In each window, only this bin will be flagged.
+    watershed
+        The number of bins beside each flagged RFI that are assumed to also be RFI.
+    max_iter
+        The maximum number of iterations to use before determining the flags in a
+        particular window.
 
     Returns
     -------
     flags : array-like
         Boolean array of the same shape as ``spectrum`` indicated which channels/times
         have flagged RFI.
-    """
-    nf = spectrum.shape[-1]
-    f = np.linspace(-1, 1, window_width)
-    flags = np.zeros(spectrum.shape, dtype=bool)
+    info : dict
+        A dictionary of info about the fit, that can be used to inspect what happened.
 
-    if weights is not None:
-        flags |= weights <= 0
+    Notes
+    -----
+    Some notes on this algorithm. The basic idea is that a window of a given width is
+    used, and within that window, a model is fit to the spectrum data. The residuals of
+    that fit are used to calculate the standard deviation (or the 'noise-level'), which
+    gives an indication of outliers. This standard deviation may be found either by
+    bootstrap sampling, or by using the Median Absolute Deviation (MAD). Both of these
+    to *some extent* account for RFI that's still in the residuals, but the MAD is
+    typically a bit more robust. **NOTE:** getting the estimate of the standard
+    deviation wrong is one of the easiest ways for this algorithm to fail. It relies on
+    a few assumptions. Firstly, the window can't be too large, or else the residuals
+    within the window aren't stationary. Secondly, while previously-defined flags are
+    used to flag out what might be RFI, os that those data are NOT used in getting the
+    standard deviation, any remaining RFI will severely bias the std. Obviously, if RFI
+    remains in the data, the model itself might not be very accurate either.
+
+    Note that for each window, at first the RFI in that window will likely be unflagged,
+    and the std will be computed with all the channels, RFI included. This is why
+    using the MAD or bootstrapping is required. Even if the std is predicted robustly
+    via this method (i.e. there are more good bins than bad in the window), the model
+    itself may not be very good, and so the resulting flags may not be very good. This
+    is where using the option of ``max_iter>1`` is useful -- in this case, the model
+    is fit to the same window repeatedly until the flags in the window don't change
+    between iterations (note this is NOT cumulative).
+
+    In the end, by default, only a single channel is actually flagged per-window. While
+    inside the iterative loop, any number of flags can be set (in order to make a better
+    prediction of the model and std), only the first, last or central pixel is actually
+    flagged and used for the next window. This can be changed by setting
+    ``which_bin='all'``.
+    """
+    assert spectrum.ndim == 1
+    nf = len(spectrum)
+    f = np.linspace(-1, 1, window_width)
+
+    # Create the model that will fit the spectrum/residuals
+    if isinstance(model_type, str):
+        model_type = Model._models[model_type.lower()](
+            default_x=f, n_terms=n_terms, **model_kwargs
+        )
+
+    # Initialize some flags, or set them equal to the input
+    orig_flags = flags if flags is not None else np.zeros(nf, dtype=bool)
+    orig_flags |= np.isnan(spectrum) | np.isinf(spectrum)
+    flags = orig_flags.copy()
+
+    if weights is None:
+        weights = np.ones_like(~flags, dtype=float)
+
+    flags |= weights <= 0
+
+    watershed = _get_watershed(watershed)
+
+    # Get which pixel will be flagged.
+    if which_bin == "last":
+        pixel = window_width - 1
+    elif which_bin == "first":
+        pixel = 0
+    elif which_bin == "centre":
+        pixel = window_width // 2
+    elif which_bin == "all":
+        pixel = np.arange(window_width)
+
+    if which_bin != "all" and watershed is not None:
+        pixel = pixel + watershed
 
     class NoDataError(Exception):
         pass
 
-    def compute_resid(d, flagged):
-        mask = ~flagged
-        if np.any(mask):
-            par = np.polyfit(f[mask], d[mask], n_poly - 1)
-            return d[mask] - np.polyval(par, f[mask]), mask
-        else:
-            raise NoDataError
-
-    # Compute residuals for initial section
-    got_init = False
+    # Get the first window that has enough unflagged data.
     window = np.arange(window_width)
-    while not got_init and window[-1] < nf:
-        try:
-            r, mask = compute_resid(spectrum[window], flags[window])
-            got_init = True
-
-        except NoDataError:
-            window += 1
-
-    if not got_init:
-        raise NoDataError(
-            "There were no windows of data with enough data to perform xrfi."
-        )
-
-    # Computation of STD for initial section using the median statistic
-    if not use_median:
-        r_choice_std = [
-            np.std(np.random.choice(r, len(r) // 2)) for _ in range(n_bootstrap)
-        ]
-        r_std = np.median(r_choice_std)
-    else:
-        r_std = _get_mad(r)
-
-    print(r_std)
-
-    # Set this window's flags to true.
-    flags[:window_width][mask] |= np.abs(r) > n_sigma * r_std
-
-    # Initial window limits
-    window += 1
-    while window[-1] < nf:
-        # Selecting section of data of width "window_width"
-        try:
-            r, fmask = compute_resid(spectrum[window], flags[window])
-        except NoDataError:
-            continue
-
-        flags[window][fmask][np.abs(r) > n_sigma * r_std] = True
-
-        # Update std dev. estimate for the next window.
-        r_std = _get_mad(r) if use_median else np.std(r)
+    while np.sum(weights[window] > 0) <= model_type.n_terms and window[-1] < nf:
         window += 1
 
-    if flip:
-        flip_flags = xrfi_model_sweep(
-            np.flip(spectrum),
-            np.flip(weights) if weights is not None else None,
-            window_width=window_width,
-            n_poly=n_poly,
-            n_bootstrap=n_bootstrap,
-            n_sigma=n_sigma,
-            use_median=use_median,
-            flip=False,
-        )
-        flags |= np.flip(flip_flags)
+    if window[-1] == nf:
+        raise NoDataError("No windows found with enough unflagged data to fit.")
 
-    return flags
+    def flag_a_window(window):
+        counter = 0
+        flags_changed = 1
+        new_flags = flags[window].copy()
+        d = spectrum[window].copy()
+
+        while counter < max_iter and flags_changed > 0:
+            w = np.where(new_flags, 0, weights[window])
+
+            if np.sum(~new_flags) > model_type.n_terms:
+                fit = model_type.fit(ydata=d, weights=w)
+            else:
+                raise NoDataError
+
+            resids = fit.residual
+            mask = ~new_flags
+
+            # Computation of STD for initial section using the median statistic
+            if not use_median:
+                r_choice_std = [
+                    np.std(np.random.choice(resids[mask], len(resids[mask]) // 2))
+                    for _ in range(n_bootstrap)
+                ]
+                r_std = np.median(r_choice_std)
+            else:
+                r_std = _get_mad(resids[mask])
+
+            new_flags = np.abs(resids) > threshold * r_std
+
+            if watershed is not None:
+                new_flags |= _apply_watershed(
+                    new_flags, watershed, resids, threshold, r_std
+                )
+
+            flags_changed = np.sum((~mask) ^ new_flags)
+            counter += 1
+
+        if counter == max_iter and max_iter > 1:
+            warnings.warn(
+                "Max iterations reached without finding all xRFI. Consider increasing max_iter."
+            )
+
+        return new_flags, r_std, fit.model_parameters, counter
+
+    flg, r_std, p, n = flag_a_window(window)
+    flags[window] |= flg
+    std = [r_std]
+    params = [p]
+    iters = [n]
+
+    # Slide the window across the spectrum.
+    window += 1
+    while window[-1] < nf:
+        try:
+            new_flags, r_std, p, n = flag_a_window(window)
+            std.append(r_std)
+            params.append(p)
+            iters.append(n)
+            flags[window.min() + pixel] |= new_flags[pixel]
+        except NoDataError:
+            std.append(None)
+
+        window += 1
+
+    return flags, {"std": std, "params": params, "iters": iters, "model": model_type}
 
 
 def xrfi_model(
     spectrum: np.ndarray,
     model_type: [str, Model] = "polynomial",
     flags: [None, np.ndarray] = None,
+    weights: [None, np.ndarray] = None,
     f_ratio: [None, float] = None,
     f_log: bool = False,
     t_log: [None, bool] = None,
@@ -645,7 +732,7 @@ def xrfi_model(
 
     On each iteration, a model is fit to the unflagged data, and another model is fit
     to the absolute residuals. Bins with absolute residuals greater than
-    `n_abs_resid_threshold` are flagged, and the process is repeated until no new flags
+    ``n_abs_resid_threshold`` are flagged, and the process is repeated until no new flags
     are found.
 
     Parameters
@@ -656,7 +743,9 @@ def xrfi_model(
     model_type : str or :class:`Model`, optional
         A model to fit to the data. Any :class:`Model` is accepted.
     flags : array-like, optional
-        The flags associated with the data (same shape as `spectrum`).
+        The flags associated with the data (same shape as ``spectrum``).
+    weights : array-like,, optional
+        The weights associated with the data (same shape as ``spectrum``).
     f_ratio : float, optional
         The ratio of the max to min frequency to be fit. Only required if ``f_log``
         is True.
@@ -735,13 +824,7 @@ def xrfi_model(
         assert n_resid <= n_signal
 
     # Set the watershed as a small array that will overlay a flag.
-    if isinstance(watershed, int):
-        # By default, just kill all surrounding channels
-        watershed = np.zeros(watershed * 2 + 1)
-        watershed[len(watershed) // 2] = 1
-    elif watershed is not None and len(watershed) == 2:
-        # Otherwise, can provide weights per-channel.
-        watershed = np.ones(watershed[0] * 2 + 1) * watershed[1]
+    watershed = _get_watershed(watershed)
 
     n_flags_changed = 1
     counter = 0
@@ -766,7 +849,10 @@ def xrfi_model(
 
     flags = orig_flags.copy()
 
-    orig_weights = (~flags).astype(float)
+    if weights is None:
+        orig_weights = np.ones_like(spectrum)
+    else:
+        orig_weights = weights.copy()
 
     # Iterate until either no flags are changed between iterations, or we get to the
     # requested maximum iterations, or until we have too few unflagged data to fit appropriately.
@@ -815,20 +901,9 @@ def xrfi_model(
 
             # Apply a watershed -- assume surrounding channels will succumb to RFI.
             if watershed is not None:
-                watershed_flags = np.zeros_like(new_flags)
-                # Go through each flagged channel
-                for channel in np.where(new_flags)[0]:
-                    rng = range(
-                        max(0, channel - len(watershed) // 2),
-                        min(len(new_flags), channel + len(watershed) // 2 + 1),
-                    )
-                    wrng_min = max(0, -(channel - len(watershed) // 2))
-                    wrng = range(wrng_min, wrng_min + len(rng))
-
-                    watershed_flags[rng] |= (
-                        np.abs(res[rng]) > watershed[wrng] * threshold * model_std[rng]
-                    )
-                new_flags |= watershed_flags
+                new_flags |= _apply_watershed(
+                    new_flags, watershed, res, threshold, model_std
+                )
 
             n_flags_changed = np.sum(flags ^ new_flags)
             flags = new_flags.copy()
@@ -916,3 +991,36 @@ def xrfi_watershed(
     time_mask = time_coll > tol[1] * flags.shape[0]
     fl[:, time_mask] = True
     return fl, {}
+
+
+def _get_watershed(watershed: [int, None, list, np.ndarray]):
+    # Set the watershed as a small array that will overlay a flag.
+    if isinstance(watershed, int):
+        # By default, just kill all surrounding channels
+        watershed = np.zeros(watershed * 2 + 1)
+        watershed[len(watershed) // 2] = 1
+    elif watershed is not None and len(watershed) == 2:
+        # Otherwise, can provide weights per-channel.
+        watershed = np.ones(watershed[0] * 2 + 1) * watershed[1]
+    return watershed
+
+
+def _apply_watershed(flags, watershed, res, threshold, std):
+    watershed_flags = np.zeros_like(flags)
+    # Go through each flagged channel
+    for channel in np.where(flags)[0]:
+        rng = range(
+            max(0, channel - len(watershed) // 2),
+            min(len(flags), channel + len(watershed) // 2 + 1),
+        )
+        wrng_min = max(0, -(channel - len(watershed) // 2))
+        wrng = range(wrng_min, wrng_min + len(rng))
+
+        try:
+            watershed_flags[rng] |= (
+                np.abs(res[rng]) > watershed[wrng] * threshold * std[rng]
+            )
+        except (TypeError, IndexError):
+            watershed_flags[rng] |= np.abs(res[rng]) > watershed[wrng] * threshold * std
+
+    return watershed_flags
