@@ -268,7 +268,8 @@ def test_watershed():
     "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
 )
 @pytest.mark.parametrize("scale", [1000, 100])
-def test_xrfi_model_sweep(sky_model, rfi_model, scale):
+@pytest.mark.parametrize("the_bin", ["first", "last", "centre"])
+def test_xrfi_model_sweep(sky_model, rfi_model, scale, the_bin):
     std = sky_model / scale
     amp = std.max() * 200
     noise = thermal_noise(sky_model, scale=scale, seed=1010)
@@ -277,7 +278,7 @@ def test_xrfi_model_sweep(sky_model, rfi_model, scale):
 
     true_flags = rfi_model > 0
     flags, info = xrfi.xrfi_model_sweep(
-        sky, max_iter=10, threshold=5, use_median=True  # which_bin='centre',
+        sky, max_iter=10, threshold=5, use_median=True, which_bin=the_bin,
     )
 
     # Only consider flags after bin 100 (since that's the bin width)
@@ -382,3 +383,58 @@ def test_xrfi_model_sweep_watershed(sky_model, rfi_model, scale):
         print(min(info["std"]), max(info["std"]))
         print("Actual Std Dev (for uniform):", np.std(noise))
     assert len(wrong) == 0
+
+
+def test_xrfi_model_too_many_nans():
+    spec = np.nan * np.ones(500)
+
+    with pytest.raises(Exception):
+        xrfi.xrfi_model_sweep(spec)
+
+
+@parametrize_plus(
+    "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
+)
+@pytest.mark.parametrize("scale", [1000, 100])
+def test_xrfi_model_sweep_median(sky_flat_1d, rfi_model, scale):
+    std = sky_flat_1d / scale
+    amp = std.max() * 200
+    noise = thermal_noise(sky_flat_1d, scale=scale, seed=1010)
+    rfi = rfi_model * amp
+    rfi[
+        :100
+    ] = 0  # for using median, it's much better to have less RFI in the first window.
+    sky = sky_flat_1d + noise + rfi
+
+    true_flags = rfi_model > 0
+    flags, info = xrfi.xrfi_model_sweep(
+        sky, max_iter=10, threshold=5, use_median=False, which_bin="all"
+    )
+
+    # Only consider flags after bin 100 (since that's the bin width)
+    wrong = np.where(true_flags[100:] != flags[100:])[0]
+
+    if len(wrong) > 0:
+        print("Indices of WRONG flags:")
+        print(100 + wrong)
+        print("RFI false positive(0)/negative(1): ")
+        print(true_flags[wrong])
+        print("Corrupted sky at wrong flags: ")
+        print(sky[wrong])
+        print("Std. dev away from model at wrong flags: ")
+        print((sky[wrong] - sky_flat_1d[wrong]) / std[wrong])
+        print("Std. dev of noise away from model at wrong flags: ")
+        print(noise[wrong] / std[wrong])
+        print("Std dev of RFI away from model at wrong flags: ")
+        print(rfi[wrong] / std[wrong])
+        print("Measured Std Dev: ")
+        print(min(info["std"]), max(info["std"]))
+        print("Actual Std Dev (for uniform):", np.std(noise))
+    assert len(wrong) == 0
+
+
+def test_xrfi_explicit(freq, sky_flat_1d, rfi_regular_1d):
+    flags = xrfi.xrfi_explicit(freq, extra_rfi=[(60, 70), (80, 90)])
+    assert flags[105]
+    assert not flags[0]
+    assert flags[350]
