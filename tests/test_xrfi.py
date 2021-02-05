@@ -268,7 +268,6 @@ def test_watershed():
     "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
 )
 @pytest.mark.parametrize("scale", [1000, 100])
-@pytest.mark.parametrize("the_bin", ["first", "last", "centre"])
 def test_xrfi_model_sweep(sky_model, rfi_model, scale, the_bin):
     std = sky_model / scale
     amp = std.max() * 200
@@ -278,7 +277,7 @@ def test_xrfi_model_sweep(sky_model, rfi_model, scale, the_bin):
 
     true_flags = rfi_model > 0
     flags, info = xrfi.xrfi_model_sweep(
-        sky, max_iter=10, threshold=5, use_median=True, which_bin=the_bin,
+        sky, max_iter=10, threshold=5, use_median=True, which_bin="last",
     )
 
     # Only consider flags after bin 100 (since that's the bin width)
