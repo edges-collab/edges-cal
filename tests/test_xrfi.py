@@ -268,7 +268,7 @@ def test_watershed():
     "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
 )
 @pytest.mark.parametrize("scale", [1000, 100])
-def test_xrfi_model_sweep(sky_model, rfi_model, scale, the_bin):
+def test_xrfi_model_sweep(sky_model, rfi_model, scale):
     std = sky_model / scale
     amp = std.max() * 200
     noise = thermal_noise(sky_model, scale=scale, seed=1010)
