@@ -157,7 +157,7 @@ def test_xrfi_model(sky_model, rfi_model, scale):
 @parametrize_plus("rfi_model", [fxref(rfi_regular_leaky)])
 @pytest.mark.parametrize("scale", [1000, 100])
 def test_poly_watershed_strict(sky_model, rfi_model, scale):
-    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale)
+    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=30)
 
     true_flags = rfi_model > 0
     flags, info = xrfi.xrfi_model(sky, watershed=1, threshold=10)
@@ -175,7 +175,7 @@ def test_poly_watershed_strict(sky_model, rfi_model, scale):
 @parametrize_plus("rfi_model", [fxref(rfi_regular_leaky)])
 @pytest.mark.parametrize("scale", [1000, 100])
 def test_poly_watershed_relaxed(sky_model, rfi_model, scale):
-    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale)
+    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=500)
 
     true_flags = rfi_model > 0
     flags, info = xrfi.xrfi_model(sky, watershed=np.array([0.05, 1, 0.05]), threshold=6)
@@ -316,9 +316,9 @@ def print_wrongness(wrong, std, info, noise, true_flags, sky, rfi):
         print("Actual Std Dev (for uniform):", np.std(noise))
 
 
-def make_sky(sky_model, rfi_model=np.zeros(NFREQ), scale=1000):
+def make_sky(sky_model, rfi_model=np.zeros(NFREQ), scale=1000, rfi_amp=200):
     std = sky_model / scale
-    amp = std.max() * 200
+    amp = std.max() * rfi_amp
     noise = thermal_noise(sky_model, scale=scale, seed=1010)
     rfi = rfi_model * amp
     return sky_model + noise + rfi, std, noise, rfi
