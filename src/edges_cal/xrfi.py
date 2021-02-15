@@ -687,7 +687,6 @@ def xrfi_model_sweep(
     iters = [n]
 
     # Slide the window across the spectrum.
-    print(window.dtype, pixel.dtype)
     window += 1
     while window[-1] < nf:
         try:
