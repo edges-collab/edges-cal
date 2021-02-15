@@ -5,6 +5,7 @@
 ### Added
 
 - Automatic notebook reports for calibration
+- `xrfi_model_sweep` that actually works and is tested.
 
 ### Fixed
 

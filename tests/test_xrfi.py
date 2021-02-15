@@ -117,11 +117,7 @@ def test_flagged_filter(sky_pl_1d, rfi_regular_1d):
     list(itertools.product((1000, 100))),  # Note that realistic noise should be ~250.
 )
 def test_1d_medfilt(sky_model, rfi_model, scale):
-    std = sky_model / scale
-    amp = std.max() * 200
-    noise = thermal_noise(sky_model, scale=scale, seed=1010)
-    rfi = rfi_model * amp
-    sky = sky_model + noise + rfi
+    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale)
 
     true_flags = rfi_model > 0
     flags, significance = xrfi.xrfi_medfilt(
@@ -130,20 +126,7 @@ def test_1d_medfilt(sky_model, rfi_model, scale):
 
     wrong = np.where(true_flags != flags)[0]
 
-    if len(wrong) > 0:
-        print("RFI false positive(0)/negative(1): ")
-        print(true_flags[wrong])
-        print("Corrupted sky at wrong flags: ")
-        print(sky[wrong])
-        print("Std. dev away from model at wrong flags: ")
-        print((sky[wrong] - sky_model[wrong]) / std[wrong])
-        print("Std. dev of noise away from model at wrong flags: ")
-        print(noise[wrong] / std[wrong])
-        print("Significance at wrong flags: ")
-        print(significance[wrong] / std[wrong])
-
-        print("Std dev of RFI away from model at wrong flags: ")
-        print(rfi[wrong] / std[wrong])
+    print_wrongness(wrong, std, {}, noise, true_flags, sky, rfi)
 
     assert len(wrong) == 0
 
@@ -155,29 +138,15 @@ def test_1d_medfilt(sky_model, rfi_model, scale):
     "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
 )
 @pytest.mark.parametrize("scale", [1000, 100])
-def test_poly(sky_model, rfi_model, scale):
-    std = sky_model / scale
-    amp = std.max() * 200
-    noise = thermal_noise(sky_model, scale=scale, seed=1010)
-    rfi = rfi_model * amp
-    sky = sky_model + noise + rfi
+def test_xrfi_model(sky_model, rfi_model, scale):
+    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale)
 
     true_flags = rfi_model > 0
     flags, info = xrfi.xrfi_model(sky)
 
     wrong = np.where(true_flags != flags)[0]
 
-    if len(wrong) > 0:
-        print("RFI false positive(0)/negative(1): ")
-        print(true_flags[wrong])
-        print("Corrupted sky at wrong flags: ")
-        print(sky[wrong])
-        print("Std. dev away from model at wrong flags: ")
-        print((sky[wrong] - sky_model[wrong]) / std[wrong])
-        print("Std. dev of noise away from model at wrong flags: ")
-        print(noise[wrong] / std[wrong])
-        print("Std dev of RFI away from model at wrong flags: ")
-        print(rfi[wrong] / std[wrong])
+    print_wrongness(wrong, std, info, noise, true_flags, sky, rfi)
 
     assert len(wrong) == 0
 
@@ -188,29 +157,14 @@ def test_poly(sky_model, rfi_model, scale):
 @parametrize_plus("rfi_model", [fxref(rfi_regular_leaky)])
 @pytest.mark.parametrize("scale", [1000, 100])
 def test_poly_watershed_strict(sky_model, rfi_model, scale):
-    std = sky_model / scale
-    amp = std.max() * 30
-    noise = thermal_noise(sky_model, scale=scale, seed=1010)
-    rfi = rfi_model * amp
-    sky = sky_model + noise + rfi
+    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=30)
 
     true_flags = rfi_model > 0
     flags, info = xrfi.xrfi_model(sky, watershed=1, threshold=10)
 
     wrong = np.where(true_flags != flags)[0]
 
-    if len(wrong) > 0:
-        print("where it went wrong: ", wrong)
-        print("RFI false positive(False)/negative(True): ")
-        print(true_flags[wrong])
-        print("Corrupted sky at wrong flags: ")
-        print(sky[wrong])
-        print("Std. dev away from model at wrong flags: ")
-        print((sky[wrong] - sky_model[wrong]) / std[wrong])
-        print("Std. dev of noise away from model at wrong flags: ")
-        print(noise[wrong] / std[wrong])
-        print("Std dev of RFI away from model at wrong flags: ")
-        print(rfi[wrong] / std[wrong])
+    print_wrongness(wrong, std, info, noise, true_flags, sky, rfi)
 
     assert len(wrong) == 0
 
@@ -221,11 +175,7 @@ def test_poly_watershed_strict(sky_model, rfi_model, scale):
 @parametrize_plus("rfi_model", [fxref(rfi_regular_leaky)])
 @pytest.mark.parametrize("scale", [1000, 100])
 def test_poly_watershed_relaxed(sky_model, rfi_model, scale):
-    std = sky_model / scale
-    amp = std.max() * 500
-    noise = thermal_noise(sky_model, scale=scale, seed=1010)
-    rfi = rfi_model * amp
-    sky = sky_model + noise + rfi
+    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=500)
 
     true_flags = rfi_model > 0
     flags, info = xrfi.xrfi_model(sky, watershed=np.array([0.05, 1, 0.05]), threshold=6)
@@ -233,16 +183,7 @@ def test_poly_watershed_relaxed(sky_model, rfi_model, scale):
     # here we just assert no *missed* RFI
     wrong = np.where(true_flags & ~flags)[0]
 
-    if len(wrong) > 0:
-        print("where it went wrong: ", wrong)
-        print("Corrupted sky at wrong flags: ")
-        print(sky[wrong])
-        print("Std. dev away from model at wrong flags: ")
-        print((sky[wrong] - sky_model[wrong]) / std[wrong])
-        print("Std. dev of noise away from model at wrong flags: ")
-        print(noise[wrong] / std[wrong])
-        print("Std dev of RFI away from model at wrong flags: ")
-        print(rfi[wrong] / std[wrong])
+    print_wrongness(wrong, std, info, noise, true_flags, sky, rfi)
 
     assert len(wrong) == 0
 
@@ -259,3 +200,156 @@ def test_watershed():
     rfi = np.repeat([0, 1], 48).reshape((3, 32))
     out, _ = xrfi.xrfi_watershed(flags=rfi, tol=0.2)
     assert np.all(out)
+
+
+@parametrize_plus(
+    "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
+)
+@parametrize_plus(
+    "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
+)
+@pytest.mark.parametrize("scale", [1000, 100])
+def test_xrfi_model_sweep(sky_model, rfi_model, scale):
+    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale)
+
+    true_flags = rfi_model > 0
+    flags, info = xrfi.xrfi_model_sweep(
+        sky, max_iter=10, threshold=5, use_median=True, which_bin="last",
+    )
+
+    # Only consider flags after bin 100 (since that's the bin width)
+    wrong = np.where(true_flags[100:] != flags[100:])[0]
+
+    print_wrongness(wrong, std, info, noise, true_flags, sky, rfi)
+    assert len(wrong) == 0
+
+
+@parametrize_plus(
+    "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
+)
+@parametrize_plus(
+    "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
+)
+@pytest.mark.parametrize("scale", [1000, 100])
+def test_xrfi_model_sweep_all(sky_model, rfi_model, scale):
+    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale)
+
+    true_flags = rfi_model > 0
+    flags, info = xrfi.xrfi_model_sweep(
+        sky, max_iter=10, which_bin="all", threshold=5, use_median=True
+    )
+
+    # Only consider flags after bin 100 (since that's the bin width)
+    wrong = np.where(true_flags[100:] != flags[100:])[0]
+
+    print_wrongness(wrong, std, info, noise, true_flags, sky, rfi)
+    assert len(wrong) == 0
+
+
+@parametrize_plus(
+    "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
+)
+@parametrize_plus(
+    "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
+)
+@pytest.mark.parametrize("scale", [1000, 100])
+def test_xrfi_model_sweep_watershed(sky_model, rfi_model, scale):
+    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale)
+
+    true_flags = rfi_model > 0
+    flags, info = xrfi.xrfi_model_sweep(
+        sky, max_iter=10, which_bin="all", threshold=5, use_median=True, watershed=3
+    )
+
+    # Only consider flags after bin 100 (since that's the bin width)
+    wrong = np.where(true_flags[100:] & ~flags[100:])[0]
+
+    print_wrongness(wrong, std, info, noise, true_flags, sky, rfi)
+    assert len(wrong) == 0
+
+
+def test_xrfi_model_too_many_nans():
+    spec = np.nan * np.ones(500)
+
+    with pytest.raises(xrfi.NoDataError):
+        xrfi.xrfi_model_sweep(spec)
+
+
+@parametrize_plus(
+    "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
+)
+@pytest.mark.parametrize("scale", [1000, 100])
+def test_xrfi_model_sweep_median(sky_flat_1d, rfi_model, scale):
+    rfi = rfi_model.copy()
+    rfi[:100] = 0
+    sky, std, noise, rfi = make_sky(sky_flat_1d, rfi_model, scale)
+
+    true_flags = rfi_model > 0
+    flags, info = xrfi.xrfi_model_sweep(
+        sky, max_iter=10, threshold=5, use_median=False, which_bin="all"
+    )
+
+    # Only consider flags after bin 100 (since that's the bin width)
+    wrong = np.where(true_flags[100:] != flags[100:])[0]
+
+    print_wrongness(wrong, std, info, noise, true_flags, sky, rfi)
+
+    assert len(wrong) == 0
+
+
+def print_wrongness(wrong, std, info, noise, true_flags, sky, rfi):
+    if len(wrong) > 0:
+        print("Indices of WRONG flags:")
+        print(100 + wrong)
+        print("RFI false positive(0)/negative(1): ")
+        print(true_flags[wrong])
+        print("Corrupted sky at wrong flags: ")
+        print(sky[wrong])
+        print("Std. dev away from model at wrong flags: ")
+        print((sky[wrong] - sky_flat_1d[wrong]) / std[wrong])
+        print("Std. dev of noise away from model at wrong flags: ")
+        print(noise[wrong] / std[wrong])
+        print("Std dev of RFI away from model at wrong flags: ")
+        print(rfi[wrong] / std[wrong])
+        print("Measured Std Dev: ")
+        print(min(info["std"]), max(info["std"]))
+        print("Actual Std Dev (for uniform):", np.std(noise))
+
+
+def make_sky(sky_model, rfi_model=np.zeros(NFREQ), scale=1000, rfi_amp=200):
+    std = sky_model / scale
+    amp = std.max() * rfi_amp
+    noise = thermal_noise(sky_model, scale=scale, seed=1010)
+    rfi = rfi_model * amp
+    return sky_model + noise + rfi, std, noise, rfi
+
+
+def test_xrfi_explicit(freq, sky_flat_1d, rfi_regular_1d):
+    flags = xrfi.xrfi_explicit(freq, extra_rfi=[(60, 70), (80, 90)])
+    assert flags[105]
+    assert not flags[0]
+    assert flags[350]
+
+
+def test_xrfi_model_sweep_watershed_last(sky_flat_1d):
+    with pytest.raises(ValueError):
+        xrfi.xrfi_model_sweep(sky_flat_1d, which_bin="last", watershed=(4, 0.5))
+
+
+def test_giving_weights(sky_flat_1d):
+    sky, std, noise, rfi = make_sky(sky_flat_1d)
+
+    flags, info = xrfi.xrfi_model_sweep(
+        sky,
+        weights=np.ones_like(sky),
+        max_iter=10,
+        which_bin="all",
+        threshold=5,
+        use_median=True,
+    )
+
+    flags2, info2 = xrfi.xrfi_model_sweep(
+        sky, max_iter=10, which_bin="all", threshold=5, use_median=True
+    )
+
+    assert np.all(flags == flags2)
