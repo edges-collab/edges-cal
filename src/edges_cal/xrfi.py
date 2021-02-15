@@ -8,6 +8,10 @@ from typing import Tuple
 from .modelling import Model, ModelFit
 
 
+class NoDataError(Exception):
+    pass
+
+
 def _check_convolve_dims(data, half_size: [None, Tuple[int, None]] = None):
     """Check the kernel sizes to be used in various convolution-like operations.
 
@@ -622,13 +626,10 @@ def xrfi_model_sweep(
         pixel = np.arange(window_width)
 
     if which_bin != "all" and watershed is not None:
-        pixel = pixel + watershed
-
-    class NoDataError(Exception):
-        pass
+        raise ValueError("can only use watershed with which_bin='all'")
 
     # Get the first window that has enough unflagged data.
-    window = np.arange(window_width)
+    window = np.arange(window_width, dtype=int)
     while np.sum(weights[window] > 0) <= model_type.n_terms and window[-1] < nf:
         window += 1
 
@@ -686,6 +687,7 @@ def xrfi_model_sweep(
     iters = [n]
 
     # Slide the window across the spectrum.
+    print(window.dtype, pixel.dtype)
     window += 1
     while window[-1] < nf:
         try:
