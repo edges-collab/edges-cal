@@ -5,6 +5,12 @@
 ### Added
 
 - Automatic notebook reports for calibration
+- `xrfi_model_sweep` that actually works and is tested.
+
+### Fixed
+
+- xRFI doesn't assume that input spectrum is all positive (could be residuals, and
+  therefore have negatives).
 
 ## Version 0.4.0
 
