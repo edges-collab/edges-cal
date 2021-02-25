@@ -507,11 +507,9 @@ def xrfi_model_sweep(
     window_width: int = 100,
     use_median: bool = True,
     n_bootstrap: int = 20,
-    flip: bool = False,
     n_terms: int = 3,
     threshold: [None, float] = 3,
     which_bin: str = "last",
-    inplace: bool = True,
     watershed: [None, int, Tuple[int, float], np.ndarray] = None,
     max_iter=1,
     **model_kwargs,
@@ -636,7 +634,7 @@ def xrfi_model_sweep(
     if window[-1] == nf:
         raise NoDataError("No windows found with enough unflagged data to fit.")
 
-    def flag_a_window(window):
+    def flag_a_window(window, std_estimator=0):
         counter = 0
         flags_changed = 1
         new_flags = flags[window].copy()
@@ -654,14 +652,16 @@ def xrfi_model_sweep(
             mask = ~new_flags
 
             # Computation of STD for initial section using the median statistic
-            if not use_median:
+            if std_estimator == 0:
                 r_choice_std = [
                     np.std(np.random.choice(resids[mask], len(resids[mask]) // 2))
                     for _ in range(n_bootstrap)
                 ]
                 r_std = np.median(r_choice_std)
-            else:
+            elif std_estimator == 1:
                 r_std = _get_mad(resids[mask])
+            elif std_estimator == 2:
+                r_std = np.std(resids[mask])
 
             new_flags = np.abs(resids) > threshold * r_std
 
@@ -680,7 +680,7 @@ def xrfi_model_sweep(
 
         return new_flags, r_std, fit.model_parameters, counter
 
-    flg, r_std, p, n = flag_a_window(window)
+    flg, r_std, p, n = flag_a_window(window, int(use_median))
     flags[window] |= flg
     std = [r_std]
     params = [p]
@@ -690,7 +690,7 @@ def xrfi_model_sweep(
     window += 1
     while window[-1] < nf:
         try:
-            new_flags, r_std, p, n = flag_a_window(window)
+            new_flags, r_std, p, n = flag_a_window(window, 2)
             std.append(r_std)
             params.append(p)
             iters.append(n)

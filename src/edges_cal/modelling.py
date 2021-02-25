@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Functions for generating least-squares model fits for linear models."""
 import numpy as np
+import warnings
 from abc import abstractmethod
 from cached_property import cached_property
 from statsmodels import api as sm
@@ -416,54 +417,54 @@ class ModelFit:
         self.weights = weights
 
         if weights is None:
-            weights = 1
-
-        if np.isscalar(weights):
-            self.weights = weights
-        elif weights.ndim == 1:
+            self.weights = 1
+        else:
             # if a vector is given
             assert weights.shape == self.xdata.shape
             self.weights = weights
-            self.flags = self.weights == 0
-        elif weights.ndim == 2:
-            assert weights.shape == (len(self.xdata), len(self.xdata))
-            self.weights = weights
-            self.flags = np.diag(self.weights) == 0
-        else:
-            raise ValueError("weights must be scalar, 1D or 2D")
-
-        # TODO: might be good to use the flags array to restrict the fitted values?
-        # TODO: would be faster if there's a lot of flags, but slower to do the flagging if not.
 
         self.n_terms = self.model.n_terms
-        self.degrees_of_freedom = len(self.xdata) - self.n_terms - 1
+        self.degrees_of_freedom = self.xdata.size - self.n_terms - 1
 
     @cached_property
-    def fit(self) -> sm.regression.linear_model.RegressionResults:
+    def fit(self) -> Model:
         """The model fit."""
-        if np.isscalar(self.weights):
-            model = sm.OLS(self.ydata, self.model.default_basis.T)
-        elif self.weights.ndim == 1:
-            model = sm.WLS(
-                self.ydata[~self.flags],
-                self.model.default_basis.T[~self.flags],
-                weights=self.weights[~self.flags],
-            )
-        else:
-            cov = 1 / self.weights
-            cov = cov[~self.flags][:, ~self.flags]
+        pars = self._wls(self.model.default_basis, self.ydata, w=1)
+        self.model.parameters = pars
+        return self.model
 
-            model = sm.GLS(
-                self.ydata[~self.flags],
-                self.model.default_basis.T[~self.flags],
-                sigma=cov,
-            )
-        return model.fit(method="qr")
+    def _wls(self, van, y, w):
+        """Ripped straight outta numpy for speed.
+
+        Note: this function is written purely for speed, and is intended to *not*
+        be highly generic. Don't replace this by statsmodels or even np.polyfit. They
+        are significantly slower (>4x for statsmodels, 1.5x for polyfit).
+        """
+        # set up the least squares matrices and apply weights.
+        # Don't use inplace operations as they
+        # can cause problems with NA.
+        lhs = van * w
+        rhs = y * w
+
+        lhs = lhs * w
+        rhs = rhs * w
+
+        rcond = y.size * np.finfo(y.dtype).eps
+
+        # Determine the norms of the design matrix columns.
+        scl = np.sqrt(np.square(lhs).sum(1))
+        scl[scl == 0] = 1
+
+        # Solve the least squares problem.
+        c, resids, rank, s = np.linalg.lstsq(lhs.T / scl, rhs.T, rcond)
+        c = (c.T / scl).T
+
+        return c
 
     @cached_property
     def model_parameters(self):
         """The best-fit model parameters."""
-        return self.fit.params
+        return self.fit.parameters
 
     def evaluate(self, x: [np.ndarray, None] = None) -> np.ndarray:
         """Evaluate the best-fit model.
@@ -480,10 +481,8 @@ class ModelFit:
             The best-fit model evaluated at ``x``.
         """
         # Set the parameters on the underlying object (solves for them if not solved yet)
-        self.model.parameters = list(self.model_parameters)
-        if x is None:
-            x = self.xdata
-        return self.model(x)
+        model = self.fit
+        return model(x)
 
     @cached_property
     def residual(self) -> np.ndarray:
