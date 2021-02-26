@@ -635,21 +635,25 @@ def xrfi_model_sweep(
         raise NoDataError("No windows found with enough unflagged data to fit.")
 
     def flag_a_window(window, std_estimator=0):
+        # NOTE: line profiling reveals that the fitting takes ~50% of the time of this
+        #       function, and taking the std takes ~20%. The next biggest are taking the
+        #       two sums, which are ~6% each.
         counter = 0
         flags_changed = 1
-        new_flags = flags[window].copy()
+        new_flags = flags[window]
         d = spectrum[window].copy()
 
         while counter < max_iter and flags_changed > 0:
             w = np.where(new_flags, 0, weights[window])
 
-            if np.sum(~new_flags) > model_type.n_terms:
+            mask = ~new_flags
+
+            if np.sum(mask) > model_type.n_terms:
                 fit = model_type.fit(ydata=d, weights=w)
             else:
                 raise NoDataError
 
             resids = fit.residual
-            mask = ~new_flags
 
             # Computation of STD for initial section using the median statistic
             if std_estimator == 0:
