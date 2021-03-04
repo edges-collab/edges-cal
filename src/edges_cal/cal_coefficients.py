@@ -65,7 +65,7 @@ class S1P:
                 )
 
         self.load_name = self.s1p.kind
-        self.run_num = self.s1p.run_num
+        self.repeat_num = self.s1p.repeat_num
 
         spec = self.s1p.s11
         f = self.s1p.freq
@@ -1964,7 +1964,7 @@ class CalibrationObservation:
             fl.attrs["cterms"] = self.cterms
             fl.attrs["wterms"] = self.wterms
             fl.attrs["switch_path"] = str(self.lna.internal_switch.path)
-            fl.attrs["switch_run_num"] = self.lna.internal_switch.run_num
+            fl.attrs["switch_repeat_num"] = self.lna.internal_switch.repeat_num
 
             fl["C1"] = self.C1_poly.coefficients
             fl["C2"] = self.C2_poly.coefficients
@@ -2005,7 +2005,7 @@ class Calibration:
 
             try:
                 self.internal_switch = io.SwitchingState(
-                    fl.attrs["switch_path"], run_num=fl.attrs["switch_run_num"],
+                    fl.attrs["switch_path"], repeat_num=fl.attrs["switch_repeat_num"],
                 )
             except (ValueError, io.utils.FileStructureError):
                 self.internal_switch = None

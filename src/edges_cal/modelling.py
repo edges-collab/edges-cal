@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """Functions for generating least-squares model fits for linear models."""
+from __future__ import annotations
+
 import numpy as np
-import warnings
 from abc import abstractmethod
 from cached_property import cached_property
-from statsmodels import api as sm
-from typing import Sequence, Type, Union
+from typing import Optional, Sequence, Type, Union
 
 F_CENTER = 75.0
 
@@ -118,33 +118,32 @@ class Model:
 
         This does it more quickly, without too many repeated calculations.
         """
-        if self.default_x is None or n_terms == self.n_terms:
+        old_terms = self.n_terms * 1
+        self.n_terms = n_terms
+        self.parameters = None
+
+        if self.default_x is None or n_terms == old_terms:
             pass
-        elif n_terms < self.n_terms:
+        elif n_terms < old_terms:
             self.default_basis = self.default_basis[:n_terms]
         else:
             self.default_basis = np.vstack(
                 (
                     self.default_basis,
-                    self.get_basis(self.default_x, list(range(self.n_terms, n_terms))),
+                    self.get_basis(self.default_x, list(range(old_terms, n_terms))),
                 )
             )
 
-        self.n_terms = n_terms
         return
 
-    def get_basis_term(self, indx: int, x: np.ndarray):
+    def get_basis_term(self, indx: int, x: Optional[np.ndarray] = None):
         """Get a specific basis function term."""
         # If using a new passed-in x, don't cache.
-        if (
-            self.default_x is None
-            or x.shape != self.default_x.shape
-            or not np.allclose(x, self.default_x)
-        ):
+        if x is not None:
             return self._get_basis_term(indx, x)
 
         if indx not in self.__basis_terms:
-            self.__basis_terms[indx] = self._get_basis_term(indx, x)
+            self.__basis_terms[indx] = self._get_basis_term(indx, self.default_x)
 
         return self.__basis_terms[indx]
 
@@ -207,6 +206,11 @@ class Model:
             xdata=xdata if xdata is not None else None,
             weights=weights,
         )
+
+    @staticmethod
+    def get_mdl(name) -> Model:
+        """Get a specific linear model from a string name."""
+        return Model._models[name.lower()]
 
 
 class Foreground(Model, is_meta=True):
@@ -429,7 +433,7 @@ class ModelFit:
     @cached_property
     def fit(self) -> Model:
         """The model fit."""
-        pars = self._wls(self.model.default_basis, self.ydata, w=1)
+        pars = self._wls(self.model.default_basis, self.ydata, w=self.weights)
         self.model.parameters = pars
         return self.model
 
@@ -443,11 +447,10 @@ class ModelFit:
         # set up the least squares matrices and apply weights.
         # Don't use inplace operations as they
         # can cause problems with NA.
-        lhs = van * w
-        rhs = y * w
+        mask = w > 0
 
-        lhs = lhs * w
-        rhs = rhs * w
+        lhs = van[:, mask] * w[mask]
+        rhs = y[mask] * w[mask]
 
         rcond = y.size * np.finfo(y.dtype).eps
 
@@ -456,7 +459,7 @@ class ModelFit:
         scl[scl == 0] = 1
 
         # Solve the least squares problem.
-        c, resids, rank, s = np.linalg.lstsq(lhs.T / scl, rhs.T, rcond)
+        c, resids, rank, s = np.linalg.lstsq((lhs.T / scl), rhs.T, rcond)
         c = (c.T / scl).T
 
         return c

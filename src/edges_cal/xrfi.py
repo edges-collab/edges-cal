@@ -3,7 +3,7 @@ import numpy as np
 import warnings
 import yaml
 from scipy import ndimage
-from typing import Tuple
+from typing import Optional, Tuple
 
 from .modelling import Model, ModelFit
 
@@ -500,7 +500,8 @@ def _get_mad(x):
 
 
 def xrfi_model_sweep(
-    spectrum,
+    spectrum: np.ndarray,
+    freq: Optional[np.ndarray] = None,
     flags: [None, np.ndarray] = None,
     weights: [None, np.ndarray] = None,
     model_type: [str, Model] = "polynomial",
@@ -510,7 +511,7 @@ def xrfi_model_sweep(
     n_terms: int = 3,
     threshold: [None, float] = 3,
     which_bin: str = "last",
-    watershed: [None, int, Tuple[int, float], np.ndarray] = None,
+    watershed: int = 0,
     max_iter=1,
     **model_kwargs,
 ) -> Tuple[np.ndarray, dict]:
@@ -615,15 +616,13 @@ def xrfi_model_sweep(
 
     flags |= weights <= 0
 
-    watershed = _get_watershed(watershed)
-
     # Get which pixel will be flagged.
     if which_bin == "last":
         pixel = window_width - 1
     elif which_bin == "all":
         pixel = np.arange(window_width)
 
-    if which_bin != "all" and watershed is not None:
+    if which_bin != "all" and watershed:
         raise ValueError("can only use watershed with which_bin='all'")
 
     # Get the first window that has enough unflagged data.
@@ -670,9 +669,7 @@ def xrfi_model_sweep(
             new_flags = np.abs(resids) > threshold * r_std
 
             if watershed is not None:
-                new_flags |= _apply_watershed(
-                    new_flags, watershed, resids, threshold, r_std
-                )
+                new_flags |= _apply_watershed(new_flags, watershed)
 
             flags_changed = np.sum((~mask) ^ new_flags)
             counter += 1
@@ -709,23 +706,27 @@ def xrfi_model_sweep(
 
 def xrfi_model(
     spectrum: np.ndarray,
+    freq: np.ndarray,
     model_type: [str, Model] = "polynomial",
+    resid_model_type: [str, Model] = "polynomial",
     flags: [None, np.ndarray] = None,
     weights: [None, np.ndarray] = None,
-    f_ratio: [None, float] = None,
-    f_log: bool = False,
-    t_log: [None, bool] = None,
     n_signal: int = 3,
     n_resid: int = -1,
     threshold: [None, float] = None,
     max_iter: int = 20,
     accumulate: bool = False,
     increase_order: bool = True,
+    min_terms: int = 0,
+    max_terms: int = 10,
+    min_resid_terms: int = 3,
     decrement_threshold: float = 0,
     min_threshold: float = 5,
     return_models: bool = False,
-    inplace: bool = True,
-    watershed: [None, int, Tuple[int, float], np.ndarray] = None,
+    inplace: bool = False,
+    watershed: int = 0,
+    flag_if_broken: bool = True,
+    init_flags: [np.ndarray, None] = None,
     **model_kwargs,
 ):
     """
@@ -741,21 +742,16 @@ def xrfi_model(
     spectrum : array-like
         A 1D spectrum. Note that instead of a spectrum, model residuals can be passed.
         The function does *not* assume the input is positive.
+    freq
+        The frequencies associated with the spectrum.
     model_type : str or :class:`Model`, optional
         A model to fit to the data. Any :class:`Model` is accepted.
+    resid_model_type
+        The model to fit to the absolute residuals. Any :class:`Model` is accepted.
     flags : array-like, optional
         The flags associated with the data (same shape as ``spectrum``).
     weights : array-like,, optional
         The weights associated with the data (same shape as ``spectrum``).
-    f_ratio : float, optional
-        The ratio of the max to min frequency to be fit. Only required if ``f_log``
-        is True.
-    f_log : bool, optional
-        Whether to fit the signal with log-spaced frequency values.
-    t_log : bool, optional
-        Whether to fit the signal with log temperature. By default, True if the ``spectrum``
-        is all positive, otherwise False. If manually set to True, negative/zero values
-        of the ``spectrum`` will be treated as flagged.
     n_signal : int, optional
         The number of polynomial terms to use to fit the signal.
     n_resid : int, optional
@@ -778,14 +774,9 @@ def xrfi_model(
         Whether to return the full models at each iteration.
     inplace : bool, optional
         Whether to fill up given flags array with the updated flags.
-    watershed : int, tuple or ndarray, optional
-        Specify a scheme for identifying channels surrounding a flagged channel as RFI.
-        If an int, that many channels on each side of the flagged channel will be flagged.
-        If a tuple, should be (int, float), where the int specifies the number of channels
-        on each side, and the float specifies a threshold *with respect to* the overall
-        threshold for flagging (so this should be less than one). If an array, the values
-        represent this threshold where the central bin of the array is placed on the
-        flagged channel.
+    watershed
+        How many channels *on each side* of a flagged channel that should be flagged
+        due to channel correlations/bleed.
 
     Other Parameters
     ----------------
@@ -809,23 +800,15 @@ def xrfi_model(
         )
         threshold = min_threshold
 
-    if f_log and not f_ratio:
-        raise ValueError("If fitting in log(freq), you must provide f_ratio.")
-
-    if t_log is None:
-        t_log = not np.any(spectrum <= 0)
-
     assert threshold > 1.5
+    if len(freq) != len(spectrum):
+        raise ValueError("freq and spectrum must have the same length")
 
     nf = spectrum.shape[-1]
-    f = np.linspace(-1, 1, nf) if not f_log else np.logspace(0, f_ratio, nf)
 
     # We assume the residuals are smoother than the signal itself
     if not increase_order:
         assert n_resid <= n_signal
-
-    # Set the watershed as a small array that will overlay a flag.
-    watershed = _get_watershed(watershed)
 
     n_flags_changed = 1
     counter = 0
@@ -835,14 +818,19 @@ def xrfi_model(
     total_flags_list = []
     model_list = []
     model_std_list = []
+    thresholds = []
 
     # Create the model that will fit the spectrum/residuals
     if isinstance(model_type, str):
-        model_type = Model._models[model_type.lower()](
-            default_x=f, n_terms=n_signal, **model_kwargs
-        )
+        model_type = Model.get_mdl(model_type)
+    if isinstance(resid_model_type, str):
+        resid_model_type = Model.get_mdl(resid_model_type)
 
-    spec = np.log(spectrum) if t_log else spectrum
+    model = model_type(default_x=freq, n_terms=n_signal, **model_kwargs)
+    res_model = resid_model_type(
+        default_x=freq,
+        n_terms=max(min_resid_terms, n_resid if n_resid > 0 else n_signal + n_resid),
+    )
 
     # Initialize some flags, or set them equal to the input
     orig_flags = flags if flags is not None else np.zeros(nf, dtype=bool)
@@ -850,68 +838,71 @@ def xrfi_model(
 
     flags = orig_flags.copy()
 
-    if weights is None:
-        orig_weights = np.ones_like(spectrum)
-    else:
-        orig_weights = weights.copy()
+    if init_flags is not None:
+        flags = flags | init_flags
+
+    orig_weights = np.ones_like(spectrum) if weights is None else weights.copy()
 
     # Iterate until either no flags are changed between iterations, or we get to the
     # requested maximum iterations, or until we have too few unflagged data to fit appropriately.
-    while n_flags_changed > 0 and counter < max_iter and np.sum(~flags) > n_signal * 2:
+    # keep iterating
+    while counter < max_iter and (
+        n_signal <= min_terms or (n_flags_changed > 0 and np.sum(~flags) > n_signal * 2)
+    ):
 
-        model_type.update_nterms(n_signal)
+        model.update_nterms(n_signal)
         weights = np.where(flags, 0, orig_weights)
 
         # Get a model fit to the unflagged data.
         # Could be polynomial or fourier (or something else...)
-        mdl = ModelFit(model_type, ydata=spec, weights=weights)
-
-        par = mdl.model_parameters
-        model = mdl.evaluate(f)
+        mdl = model.fit(ydata=spectrum, weights=weights)
+        res = mdl.residual
+        absres = np.abs(res)
 
         if return_models:
-            model_list.append(par)
-
-        # Need to get back to linear space if we logged.
-        if t_log:
-            model = np.exp(model)
-
-        res = spectrum - model
+            model_list.append(mdl.model_parameters)
 
         # Now fit a model to the absolute residuals.
         # This number is "like" a local standard deviation, since the polynomial does
         # something like a local average.
-        model_type.update_nterms(n_resid if n_resid > 0 else n_signal + n_resid)
-        mdl = ModelFit(model_type, ydata=np.abs(res), weights=weights)
-        par = mdl.model_parameters
-        model_std = mdl.evaluate(f)
+        # Do it in log-space so the model doesn't ever hit zero.
+        # The 0.53 term comes about because the estimate of the std here is not
+        # unbiased. You can obtain it by doing
+        # sigma=<any number>
+        # \sqrt(exp(mean(log(Normal(0, \sigma, 1000000)^2))))/\sigma
+        # it is not dependent on the value of sigma.
+        res_model.update_nterms(
+            max(min_resid_terms, n_resid if n_resid > 0 else n_signal + n_resid)
+        )
+        res_mdl = res_model.fit(ydata=np.log(absres ** 2), weights=weights)
+        model_std = np.sqrt(np.exp(res_mdl.evaluate())) / 0.53
 
         if return_models:
-            model_std_list.append(par)
+            model_std_list.append(res_mdl.model_parameters)
 
         if accumulate:
             # If we are accumulating flags, we just get the *new* flags and add them
             # to the original flags
             nflags = np.sum(flags[~flags])
-            flags[~flags] |= np.abs(res)[~flags] > threshold * model_std[~flags]
+            flags[~flags] |= absres[~flags] > threshold * model_std[~flags]
             n_flags_changed = np.sum(flags[~flags]) - nflags
         else:
             # If we're not accumulating, we just take these flags (along with the fully
             # original flags).
-            new_flags = orig_flags | (np.abs(res) > threshold * model_std)
+            new_flags = orig_flags | (res > threshold * model_std)
 
             # Apply a watershed -- assume surrounding channels will succumb to RFI.
             if watershed is not None:
-                new_flags |= _apply_watershed(
-                    new_flags, watershed, res, threshold, model_std
-                )
+                new_flags |= _apply_watershed(new_flags, watershed)
 
             n_flags_changed = np.sum(flags ^ new_flags)
             flags = new_flags.copy()
 
         counter += 1
-        if increase_order:
+        if increase_order and n_signal < max_terms:
             n_signal += 1
+
+        thresholds.append(threshold)
 
         # decrease the flagging threshold if we want to for next iteration
         threshold = max(threshold - decrement_threshold, min_threshold)
@@ -920,15 +911,19 @@ def xrfi_model(
         n_flags_changed_list.append(n_flags_changed)
         total_flags_list.append(np.sum(flags))
 
-    if counter == max_iter:
+    if counter == max_iter and max_iter > 1:
         warnings.warn(
             f"max iterations ({max_iter}) reached, not all RFI might have been caught."
         )
+        if flag_if_broken:
+            flags[:] = True
 
     if np.sum(~flags) <= n_signal * 2:
         warnings.warn(
             "Termination of iterative loop due to too many flags. Reduce n_signal or check data."
         )
+        if flag_if_broken:
+            flags[:] = True
 
     if inplace:
         orig_flags |= flags
@@ -938,16 +933,19 @@ def xrfi_model(
         {
             "n_flags_changed": n_flags_changed_list,
             "total_flags": total_flags_list,
-            "models": model_list,
-            "model_std": model_std_list,
+            "params": model_list,
+            "res_params": model_std_list,
             "n_iters": counter,
-            "model": model_type,
+            "model": model,
+            "res_model": res_model,
+            "thresholds": thresholds,
         },
     )
 
 
 def xrfi_watershed(
     spectrum: [None, np.ndarray] = None,
+    freq: [np.ndarray, None] = None,
     flags: [None, np.ndarray] = None,
     tol: [float, Tuple[float]] = 0.5,
     inplace=False,
@@ -994,34 +992,10 @@ def xrfi_watershed(
     return fl, {}
 
 
-def _get_watershed(watershed: [int, None, list, np.ndarray]):
-    # Set the watershed as a small array that will overlay a flag.
-    if isinstance(watershed, int):
-        # By default, just kill all surrounding channels
-        watershed = np.zeros(watershed * 2 + 1)
-        watershed[len(watershed) // 2] = 1
-    elif watershed is not None and len(watershed) == 2:
-        # Otherwise, can provide weights per-channel.
-        watershed = np.ones(watershed[0] * 2 + 1) * watershed[1]
-    return watershed
-
-
-def _apply_watershed(flags, watershed, res, threshold, std):
+def _apply_watershed(flags, watershed):
     watershed_flags = np.zeros_like(flags)
-    # Go through each flagged channel
-    for channel in np.where(flags)[0]:
-        rng = range(
-            max(0, channel - len(watershed) // 2),
-            min(len(flags), channel + len(watershed) // 2 + 1),
-        )
-        wrng_min = max(0, -(channel - len(watershed) // 2))
-        wrng = range(wrng_min, wrng_min + len(rng))
 
-        try:
-            watershed_flags[rng] |= (
-                np.abs(res[rng]) > watershed[wrng] * threshold * std[rng]
-            )
-        except (TypeError, IndexError):
-            watershed_flags[rng] |= np.abs(res[rng]) > watershed[wrng] * threshold * std
-
+    for i in range(1, watershed + 1):
+        watershed_flags[i:] |= flags[:-i]
+        watershed_flags[:-i] |= flags[i:]
     return watershed_flags

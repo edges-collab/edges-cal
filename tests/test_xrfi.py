@@ -53,9 +53,9 @@ def rfi_regular_leaky():
     a = np.zeros(NFREQ)
     a[50:-30:50] = 1
     a[49:-30:50] = (
-        1.0 / 120
+        1.0 / 1000
     )  # needs to be smaller than 200 or else it will be flagged outright.
-    a[51:-30:50] = 1.0 / 120
+    a[51:-30:50] = 1.0 / 1000
     return a
 
 
@@ -138,11 +138,11 @@ def test_1d_medfilt(sky_model, rfi_model, scale):
     "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
 )
 @pytest.mark.parametrize("scale", [1000, 100])
-def test_xrfi_model(sky_model, rfi_model, scale):
+def test_xrfi_model(sky_model, rfi_model, scale, freq):
     sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale)
 
     true_flags = rfi_model > 0
-    flags, info = xrfi.xrfi_model(sky)
+    flags, info = xrfi.xrfi_model(sky, freq)
 
     wrong = np.where(true_flags != flags)[0]
 
@@ -156,11 +156,13 @@ def test_xrfi_model(sky_model, rfi_model, scale):
 )
 @parametrize_plus("rfi_model", [fxref(rfi_regular_leaky)])
 @pytest.mark.parametrize("scale", [1000, 100])
-def test_poly_watershed_strict(sky_model, rfi_model, scale):
-    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=30)
+def test_poly_watershed_strict(sky_model, rfi_model, scale, freq):
+    sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=200)
 
     true_flags = rfi_model > 0
-    flags, info = xrfi.xrfi_model(sky, watershed=1, threshold=10)
+    flags, info = xrfi.xrfi_model(
+        sky, freq, watershed=1, threshold=5, min_threshold=4, max_iter=10
+    )
 
     wrong = np.where(true_flags != flags)[0]
 
@@ -174,11 +176,11 @@ def test_poly_watershed_strict(sky_model, rfi_model, scale):
 )
 @parametrize_plus("rfi_model", [fxref(rfi_regular_leaky)])
 @pytest.mark.parametrize("scale", [1000, 100])
-def test_poly_watershed_relaxed(sky_model, rfi_model, scale):
+def test_poly_watershed_relaxed(sky_model, rfi_model, scale, freq):
     sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=500)
 
     true_flags = rfi_model > 0
-    flags, info = xrfi.xrfi_model(sky, watershed=np.array([0.05, 1, 0.05]), threshold=6)
+    flags, info = xrfi.xrfi_model(sky, freq, watershed=1, threshold=6)
 
     # here we just assert no *missed* RFI
     wrong = np.where(true_flags & ~flags)[0]
@@ -306,13 +308,13 @@ def print_wrongness(wrong, std, info, noise, true_flags, sky, rfi):
         print("Corrupted sky at wrong flags: ")
         print(sky[wrong])
         print("Std. dev away from model at wrong flags: ")
-        print((sky[wrong] - sky_flat_1d[wrong]) / std[wrong])
+        print((sky[wrong] - sky[wrong]) / std[wrong])
         print("Std. dev of noise away from model at wrong flags: ")
         print(noise[wrong] / std[wrong])
         print("Std dev of RFI away from model at wrong flags: ")
         print(rfi[wrong] / std[wrong])
         print("Measured Std Dev: ")
-        print(min(info["std"]), max(info["std"]))
+        print(min(info.get("std", [0])), max(info.get("std", [0])))
         print("Actual Std Dev (for uniform):", np.std(noise))
 
 
