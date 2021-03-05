@@ -487,7 +487,9 @@ class ModelFit:
     @cached_property
     def model_parameters(self):
         """The best-fit model parameters."""
-        return self.fit.parameters
+        # Parameters need to be copied into this object, otherwise a new fit on the
+        # parent model will change the model_parameters of this fit!
+        return self.fit.parameters.copy()
 
     def evaluate(self, x: [np.ndarray, None] = None) -> np.ndarray:
         """Evaluate the best-fit model.
@@ -503,9 +505,7 @@ class ModelFit:
         y : np.ndarray
             The best-fit model evaluated at ``x``.
         """
-        # Set the parameters on the underlying object (solves for them if not solved yet)
-        model = self.fit
-        return model(x)
+        return self.model(x, parameters=self.model_parameters)
 
     @cached_property
     def residual(self) -> np.ndarray:
