@@ -96,6 +96,10 @@ def test_del_default_basis():
     del m.default_basis
     m.update_nterms(4)
     assert m.default_basis.shape == (4, 10)
+    m.update_nterms(2)
+    assert m.default_basis.shape == (2, 10)
+    m.update_nterms(2)
+    assert m.default_basis.shape == (2, 10)
 
 
 def test_get_bad_indx():
@@ -130,14 +134,3 @@ def test_linlog():
 def test_bad_xdata():
     with pytest.raises(ValueError):
         mdl.ModelFit(model_type="linlog", ydata=np.linspace(0, 1, 10))
-
-
-def test_2d_weights():
-    xdata = np.linspace(50, 100, 100)
-    m = mdl.LinLog(n_terms=4, default_x=xdata, parameters=(1, 2, 3, 4))
-
-    weights = np.random.rand(100, 100)
-    weights = np.dot(weights, weights.T)
-    fit = m.fit(ydata=m(), weights=1 / weights)
-    assert fit.weights.ndim == 2
-    assert np.allclose(fit.model_parameters, [1, 2, 3, 4])

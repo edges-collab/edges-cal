@@ -118,6 +118,10 @@ class Model:
 
         This does it more quickly, without too many repeated calculations.
         """
+        # Important: get the default basis upfront, before changing n_terms.
+        # If it was never created yet, or has been deleted, it will get appended to.
+        # We don't want to append to the wrong thing.
+        db = self.default_basis
         old_terms = self.n_terms * 1
         self.n_terms = n_terms
         self.parameters = None
@@ -125,13 +129,11 @@ class Model:
         if self.default_x is None or n_terms == old_terms:
             pass
         elif n_terms < old_terms:
-            self.default_basis = self.default_basis[:n_terms]
+            self.default_basis = db[:n_terms]
         else:
+            print("yeah doing this", self.default_basis.shape, old_terms, n_terms)
             self.default_basis = np.vstack(
-                (
-                    self.default_basis,
-                    self.get_basis(self.default_x, list(range(old_terms, n_terms))),
-                )
+                (db, self.get_basis(self.default_x, list(range(old_terms, n_terms))),)
             )
 
         return
@@ -433,7 +435,10 @@ class ModelFit:
     @cached_property
     def fit(self) -> Model:
         """The model fit."""
-        pars = self._wls(self.model.default_basis, self.ydata, w=self.weights)
+        if np.isscalar(self.weights):
+            pars = self._ls(self.model.default_basis, self.ydata)
+        else:
+            pars = self._wls(self.model.default_basis, self.ydata, w=self.weights)
         self.model.parameters = pars
         return self.model
 
@@ -463,6 +468,21 @@ class ModelFit:
         c = (c.T / scl).T
 
         return c
+
+    def _ls(self, van, y):
+        """Ripped straight outta numpy for speed.
+
+        Note: this function is written purely for speed, and is intended to *not*
+        be highly generic. Don't replace this by statsmodels or even np.polyfit. They
+        are significantly slower (>4x for statsmodels, 1.5x for polyfit).
+        """
+        rcond = y.size * np.finfo(y.dtype).eps
+
+        # Determine the norms of the design matrix columns.
+        scl = np.sqrt(np.square(van).sum(1))
+
+        # Solve the least squares problem.
+        return np.linalg.lstsq((van.T / scl), y.T, rcond)[0] / scl
 
     @cached_property
     def model_parameters(self):
