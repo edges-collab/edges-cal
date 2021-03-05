@@ -501,6 +501,7 @@ def _get_mad(x):
 
 def xrfi_model_sweep(
     spectrum: np.ndarray,
+    *,
     freq: Optional[np.ndarray] = None,
     flags: [None, np.ndarray] = None,
     weights: [None, np.ndarray] = None,
@@ -706,6 +707,7 @@ def xrfi_model_sweep(
 
 def xrfi_model(
     spectrum: np.ndarray,
+    *,
     freq: np.ndarray,
     model_type: [str, Model] = "polynomial",
     resid_model_type: [str, Model] = "polynomial",
@@ -945,8 +947,10 @@ def xrfi_model(
 
 def xrfi_watershed(
     spectrum: [None, np.ndarray] = None,
+    *,
     freq: [np.ndarray, None] = None,
     flags: [None, np.ndarray] = None,
+    weights: [None, np.ndarray] = None,
     tol: [float, Tuple[float]] = 0.5,
     inplace=False,
 ):
