@@ -2,6 +2,7 @@
 import numpy as np
 import warnings
 import yaml
+from matplotlib import pyplot as plt
 from scipy import ndimage
 from typing import Optional, Tuple
 
@@ -1003,3 +1004,102 @@ def _apply_watershed(flags, watershed):
         watershed_flags[i:] |= flags[:-i]
         watershed_flags[:-i] |= flags[i:]
     return watershed_flags
+
+
+def visualise_model_info(spectrum: np.ndarray, flags: np.ndarray, info: dict):
+    """
+    Make a nice visualisation of the info output from :func:`xrfi_model`.
+
+    Parameters
+    ----------
+    spectrum
+        The input spectrum.
+    flags
+        The output flags from :func:`xrfi_model`
+    info
+        The output ``info`` from :func:`xrfi_model`.
+    """
+    model = info["model"]
+    res_model = info["res_model"]
+
+    if not info["params"]:
+        raise ValueError("can't visualise info if 'return_models' wasn't set")
+
+    fig, ax = plt.subplots(2, 3, figsize=(10, 6))
+
+    ax[0, 0].plot(spectrum, label="Data", color="k")
+
+    for i, (pars, res_pars, nchange, tflags, thr) in enumerate(
+        zip(
+            info["params"],
+            info["res_params"],
+            info["n_flags_changed"],
+            info["total_flags"],
+            info["thresholds"],
+        )
+    ):
+        model.update_nterms(len(pars))
+        res_model.update_nterms(len(res_pars))
+
+        m = model(parameters=pars)
+        res = spectrum - m
+
+        ax[0, 0].plot(m, label=f"{len(pars)}: {nchange}/{tflags}")
+        ax[0, 0].set_title("Spectrum [K]")
+        ax[0, 0].axes.xaxis.set_ticklabels([])
+
+        ax[1, 0].scatter(
+            np.arange(len(flags)),
+            np.where(flags, np.nan, np.abs(res)),
+            alpha=0.1,
+            edgecolor="none",
+            s=5,
+        )
+        ax[1, 0].set_xlabel("Freq Channel")
+
+        rm = np.sqrt(np.exp(res_model(parameters=res_pars))) / 0.53
+        ax[1, 0].plot(rm)
+
+        ax[1, 0].set_title("Abs Model Residuals")
+        ax[0, 1].axes.xaxis.set_ticklabels([])
+
+        resres = np.abs(res) - rm
+        med = np.median(resres)
+        mad = _get_mad(resres)
+
+        ax[0, 1].scatter(
+            np.arange(len(flags)),
+            np.where(flags, np.nan, resres),
+            alpha=0.1,
+            edgecolor="none",
+            s=5,
+        )
+        ax[0, 1].set_ylim(med - 7 * mad, med + 7 * mad)
+        ax[0, 1].set_title("Residuals of AbsResids")
+
+        ax[1, 1].plot(res / rm, color=f"C{i}")
+        ax[1, 1].axhline(thr, color=f"C{i}")
+        ax[1, 1].set_ylim(-thr * 3, thr * 3)
+        ax[1, 1].set_title("Scaled Residuals and Thresholds")
+        ax[1, 1].set_xlabel("Freq Channel")
+
+        ax[1, 2].hist(
+            np.where(flags, np.nan, res / rm), bins=50, histtype="step", density=True
+        )
+
+        x = np.linspace(-4, 4, 200)
+        ax[1, 2].plot(
+            x,
+            np.exp(-(x ** 2)) / np.sqrt(2 * np.pi),
+            color="k",
+            label="Normal Dist." if not i else None,
+        )
+        ax[1, 2].set_title("Scaled Residuals Distribution")
+
+        ax[1, 2].set_xlabel("Residual")
+
+        ax[0, 2].axis("off")
+
+    ax[0, 0].legend(title="N: Changed/Tot")
+    ax[1, 2].legend()
+    plt.tight_layout()
