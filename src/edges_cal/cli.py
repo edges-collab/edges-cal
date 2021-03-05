@@ -207,8 +207,22 @@ def sweep(
 @click.option("-n", "--memo", type=int, help="which memo number to use", default=None)
 @click.option("-q/-Q", "--quiet/--loud", default=False)
 @click.option("-p/-P", "--pdf/--no-pdf", default=True)
+@click.option("--cterms", type=int, default=8)
+@click.option("--wterms", type=int, default=10)
 def report(
-    config, path, out, cache_dir, report, upload, title, author, memo, quiet, pdf
+    config,
+    path,
+    out,
+    cache_dir,
+    report,
+    upload,
+    title,
+    author,
+    memo,
+    quiet,
+    pdf,
+    cterms,
+    wterms,
 ):
     """Make a full notebook report on a given calibration."""
     single_notebook = Path(__file__).parent / "notebooks/calibrate-observation.ipynb"
@@ -233,6 +247,11 @@ def report(
             settings = yaml.load(fl, Loader=yaml.FullLoader)
     else:
         settings = {}
+
+    if "cterms" not in settings:
+        settings["cterms"] = cterms
+    if "wterms" not in settings:
+        settings["wterms"] = wterms
 
     console.print("Settings:")
     for k, v in settings.items():
@@ -300,6 +319,10 @@ def report(
 @click.option("-n", "--memo", type=int, help="which memo number to use", default=None)
 @click.option("-q/-Q", "--quiet/--loud", default=False)
 @click.option("-p/-P", "--pdf/--no-pdf", default=True)
+@click.option("--cterms", type=int, default=8)
+@click.option("--wterms", type=int, default=10)
+@click.option("--cterms-comp", type=int, default=8)
+@click.option("--wterms-comp", type=int, default=10)
 def compare(
     path,
     cmppath,
@@ -314,6 +337,10 @@ def compare(
     memo,
     quiet,
     pdf,
+    cterms,
+    wterms,
+    cterms_comp,
+    wterms_comp,
 ):
     """Make a full notebook comparison report between two observations."""
     single_notebook = Path(__file__).parent / "notebooks/compare-observation.ipynb"
@@ -342,11 +369,21 @@ def compare(
     else:
         settings = {}
 
+    if "cterms" not in settings:
+        settings["cterms"] = cterms
+    if "wterms" not in settings:
+        settings["wterms"] = wterms
+
     if config_cmp is not None:
         with open(config_cmp, "r") as fl:
             settings_cmp = yaml.load(fl, Loader=yaml.FullLoader)
     else:
         settings_cmp = {}
+
+    if "cterms" not in settings_cmp:
+        settings_cmp["cterms"] = cterms_comp
+    if "wterms" not in settings_cmp:
+        settings_cmp["wterms"] = wterms_comp
 
     console.print("Settings for Primary:")
     for k, v in settings.items():
