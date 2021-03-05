@@ -142,7 +142,7 @@ def test_xrfi_model(sky_model, rfi_model, scale, freq):
     sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale)
 
     true_flags = rfi_model > 0
-    flags, info = xrfi.xrfi_model(sky, freq)
+    flags, info = xrfi.xrfi_model(sky, freq=freq)
 
     wrong = np.where(true_flags != flags)[0]
 
@@ -161,7 +161,7 @@ def test_poly_watershed_strict(sky_model, rfi_model, scale, freq):
 
     true_flags = rfi_model > 0
     flags, info = xrfi.xrfi_model(
-        sky, freq, watershed=1, threshold=5, min_threshold=4, max_iter=10
+        sky, freq=freq, watershed=1, threshold=5, min_threshold=4, max_iter=10
     )
 
     wrong = np.where(true_flags != flags)[0]
@@ -180,7 +180,7 @@ def test_poly_watershed_relaxed(sky_model, rfi_model, scale, freq):
     sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=500)
 
     true_flags = rfi_model > 0
-    flags, info = xrfi.xrfi_model(sky, freq, watershed=1, threshold=6)
+    flags, info = xrfi.xrfi_model(sky, freq=freq, watershed=1, threshold=6)
 
     # here we just assert no *missed* RFI
     wrong = np.where(true_flags & ~flags)[0]
@@ -335,7 +335,7 @@ def test_xrfi_explicit(freq, sky_flat_1d, rfi_regular_1d):
 
 def test_xrfi_model_sweep_watershed_last(sky_flat_1d):
     with pytest.raises(ValueError):
-        xrfi.xrfi_model_sweep(sky_flat_1d, which_bin="last", watershed=(4, 0.5))
+        xrfi.xrfi_model_sweep(sky_flat_1d, which_bin="last", watershed=4)
 
 
 def test_giving_weights(sky_flat_1d):
