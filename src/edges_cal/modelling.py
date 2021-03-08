@@ -210,7 +210,7 @@ class Model:
         )
 
     @staticmethod
-    def get_mdl(name) -> Model:
+    def get_mdl(name) -> Type[Model]:
         """Get a specific linear model from a string name."""
         return Model._models[name.lower()]
 
