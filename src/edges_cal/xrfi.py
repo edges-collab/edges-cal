@@ -729,7 +729,7 @@ def xrfi_model(
     inplace: bool = False,
     watershed: int = 0,
     flag_if_broken: bool = True,
-    init_flags: [np.ndarray, None] = None,
+    init_flags: [np.ndarray, Tuple[float, float], None] = None,
     **model_kwargs,
 ):
     """
@@ -812,6 +812,9 @@ def xrfi_model(
     # We assume the residuals are smoother than the signal itself
     if not increase_order:
         assert n_resid <= n_signal
+
+    if init_flags is not None and len(init_flags) == 2:
+        init_flags = (freq > init_flags[0]) & (freq < init_flags[1])
 
     n_flags_changed = 1
     counter = 0
