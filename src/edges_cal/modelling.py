@@ -131,7 +131,6 @@ class Model:
         elif n_terms < old_terms:
             self.default_basis = db[:n_terms]
         else:
-            print("yeah doing this", self.default_basis.shape, old_terms, n_terms)
             self.default_basis = np.vstack(
                 (db, self.get_basis(self.default_x, list(range(old_terms, n_terms))),)
             )
