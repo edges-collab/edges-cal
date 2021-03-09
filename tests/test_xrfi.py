@@ -357,7 +357,7 @@ def test_giving_weights(sky_flat_1d):
     assert np.all(flags == flags2)
 
 
-def test_visualisation(sky_pl_1d, rfi_random_1d):
+def test_visualisation(sky_pl_1d, rfi_random_1d, freq):
     sky, std, noise, rfi = make_sky(sky_pl_1d)
-    flags, info = xrfi.xrfi_model(sky, return_models=True, max_iter=3)
+    flags, info = xrfi.xrfi_model(sky, freq=freq, return_models=True, max_iter=3)
     xrfi.visualise_model_info(sky, flags, info)
