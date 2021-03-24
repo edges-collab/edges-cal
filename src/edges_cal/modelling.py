@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """Functions for generating least-squares model fits for linear models."""
+from __future__ import annotations
+
 import numpy as np
 from abc import abstractmethod
 from cached_property import cached_property
-from statsmodels import api as sm
-from typing import Sequence, Type, Union
+from typing import Optional, Sequence, Type, Union
 
 F_CENTER = 75.0
 
@@ -117,33 +118,33 @@ class Model:
 
         This does it more quickly, without too many repeated calculations.
         """
-        if self.default_x is None or n_terms == self.n_terms:
+        # Important: get the default basis upfront, before changing n_terms.
+        # If it was never created yet, or has been deleted, it will get appended to.
+        # We don't want to append to the wrong thing.
+        db = self.default_basis
+        old_terms = self.n_terms * 1
+        self.n_terms = n_terms
+        self.parameters = None
+
+        if self.default_x is None or n_terms == old_terms:
             pass
-        elif n_terms < self.n_terms:
-            self.default_basis = self.default_basis[:n_terms]
+        elif n_terms < old_terms:
+            self.default_basis = db[:n_terms]
         else:
             self.default_basis = np.vstack(
-                (
-                    self.default_basis,
-                    self.get_basis(self.default_x, list(range(self.n_terms, n_terms))),
-                )
+                (db, self.get_basis(self.default_x, list(range(old_terms, n_terms))),)
             )
 
-        self.n_terms = n_terms
         return
 
-    def get_basis_term(self, indx: int, x: np.ndarray):
+    def get_basis_term(self, indx: int, x: Optional[np.ndarray] = None):
         """Get a specific basis function term."""
         # If using a new passed-in x, don't cache.
-        if (
-            self.default_x is None
-            or x.shape != self.default_x.shape
-            or not np.allclose(x, self.default_x)
-        ):
+        if x is not None:
             return self._get_basis_term(indx, x)
 
         if indx not in self.__basis_terms:
-            self.__basis_terms[indx] = self._get_basis_term(indx, x)
+            self.__basis_terms[indx] = self._get_basis_term(indx, self.default_x)
 
         return self.__basis_terms[indx]
 
@@ -206,6 +207,11 @@ class Model:
             xdata=xdata if xdata is not None else None,
             weights=weights,
         )
+
+    @staticmethod
+    def get_mdl(name) -> Type[Model]:
+        """Get a specific linear model from a string name."""
+        return Model._models[name.lower()]
 
 
 class Foreground(Model, is_meta=True):
@@ -416,54 +422,73 @@ class ModelFit:
         self.weights = weights
 
         if weights is None:
-            weights = 1
-
-        if np.isscalar(weights):
-            self.weights = weights
-        elif weights.ndim == 1:
+            self.weights = 1
+        else:
             # if a vector is given
             assert weights.shape == self.xdata.shape
             self.weights = weights
-            self.flags = self.weights == 0
-        elif weights.ndim == 2:
-            assert weights.shape == (len(self.xdata), len(self.xdata))
-            self.weights = weights
-            self.flags = np.diag(self.weights) == 0
-        else:
-            raise ValueError("weights must be scalar, 1D or 2D")
-
-        # TODO: might be good to use the flags array to restrict the fitted values?
-        # TODO: would be faster if there's a lot of flags, but slower to do the flagging if not.
 
         self.n_terms = self.model.n_terms
-        self.degrees_of_freedom = len(self.xdata) - self.n_terms - 1
+        self.degrees_of_freedom = self.xdata.size - self.n_terms - 1
 
     @cached_property
-    def fit(self) -> sm.regression.linear_model.RegressionResults:
+    def fit(self) -> Model:
         """The model fit."""
         if np.isscalar(self.weights):
-            model = sm.OLS(self.ydata, self.model.default_basis.T)
-        elif self.weights.ndim == 1:
-            model = sm.WLS(
-                self.ydata[~self.flags],
-                self.model.default_basis.T[~self.flags],
-                weights=self.weights[~self.flags],
-            )
+            pars = self._ls(self.model.default_basis, self.ydata)
         else:
-            cov = 1 / self.weights
-            cov = cov[~self.flags][:, ~self.flags]
+            pars = self._wls(self.model.default_basis, self.ydata, w=self.weights)
+        self.model.parameters = pars
+        return self.model
 
-            model = sm.GLS(
-                self.ydata[~self.flags],
-                self.model.default_basis.T[~self.flags],
-                sigma=cov,
-            )
-        return model.fit(method="qr")
+    def _wls(self, van, y, w):
+        """Ripped straight outta numpy for speed.
+
+        Note: this function is written purely for speed, and is intended to *not*
+        be highly generic. Don't replace this by statsmodels or even np.polyfit. They
+        are significantly slower (>4x for statsmodels, 1.5x for polyfit).
+        """
+        # set up the least squares matrices and apply weights.
+        # Don't use inplace operations as they
+        # can cause problems with NA.
+        mask = w > 0
+
+        lhs = van[:, mask] * w[mask]
+        rhs = y[mask] * w[mask]
+
+        rcond = y.size * np.finfo(y.dtype).eps
+
+        # Determine the norms of the design matrix columns.
+        scl = np.sqrt(np.square(lhs).sum(1))
+        scl[scl == 0] = 1
+
+        # Solve the least squares problem.
+        c, resids, rank, s = np.linalg.lstsq((lhs.T / scl), rhs.T, rcond)
+        c = (c.T / scl).T
+
+        return c
+
+    def _ls(self, van, y):
+        """Ripped straight outta numpy for speed.
+
+        Note: this function is written purely for speed, and is intended to *not*
+        be highly generic. Don't replace this by statsmodels or even np.polyfit. They
+        are significantly slower (>4x for statsmodels, 1.5x for polyfit).
+        """
+        rcond = y.size * np.finfo(y.dtype).eps
+
+        # Determine the norms of the design matrix columns.
+        scl = np.sqrt(np.square(van).sum(1))
+
+        # Solve the least squares problem.
+        return np.linalg.lstsq((van.T / scl), y.T, rcond)[0] / scl
 
     @cached_property
     def model_parameters(self):
         """The best-fit model parameters."""
-        return self.fit.params
+        # Parameters need to be copied into this object, otherwise a new fit on the
+        # parent model will change the model_parameters of this fit!
+        return self.fit.parameters.copy()
 
     def evaluate(self, x: [np.ndarray, None] = None) -> np.ndarray:
         """Evaluate the best-fit model.
@@ -479,11 +504,7 @@ class ModelFit:
         y : np.ndarray
             The best-fit model evaluated at ``x``.
         """
-        # Set the parameters on the underlying object (solves for them if not solved yet)
-        self.model.parameters = list(self.model_parameters)
-        if x is None:
-            x = self.xdata
-        return self.model(x)
+        return self.model(x, parameters=self.model_parameters)
 
     @cached_property
     def residual(self) -> np.ndarray:

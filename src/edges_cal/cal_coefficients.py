@@ -65,7 +65,7 @@ class S1P:
                 )
 
         self.load_name = self.s1p.kind
-        self.run_num = self.s1p.run_num
+        self.repeat_num = self.s1p.repeat_num
 
         spec = self.s1p.s11
         f = self.s1p.freq
@@ -185,11 +185,10 @@ class SwitchCorrection:
         cls,
         load_name: str,
         path: [str, Path],
-        run_num_load: int = None,
-        run_num_switch: int = None,
-        repeat_num: [None, int] = None,
-        repeat_num_load: int = 1,
-        repeat_num_switch: int = 1,
+        run_num_load: int = 1,
+        run_num_switch: int = 1,
+        repeat_num_load: int = None,
+        repeat_num_switch: int = None,
         **kwargs,
     ):
         """
@@ -205,8 +204,6 @@ class SwitchCorrection:
             The run to use (default is last run available).
         run_num_switch : int
             The run to use for the switch S11 (default is last run available).
-        repeat_num : int
-            The repeat to use for the switch S11 (default is last run available).
         kwargs
             All other arguments are passed through to the constructor of :class:`SwitchCorrection`.
 
@@ -222,16 +219,12 @@ class SwitchCorrection:
             load_name = io.LOAD_ALIASES[load_name]
 
         s11_load_dir = (io.AntSimS11 if antsim else io.LoadS11)(
-            path / "S11" / f"{load_name}{repeat_num_load:02}", run_num=run_num_load
+            path / "S11" / f"{load_name}{run_num_load:02}", repeat_num=repeat_num_load
         )
 
-        if repeat_num is not None:
-            warnings.warn("repeat_num is deprecated. Use repeat_num_switch.")
-            repeat_num_switch = repeat_num
-
         internal_switch = io.SwitchingState(
-            path / "S11" / f"SwitchingState{repeat_num_switch:02}",
-            run_num=run_num_switch,
+            path / "S11" / f"SwitchingState{run_num_switch:02}",
+            repeat_num=repeat_num_switch,
         )
         return cls(s11_load_dir, internal_switch=internal_switch, **kwargs)
 
@@ -421,10 +414,10 @@ class LNA(SwitchCorrection):
     def from_path(
         cls,
         path: [str, Path],
-        repeat_num_load: int = 1,
-        repeat_num_switch: int = 1,
-        run_num_load: int = None,
-        run_num_switch: int = None,
+        repeat_num_load: Optional[int] = None,
+        repeat_num_switch: Optional[int] = None,
+        run_num_load: int = 1,
+        run_num_switch: int = 1,
         **kwargs,
     ):
         """
@@ -448,14 +441,14 @@ class LNA(SwitchCorrection):
         """
         path = Path(path)
         load_s11 = io.ReceiverReading(
-            path=path / "S11" / f"ReceiverReading{repeat_num_load:02}",
-            run_num=run_num_load,
+            path=path / "S11" / f"ReceiverReading{run_num_load:02}",
+            repeat_num=repeat_num_load,
             fix=False,
         )
 
         internal_switch = io.SwitchingState(
-            path=path / "S11" / f"SwitchingState{repeat_num_switch:02}",
-            run_num=run_num_switch,
+            path=path / "S11" / f"SwitchingState{run_num_switch:02}",
+            repeat_num=repeat_num_switch,
         )
         return cls(load_s11, internal_switch=internal_switch, **kwargs)
 
@@ -1328,7 +1321,7 @@ class CalibrationObservation:
                     f_low=f_low,
                     f_high=f_high,
                     resistance=self.io.definition["measurements"]["resistance_m"][
-                        self.io.s11.switching_state.repeat_num
+                        self.io.s11.switching_state.run_num
                     ],
                     **{**s11_kwargs, **refl},
                 )
@@ -1353,7 +1346,7 @@ class CalibrationObservation:
             f_high=f_high,
             resistance=resistance_f
             or self.io.definition["measurements"]["resistance_f"][
-                self.io.s11.receiver_reading.repeat_num
+                self.io.s11.receiver_reading.run_num
             ],
         )
 
@@ -1398,8 +1391,7 @@ class CalibrationObservation:
     def new_load(
         self,
         load_name: str,
-        run_num_spec: Optional[Union[dict, int]] = None,
-        run_num_load: Optional[Union[dict, int]] = None,
+        run_num: int = 1,
         reflection_kwargs: Optional[dict] = None,
         spec_kwargs: Optional[dict] = None,
     ):
@@ -1435,10 +1427,10 @@ class CalibrationObservation:
             if key not in spec_kwargs:
                 spec_kwargs[key] = getattr(self.open.spectrum, key)
 
-        reflection_kwargs["run_num_load"] = run_num_load
+        reflection_kwargs["run_num_load"] = run_num
         reflection_kwargs["repeat_num_switch"] = self.io.s11.switching_state.repeat_num
         reflection_kwargs["run_num_switch"] = self.io.s11.switching_state.run_num
-        spec_kwargs["run_num"] = run_num_spec
+        spec_kwargs["run_num"] = run_num
 
         return Load.from_path(
             path=self.io.path,
@@ -1964,7 +1956,7 @@ class CalibrationObservation:
             fl.attrs["cterms"] = self.cterms
             fl.attrs["wterms"] = self.wterms
             fl.attrs["switch_path"] = str(self.lna.internal_switch.path)
-            fl.attrs["switch_run_num"] = self.lna.internal_switch.run_num
+            fl.attrs["switch_repeat_num"] = self.lna.internal_switch.repeat_num
 
             fl["C1"] = self.C1_poly.coefficients
             fl["C2"] = self.C2_poly.coefficients
@@ -2005,7 +1997,7 @@ class Calibration:
 
             try:
                 self.internal_switch = io.SwitchingState(
-                    fl.attrs["switch_path"], run_num=fl.attrs["switch_run_num"],
+                    fl.attrs["switch_path"], repeat_num=fl.attrs["switch_repeat_num"],
                 )
             except (ValueError, io.utils.FileStructureError):
                 self.internal_switch = None
@@ -2178,41 +2170,41 @@ def perform_term_sweep(
     winner = np.zeros(len(cterms), dtype=int)
 
     s11_keys = ["switching_state", "receiver_reading"] + list(io.LOAD_ALIASES.keys())
-    if explore_run_nums:
+    if explore_repeat_nums:
         # Note that we don't explore run_nums for spectra/resistance, because it's rare
         # to have those, and they'll only exist if one got completely botched (and that
         # should be set by the user).
-        run_num = {
-            k: range(1, getattr(calobs.io.s11, k).max_run_num + 1) for k in s11_keys
+        rep_num = {
+            k: range(1, getattr(calobs.io.s11, k).max_repeat_num + 1) for k in s11_keys
         }
     else:
-        run_num = {k: [getattr(calobs.io.s11, k).run_num] for k in s11_keys}
-
-    run_num = tools.dct_of_list_to_list_of_dct(run_num)
-
-    if explore_repeat_nums:
-        rep_num = {
-            "switching_state": range(
-                1, calobs.io.s11.get_highest_rep_num("SwitchingState") + 1
-            ),
-            "receiver_reading": range(
-                1, calobs.io.s11.get_highest_rep_num("ReceiverReading") + 1
-            ),
-        }
-    else:
-        rep_num = {
-            "switching_state": [calobs.io.s11.switching_state.repeat_num],
-            "receiver_reading": [calobs.io.s11.receiver_reading.repeat_num],
-        }
+        rep_num = {k: [getattr(calobs.io.s11, k).repeat_num] for k in s11_keys}
 
     rep_num = tools.dct_of_list_to_list_of_dct(rep_num)
+
+    if explore_run_nums:
+        run_num = {
+            "switching_state": range(
+                1, calobs.io.s11.get_highest_run_num("SwitchingState") + 1
+            ),
+            "receiver_reading": range(
+                1, calobs.io.s11.get_highest_run_num("ReceiverReading") + 1
+            ),
+        }
+    else:
+        run_num = {
+            "switching_state": [calobs.io.s11.switching_state.run_num],
+            "receiver_reading": [calobs.io.s11.receiver_reading.run_num],
+        }
+
+    run_num = tools.dct_of_list_to_list_of_dct(run_num)
 
     best_rms = np.inf
     for this_rep_num in rep_num:
         for this_run_num in run_num:
 
             tmp_run_num = copy(calobs.io.run_num)
-            tmp_run_num["S11"].update(this_run_num)
+            tmp_run_num.update(this_run_num)
 
             # Change the base io.CalObs because it will change with rep/run.
             calobs.io = io.CalibrationObservation(
@@ -2237,7 +2229,7 @@ def perform_term_sweep(
                 load.reflections = SwitchCorrection.from_path(
                     load_name=name,
                     path=calobs.io.path,
-                    run_num_load=this_run_num[name],
+                    repeat_num_load=this_rep_num[name],
                     run_num_switch=this_run_num["switching_state"],
                     repeat_num_switch=this_rep_num["switching_state"],
                 )

@@ -130,11 +130,6 @@ def test_new_load(cal_data: Path):
     )
 
 
-def test_deprecation_warning_repeat_num(cal_data: Path):
-    with pytest.warns(UserWarning):
-        cc.SwitchCorrection.from_path("AntSim2", cal_data, repeat_num=1)
-
-
 @pytest.mark.skip("too slow...")
 def test_2d_rfi_removal(cal_data, tmpdir, caplog):
     cache = tmpdir / "cal-coeff-cache-new"

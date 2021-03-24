@@ -1,11 +1,12 @@
 # Changelog
 
-## Dev
+## 0.7.0
 
 ### Added
 
 - Automatic notebook reports for calibration
 - `xrfi_model_sweep` that actually works and is tested.
+- Faster model evaluations
 
 ### Fixed
 
