@@ -634,8 +634,13 @@ def xrfi_model_sweep(
 
     if weights is None:
         weights = np.ones_like(~flags, dtype=float)
+    if np.sum(weights) == 0 or np.all(flags):
+        return np.ones_like(spectrum, dtype=bool), {}
 
+    # Have to get flags aligned with input weights, and also input weights aligned with flags.
+    # But we don't want to overwrite the input weights...
     flags |= weights <= 0
+    weights = np.where(flags, 0, weights)
 
     # Get which pixel will be flagged.
     if which_bin == "last":
@@ -649,64 +654,24 @@ def xrfi_model_sweep(
     # Get the first window that has enough unflagged data.
     window = np.arange(window_width, dtype=int)
 
-    if np.sum(weights) == 0:
-        return np.ones_like(spectrum, dtype=bool), {}
-
     while np.sum(weights[window] > 0) <= model_type.n_terms and window[-1] < (nf - 1):
         window += 1
 
     if window[-1] == nf - 1:
         return np.ones_like(spectrum, dtype=bool), {}
 
-    def flag_a_window(window, std_estimator=0):
-        # NOTE: line profiling reveals that the fitting takes ~50% of the time of this
-        #       function, and taking the std takes ~20%. The next biggest are taking the
-        #       two sums, which are ~6% each.
-        counter = 0
-        flags_changed = 1
-        new_flags = flags[window]
-        d = spectrum[window].copy()
-
-        while counter < max_iter and flags_changed > 0:
-            w = np.where(new_flags, 0, weights[window])
-
-            mask = ~new_flags
-
-            if np.sum(mask) > model_type.n_terms:
-                fit = model_type.fit(ydata=d, weights=w)
-            else:
-                raise NoDataError
-
-            resids = fit.residual
-
-            # Computation of STD for initial section using the median statistic
-            if std_estimator == 0:
-                r_choice_std = [
-                    np.std(np.random.choice(resids[mask], len(resids[mask]) // 2))
-                    for _ in range(n_bootstrap)
-                ]
-                r_std = np.median(r_choice_std)
-            elif std_estimator == 1:
-                r_std = _get_mad(resids[mask])
-            elif std_estimator == 2:
-                r_std = np.std(resids[mask])
-
-            new_flags = np.abs(resids) > threshold * r_std
-
-            if watershed is not None:
-                new_flags |= _apply_watershed(new_flags, watershed)
-
-            flags_changed = np.sum((~mask) ^ new_flags)
-            counter += 1
-
-        if counter == max_iter and max_iter > 1:
-            warnings.warn(
-                "Max iterations reached without finding all xRFI. Consider increasing max_iter."
-            )
-
-        return new_flags, r_std, fit.model_parameters, counter
-
-    flg, r_std, p, n = flag_a_window(window, int(use_median))
+    flg, r_std, p, n = _flag_a_window(
+        window,
+        flags,
+        spectrum,
+        max_iter,
+        weights,
+        model_type,
+        n_bootstrap,
+        threshold,
+        watershed,
+        std_estimator=int(use_median),
+    )
     flags[window] |= flg
     std = [r_std]
     params = [p]
@@ -716,7 +681,17 @@ def xrfi_model_sweep(
     window += 1
     while window[-1] < nf:
         try:
-            new_flags, r_std, p, n = flag_a_window(window, 2)
+            new_flags, r_std, p, n = _flag_a_window(
+                window,
+                flags,
+                spectrum,
+                max_iter,
+                weights,
+                model_type,
+                n_bootstrap,
+                threshold,
+                watershed,
+            )
             std.append(r_std)
             params.append(p)
             iters.append(n)
@@ -730,6 +705,66 @@ def xrfi_model_sweep(
 
 
 xrfi_model_sweep.ndim = (1,)
+
+
+def _flag_a_window(
+    window,
+    flags,
+    spectrum,
+    max_iter,
+    weights,
+    model_type,
+    n_bootstrap,
+    threshold,
+    watershed,
+    std_estimator=0,
+):
+    # NOTE: line profiling reveals that the fitting takes ~50% of the time of this
+    #       function, and taking the std takes ~20%. The next biggest are taking the
+    #       two sums, which are ~6% each.
+    counter = 0
+    flags_changed = 1
+    new_flags = flags[window]
+    d = spectrum[window].copy()
+
+    while counter < max_iter and flags_changed > 0:
+        w = np.where(new_flags, 0, weights[window])
+
+        mask = ~new_flags
+
+        if np.sum(mask) > model_type.n_terms:
+            fit = model_type.fit(ydata=d, weights=w)
+        else:
+            raise NoDataError
+
+        resids = fit.residual
+
+        # Computation of STD for initial section using the median statistic
+        if std_estimator == 0:
+            r_choice_std = [
+                np.std(np.random.choice(resids[mask], len(resids[mask]) // 2))
+                for _ in range(n_bootstrap)
+            ]
+            r_std = np.median(r_choice_std)
+        elif std_estimator == 1:
+            r_std = _get_mad(resids[mask])
+        elif std_estimator == 2:
+            r_std = np.std(resids[mask])
+
+        new_flags = np.abs(resids) > threshold * r_std
+
+        if watershed is not None:
+            new_flags |= _apply_watershed(new_flags, watershed)
+
+        flags_changed = np.sum((~mask) ^ new_flags)
+        counter += 1
+
+    if counter == max_iter and max_iter > 1:
+        warnings.warn(
+            "Max iterations reached without finding all xRFI. Consider increasing max_iter."
+        )
+
+    return new_flags, r_std, fit.model_parameters, counter
 
 
 def xrfi_model(
@@ -1070,9 +1105,6 @@ def visualise_model_info(spectrum: np.ndarray, flags: np.ndarray, info: dict):
     model = info["model"]
     res_model = info["res_model"]
 
-    if not info["params"]:
-        raise ValueError("can't visualise info if 'return_models' wasn't set")
-
     fig, ax = plt.subplots(2, 3, figsize=(10, 6))
 
     ax[0, 0].plot(spectrum, label="Data", color="k")
@@ -1130,8 +1162,6 @@ def visualise_model_info(spectrum: np.ndarray, flags: np.ndarray, info: dict):
         ax[1, 1].set_ylim(-thr * 3, thr * 3)
         ax[1, 1].set_title("Scaled Residuals and Thresholds")
         ax[1, 1].set_xlabel("Freq Channel")
-
-        print(np.any(~np.isnan(res / rm)))
 
         ax[1, 2].hist(
             np.where(flags, np.nan, res / rm), bins=50, histtype="step", density=True

@@ -1,6 +1,7 @@
 import pytest
 
 import numpy as np
+from typing import Type
 
 from edges_cal import modelling as mdl
 
@@ -17,7 +18,7 @@ def test_pass_params():
 @pytest.mark.parametrize(
     "model", [mdl.PhysicalLin, mdl.Polynomial, mdl.EdgesPoly, mdl.Fourier]
 )
-def test_basis(model: mdl.Model):
+def test_basis(model: Type[mdl.Model]):
     pl = model(parameters=[1, 2, 3], default_x=np.linspace(0, 1, 10))
     assert pl.default_basis.shape == (3, 10)
     assert pl().shape == (10,)
@@ -32,6 +33,17 @@ def test_basis(model: mdl.Model):
 
     with pytest.raises(ValueError):
         pl2(parameters=[1, 2, 3], x=np.linspace(0, 1, 10))
+
+
+def test_cached_basis():
+    pl = mdl.PhysicalLin(parameters=[1, 2, 3], default_x=np.linspace(0, 1, 10))
+
+    df_basis = pl.default_basis.copy()
+
+    assert np.all(pl.get_basis_term(0) == df_basis[0])
+    del pl.default_basis
+
+    assert np.all(pl.get_basis_term(1) == df_basis[1])
 
 
 def test_model_fit():
