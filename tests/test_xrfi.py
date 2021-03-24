@@ -327,7 +327,7 @@ def make_sky(sky_model, rfi_model=np.zeros(NFREQ), scale=1000, rfi_amp=200):
 
 
 def test_xrfi_explicit(freq, sky_flat_1d, rfi_regular_1d):
-    flags = xrfi.xrfi_explicit(freq, extra_rfi=[(60, 70), (80, 90)])
+    flags = xrfi.xrfi_explicit(freq=freq, extra_rfi=[(60, 70), (80, 90)])
     assert flags[105]
     assert not flags[0]
     assert flags[350]
@@ -359,5 +359,5 @@ def test_giving_weights(sky_flat_1d):
 
 def test_visualisation(sky_pl_1d, rfi_random_1d, freq):
     sky, std, noise, rfi = make_sky(sky_pl_1d)
-    flags, info = xrfi.xrfi_model(sky, freq=freq, return_models=True, max_iter=3)
+    flags, info = xrfi.xrfi_model(sky, freq=freq, max_iter=3)
     xrfi.visualise_model_info(sky, flags, info)

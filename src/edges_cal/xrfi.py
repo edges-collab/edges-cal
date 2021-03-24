@@ -458,14 +458,25 @@ def xrfi_medfilt(
     )
 
 
-def xrfi_explicit(f, rfi_file=None, extra_rfi=None):
+def xrfi_explicit(
+    spectrum: [None, np.ndarray] = None,
+    *,
+    freq: np.ndarray,
+    flags: [None, np.ndarray] = None,
+    rfi_file=None,
+    extra_rfi=None,
+):
     """
-    Excise RFI from given data using a explicitly set list of flag ranges.
+    Excise RFI from given data using an explicitly set list of flag ranges.
 
     Parameters
     ----------
-    f : array-like
+    spectrum
+        This parameter is unused in this function.
+    freq
         Frequencies, in MHz, of the data.
+    flags
+        Known flags.
     rfi_file : str, optional
         A YAML file containing the key 'rfi_ranges', which should be a list of 2-tuples
         giving the (min, max) frequency range of known RFI channels (in MHz). By default,
@@ -479,6 +490,12 @@ def xrfi_explicit(f, rfi_file=None, extra_rfi=None):
         Boolean array of the same shape as ``spectrum`` indicated which channels/times
         have flagged RFI.
     """
+    if flags is None:
+        if spectrum is None:
+            flags = np.zeros(freq.shape, dtype=bool)
+        else:
+            flags = np.zeros(spectrum.shape, dtype=bool)
+
     rfi_freqs = []
     if rfi_file:
         with open(rfi_file, "r") as fl:
@@ -487,11 +504,13 @@ def xrfi_explicit(f, rfi_file=None, extra_rfi=None):
     if extra_rfi:
         rfi_freqs += extra_rfi
 
-    flags = np.zeros(len(f), dtype=bool)
     for low, high in rfi_freqs:
-        flags[(f > low) & (f < high)] = True
+        flags[..., (freq > low) & (freq < high)] = True
 
     return flags
+
+
+xrfi_explicit.ndim = (1, 2, 3)
 
 
 def _get_mad(x):
@@ -629,11 +648,15 @@ def xrfi_model_sweep(
 
     # Get the first window that has enough unflagged data.
     window = np.arange(window_width, dtype=int)
-    while np.sum(weights[window] > 0) <= model_type.n_terms and window[-1] < nf:
+
+    if np.sum(weights) == 0:
+        return np.ones_like(spectrum, dtype=bool), {}
+
+    while np.sum(weights[window] > 0) <= model_type.n_terms and window[-1] < (nf - 1):
         window += 1
 
-    if window[-1] == nf:
-        raise NoDataError("No windows found with enough unflagged data to fit.")
+    if window[-1] == nf - 1:
+        return np.ones_like(spectrum, dtype=bool), {}
 
     def flag_a_window(window, std_estimator=0):
         # NOTE: line profiling reveals that the fitting takes ~50% of the time of this
@@ -706,6 +729,9 @@ def xrfi_model_sweep(
     return flags, {"std": std, "params": params, "iters": iters, "model": model_type}
 
 
+xrfi_model_sweep.ndim = (1,)
+
+
 def xrfi_model(
     spectrum: np.ndarray,
     *,
@@ -725,7 +751,6 @@ def xrfi_model(
     min_resid_terms: int = 3,
     decrement_threshold: float = 0,
     min_threshold: float = 5,
-    return_models: bool = False,
     inplace: bool = False,
     watershed: int = 0,
     flag_if_broken: bool = True,
@@ -773,8 +798,6 @@ def xrfi_model(
         go below ``min_threshold``.
     min_threshold : float, optional
         The minimum threshold to decrement to.
-    return_models : bool, optional
-        Whether to return the full models at each iteration.
     inplace : bool, optional
         Whether to fill up given flags array with the updated flags.
     watershed
@@ -862,11 +885,20 @@ def xrfi_model(
         # Get a model fit to the unflagged data.
         # Could be polynomial or fourier (or something else...)
         mdl = model.fit(ydata=spectrum, weights=weights)
+
+        if any(
+            len(p) == len(mdl.model_parameters) and np.allclose(mdl.model_parameters, p)
+            for p in model_list
+        ):
+            # If we're not changing the parameters significantly, just exit. This is
+            # *very important* as it stops closed-loop cycles where the flags and models
+            # go back and forth.
+            break
+
         res = mdl.residual
         absres = np.abs(res)
 
-        if return_models:
-            model_list.append(mdl.model_parameters)
+        model_list.append(mdl.model_parameters)
 
         # Now fit a model to the absolute residuals.
         # This number is "like" a local standard deviation, since the polynomial does
@@ -883,8 +915,7 @@ def xrfi_model(
         res_mdl = res_model.fit(ydata=np.log(absres ** 2), weights=weights)
         model_std = np.sqrt(np.exp(res_mdl.evaluate())) / 0.53
 
-        if return_models:
-            model_std_list.append(res_mdl.model_parameters)
+        model_std_list.append(res_mdl.model_parameters)
 
         if accumulate:
             # If we are accumulating flags, we just get the *new* flags and add them
@@ -895,7 +926,7 @@ def xrfi_model(
         else:
             # If we're not accumulating, we just take these flags (along with the fully
             # original flags).
-            new_flags = orig_flags | (res > threshold * model_std)
+            new_flags = orig_flags | (np.abs(res) > threshold * model_std)
 
             # Apply a watershed -- assume surrounding channels will succumb to RFI.
             if watershed is not None:
@@ -949,6 +980,9 @@ def xrfi_model(
     )
 
 
+xrfi_model.ndim = (1,)
+
+
 def xrfi_watershed(
     spectrum: [None, np.ndarray] = None,
     *,
@@ -983,21 +1017,32 @@ def xrfi_watershed(
         Information about the flagging procedure (empty for this function)
     """
     if flags is None:
-        raise ValueError("You must provide flags as an ndarray")
+        if weights is not None:
+            flags = ~(weights.astype(bool))
+        else:
+            raise ValueError("You must provide flags as an ndarray")
+
+    if weights is not None:
+        flags |= weights <= 0
 
     fl = flags if inplace else flags.copy()
 
     if not hasattr(tol, "__len__"):
         tol = (tol, tol)
 
-    freq_coll = np.sum(flags, axis=1)
+    freq_coll = np.sum(flags, axis=-1)
     freq_mask = freq_coll > tol[0] * flags.shape[1]
     fl[freq_mask] = True
 
-    time_coll = np.sum(fl, axis=0)
-    time_mask = time_coll > tol[1] * flags.shape[0]
-    fl[:, time_mask] = True
+    if flags.ndim == 2:
+        time_coll = np.sum(fl, axis=0)
+        time_mask = time_coll > tol[1] * flags.shape[0]
+        fl[:, time_mask] = True
+
     return fl, {}
+
+
+xrfi_watershed.ndim = (1, 2)
 
 
 def _apply_watershed(flags, watershed):
@@ -1067,8 +1112,8 @@ def visualise_model_info(spectrum: np.ndarray, flags: np.ndarray, info: dict):
         ax[0, 1].axes.xaxis.set_ticklabels([])
 
         resres = np.abs(res) - rm
-        med = np.median(resres)
-        mad = _get_mad(resres)
+        med = np.nanmedian(resres)
+        mad = _get_mad(resres[~np.isnan(resres)])
 
         ax[0, 1].scatter(
             np.arange(len(flags)),
@@ -1085,6 +1130,8 @@ def visualise_model_info(spectrum: np.ndarray, flags: np.ndarray, info: dict):
         ax[1, 1].set_ylim(-thr * 3, thr * 3)
         ax[1, 1].set_title("Scaled Residuals and Thresholds")
         ax[1, 1].set_xlabel("Freq Channel")
+
+        print(np.any(~np.isnan(res / rm)))
 
         ax[1, 2].hist(
             np.where(flags, np.nan, res / rm), bins=50, histtype="step", density=True

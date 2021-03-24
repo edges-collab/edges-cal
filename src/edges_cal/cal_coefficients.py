@@ -1321,7 +1321,7 @@ class CalibrationObservation:
                     f_low=f_low,
                     f_high=f_high,
                     resistance=self.io.definition["measurements"]["resistance_m"][
-                        self.io.s11.switching_state.repeat_num
+                        self.io.s11.switching_state.run_num
                     ],
                     **{**s11_kwargs, **refl},
                 )
@@ -1346,7 +1346,7 @@ class CalibrationObservation:
             f_high=f_high,
             resistance=resistance_f
             or self.io.definition["measurements"]["resistance_f"][
-                self.io.s11.receiver_reading.repeat_num
+                self.io.s11.receiver_reading.run_num
             ],
         )
 
