@@ -192,6 +192,7 @@ def detrend_medfilt(
     data: np.ndarray,
     flags: [None, np.ndarray] = None,
     half_size: [None, Tuple[int, None]] = None,
+    interp_flagged: bool = True,
 ):
     """Detrend array using a median filter.
 
@@ -236,7 +237,9 @@ def detrend_medfilt(
     half_size = _check_convolve_dims(data, half_size)
     size = tuple(2 * s + 1 for s in half_size)
 
-    d_sm = flagged_filter(data, size=size, kind="median", flags=flags)
+    d_sm = flagged_filter(
+        data, size=size, kind="median", flags=flags, interp_flagged=interp_flagged
+    )
     d_rs = data - d_sm
     d_sq = d_rs ** 2
 

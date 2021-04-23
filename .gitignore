@@ -52,3 +52,5 @@ devel/ExampleData/*
 devel/output/*
 src/edges_cal/notebooks/.ipynb_checkpoints
 src/edges_cal/notebooks/*.h5
+
+.vscode/

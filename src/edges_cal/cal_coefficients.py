@@ -93,6 +93,7 @@ class SwitchCorrection:
         "hot_load": 37,
         "open": 105,
         "short": 105,
+        "AntSim1": 55,
         "AntSim2": 55,
         "AntSim3": 55,
         "AntSim4": 55,

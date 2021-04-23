@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 from abc import abstractmethod
 from cached_property import cached_property
+from copy import deepcopy
 from typing import Optional, Sequence, Type, Union
 
 F_CENTER = 75.0

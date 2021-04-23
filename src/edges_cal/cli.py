@@ -184,7 +184,7 @@ def sweep(
     "--out",
     type=click.Path(dir_okay=True, file_okay=False, exists=True),
     default=None,
-    help="output directory",
+    help="output directory for the notebook and PDF report",
 )
 @click.option(
     "-d",
@@ -193,17 +193,17 @@ def sweep(
     default=".",
     help="directory in which to keep/search for the cache",
 )
-@click.option("-r/-R", "--report/--no-report", default=True)
-@click.option("-u/-U", "--upload/--no-upload", default=False, help="auto-upload file")
-@click.option("-t", "--title", type=str, help="title of the memo", default=None)
 @click.option(
-    "-a",
-    "--author",
-    type=str,
-    help="adds an author to the author list",
-    default=None,
+    "-s",
+    "--sim-config",
     multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="YAML file with configuration settings for any antenna simulators. Multiple files can be passed. Each file must have an antsim name as the top-level key.",
 )
+@click.option(
+    "-u/-U", "--upload/--no-upload", default=False, help="auto-upload file to website"
+)
+@click.option("-t", "--title", type=str, help="title of the memo", default=None)
 @click.option("-n", "--memo", type=int, help="which memo number to use", default=None)
 @click.option("-q/-Q", "--quiet/--loud", default=False)
 @click.option("-p/-P", "--pdf/--no-pdf", default=True)
@@ -214,10 +214,9 @@ def report(
     path,
     out,
     cache_dir,
-    report,
+    sim_config,
     upload,
     title,
-    author,
     memo,
     quiet,
     pdf,
@@ -231,10 +230,7 @@ def report(
 
     path = Path(path)
 
-    if out is None:
-        out = path / "outputs"
-    else:
-        out = Path(out)
+    out = path / "outputs" if out is None else Path(out)
 
     if not out.exists():
         out.mkdir()
@@ -253,18 +249,28 @@ def report(
     if "wterms" not in settings:
         settings["wterms"] = wterms
 
+    antsim_config = {}
+    for fl in sim_config:
+        with open(fl, "r") as open_fl:
+            antsim_config.update(yaml.load(open_fl, Loader=yaml.FullLoader))
+
     console.print("Settings:")
     for k, v in settings.items():
         console.print(f"\t{k}: {v}")
-
-    settings.update(observation=str(path))
 
     if cache_dir != ".":
         settings.update(cache_dir=cache_dir)
 
     # This actually runs the notebook itself.
     pm.execute_notebook(
-        str(single_notebook), out / fname, parameters=settings, kernel_name="edges",
+        str(single_notebook),
+        out / fname,
+        parameters={
+            "observation": str(path),
+            "obs_config_": settings,
+            "antsim_config": antsim_config,
+        },
+        kernel_name="edges",
     )
     console.print(f"Saved interactive notebook to '{out/fname}'")
 
@@ -350,11 +356,7 @@ def compare(
     path = Path(path)
     cmppath = Path(cmppath)
 
-    if out is None:
-        out = path / "outputs"
-    else:
-        out = Path(out)
-
+    out = path / "outputs" if out is None else Path(out)
     if not out.exists():
         out.mkdir()
 
