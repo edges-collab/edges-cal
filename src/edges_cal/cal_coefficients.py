@@ -153,7 +153,7 @@ class SwitchCorrection:
                     s1p=self.load_s11.children[name.lower()],
                     f_low=f_low,
                     f_high=f_high,
-                    switchval=switchvals.get(name.lower(), None),
+                    switchval=switchvals.get(name.lower()),
                 ),
             )
 
@@ -465,7 +465,7 @@ class LNA(SwitchCorrection):
     def switch_corrections(self):
         """Switch corrections of the LNA."""
         # Models of standards
-        oa, sa, la = rc.agilent_85033E(self.freq.freq, self.resistance, match_delay=1)
+        oa, sa, la = rc.agilent_85033E(self.freq.freq, self.resistance, match_delay=True)
 
         # Correction at switch
         return rc.de_embed(
@@ -1182,6 +1182,7 @@ class CalibrationObservation:
         load_s11s: [None, dict] = None,
         compile_from_def: bool = True,
         include_previous: bool = False,
+        lna_kwargs: [None, dict] = None,
     ):
         """
         A composite object representing a full Calibration Observation.
@@ -1277,6 +1278,8 @@ class CalibrationObservation:
         load_s11s = load_s11s or {}
         load_kwargs = load_kwargs or {}
         s11_kwargs = s11_kwargs or {}
+        lna_kwargs = lna_kwargs = {}
+
         assert all(name in self._sources for name in load_spectra)
         assert all(name in self._sources for name in load_s11s)
 
@@ -1339,6 +1342,8 @@ class CalibrationObservation:
         for name, load in self._loads.items():
             setattr(self, name, load)
 
+        refl = load_s11s.get('lna', {})
+
         self.lna = LNA(
             self.io.s11.receiver_reading,
             internal_switch=self.io.s11.switching_state,
@@ -1348,6 +1353,7 @@ class CalibrationObservation:
             or self.io.definition["measurements"]["resistance_f"][
                 self.io.s11.receiver_reading.run_num
             ],
+            **{**s11_kwargs, **refl}
         )
 
         # We must use the most restricted frequency range available from all available

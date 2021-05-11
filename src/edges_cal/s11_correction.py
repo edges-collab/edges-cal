@@ -112,9 +112,8 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
         "match": np.zeros_like(switching_state.freq),
     }
     # Correction at the switch
-    corrections = {}
-    for kind in sw:
-        corrections[kind] = rc.de_embed(
+    corrections = {
+        kind: rc.de_embed(
             sw["open"],
             sw["short"],
             sw["match"],
@@ -122,8 +121,8 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
             getattr(switching_state, "short").s11,
             getattr(switching_state, "match").s11,
             getattr(switching_state, "external%s" % kind).s11,
-        )[0]
-
+        )[0] for kind in sw
+    }
     return corrections, sw
 
 
