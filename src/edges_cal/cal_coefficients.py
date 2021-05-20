@@ -5,13 +5,15 @@ The main user-facing module of ``edges-cal``.
 This module contains wrappers around lower-level functions in other modules, providing
 a one-stop interface for everything related to calibration.
 """
+from __future__ import annotations
 
 import h5py
 import numpy as np
 import os
+import tempfile
 import warnings
 from astropy.convolution import Gaussian1DKernel, convolve
-from copy import copy
+from copy import copy, deepcopy
 from edges_io import io
 from edges_io.logging import logger
 from functools import lru_cache
@@ -19,7 +21,7 @@ from hashlib import md5
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from . import modelling as mdl
 from . import receiver_calibration_func as rcf
@@ -291,10 +293,8 @@ class SwitchCorrection:
         def get_model(mag):
             # Returns a callable function that will evaluate a model onto a set of
             # un-normalised frequencies.
-            if mag:
-                d = np.abs(s11_correction)
-            else:
-                d = np.unwrap(np.angle(s11_correction))
+
+            d = np.abs(s11_correction) if mag else np.unwrap(np.angle(s11_correction))
 
             fit = mdl.ModelFit(
                 model_type, xdata=self.freq.freq_recentred, ydata=d, n_terms=n_terms
@@ -465,7 +465,9 @@ class LNA(SwitchCorrection):
     def switch_corrections(self):
         """Switch corrections of the LNA."""
         # Models of standards
-        oa, sa, la = rc.agilent_85033E(self.freq.freq, self.resistance, match_delay=True)
+        oa, sa, la = rc.agilent_85033E(
+            self.freq.freq, self.resistance, match_delay=True
+        )
 
         # Correction at switch
         return rc.de_embed(
@@ -492,6 +494,8 @@ class LoadSpectrum:
         rfi_kernel_width_freq: int = 16,
         rfi_threshold: float = 6,
         cache_dir: Optional[Union[str, Path]] = None,
+        t_load: float = 300.0,
+        t_load_ns: float = 400.0,
     ):
         """A class representing a measured spectrum from some Load.
 
@@ -531,6 +535,10 @@ class LoadSpectrum:
             An alternative directory in which to load/save cached reduced files. By
             default, the same as the path to the .mat files. If you don't have
             write permission there, it may be useful to use an alternative path.
+        t_load
+            Fiducial guess for the temperature of the internal load.
+        t_load_ns
+            Fiducial guess for the temperature of the internal load + noise source.
         """
         self.spec_obj = spec_obj
         self.resistance_obj = resistance_obj
@@ -565,6 +573,8 @@ class LoadSpectrum:
 
         self.ignore_times_percent = ignore_times_percent
         self.freq = EdgesFrequencyRange(f_low=f_low, f_high=f_high)
+        self.t_load = t_load
+        self.t_load_ns = t_load_ns
 
     @classmethod
     def from_load_name(
@@ -628,12 +638,12 @@ class LoadSpectrum:
     @property
     def averaged_spectrum(self) -> np.ndarray:
         """T* = T_noise * Q  + T_load."""
-        return self.averaged_Q * 400 + 300
+        return self.averaged_Q * self.t_load_ns + self.t_load
 
     @property
     def variance_spectrum(self) -> np.ndarray:
         """Variance of uncalibrated spectrum across time (see averaged_spectrum)."""
-        return self.variance_Q * 400 ** 2
+        return self.variance_Q * self.t_load_ns ** 2
 
     @property
     def ancillary(self) -> dict:
@@ -680,6 +690,8 @@ class LoadSpectrum:
             self.ignore_times_percent,
             self.freq.min,
             self.freq.max,
+            self.t_load,
+            self.t_load_ns,
             tuple(path.name for path in self.spec_files),
         )
         hsh = md5(str(params).encode()).hexdigest()
@@ -1079,6 +1091,8 @@ class Load:
         self.spectrum = spectrum
         self.reflections = reflections
         self.load_name = spectrum.load_name
+        self.t_load = self.spectrum.t_load
+        self.t_load_ns = self.spectrum.t_load_ns
 
         if self.load_name == "hot_load":
             self._correction = hot_load_correction
@@ -1182,7 +1196,6 @@ class CalibrationObservation:
         load_s11s: [None, dict] = None,
         compile_from_def: bool = True,
         include_previous: bool = False,
-        lna_kwargs: [None, dict] = None,
     ):
         """
         A composite object representing a full Calibration Observation.
@@ -1278,10 +1291,9 @@ class CalibrationObservation:
         load_s11s = load_s11s or {}
         load_kwargs = load_kwargs or {}
         s11_kwargs = s11_kwargs or {}
-        lna_kwargs = lna_kwargs = {}
 
         assert all(name in self._sources for name in load_spectra)
-        assert all(name in self._sources for name in load_s11s)
+        assert all(name in self._sources + ("lna",) for name in load_s11s)
 
         self.io = io.CalibrationObservation(
             path,
@@ -1342,7 +1354,7 @@ class CalibrationObservation:
         for name, load in self._loads.items():
             setattr(self, name, load)
 
-        refl = load_s11s.get('lna', {})
+        refl = load_s11s.get("lna", {})
 
         self.lna = LNA(
             self.io.s11.receiver_reading,
@@ -1353,7 +1365,7 @@ class CalibrationObservation:
             or self.io.definition["measurements"]["resistance_f"][
                 self.io.s11.receiver_reading.run_num
             ],
-            **{**s11_kwargs, **refl}
+            **{**s11_kwargs, **refl},
         )
 
         # We must use the most restricted frequency range available from all available
@@ -1393,6 +1405,8 @@ class CalibrationObservation:
 
         self.cterms = cterms
         self.wterms = wterms
+        self.t_load = self.ambient.t_load
+        self.t_load_ns = self.ambient.t_load_ns
 
     def new_load(
         self,
@@ -1429,6 +1443,8 @@ class CalibrationObservation:
             "rfi_kernel_width_time",
             "rfi_threshold",
             "cache_dir",
+            "t_load",
+            "t_load_ns",
         ]:
             if key not in spec_kwargs:
                 spec_kwargs[key] = getattr(self.open.spectrum, key)
@@ -1495,22 +1511,31 @@ class CalibrationObservation:
     @cached_property
     def s11_correction_models(self):
         """Dictionary of S11 correction models, one for each source."""
-        return {
-            name: source.s11_model(self.freq.freq)
-            for name, source in self._loads.items()
-        }
+        try:
+            return dict(self._injected_source_s11s)
+        except (TypeError, AttributeError):
+            return {
+                name: source.s11_model(self.freq.freq)
+                for name, source in self._loads.items()
+            }
 
     @cached_property
     def _calibration_coefficients(self):
         """The calibration polynomials, C1, C2, Tunc, Tcos, Tsin, evaluated at `freq.freq`."""
+        if hasattr(self, "_injected_lna_s11") and self._injected_lna_s11 is not None:
+            lna_s11 = np.array(self._injected_lna_s11)
+        else:
+            lna_s11 = self.lna.s11_model(self.freq.freq)
+
         scale, off, Tu, TC, TS = rcf.get_calibration_quantities_iterative(
             self.freq.freq_recentred,
             temp_raw={k: source.averaged_spectrum for k, source in self._loads.items()},
-            gamma_rec=self.lna.s11_model(self.freq.freq),
+            gamma_rec=lna_s11,
             gamma_ant=self.s11_correction_models,
             temp_ant={k: source.temp_ave for k, source in self._loads.items()},
             cterms=self.cterms,
             wterms=self.wterms,
+            temp_amb_internal=self.t_load,
         )
         return scale, off, Tu, TC, TS
 
@@ -1574,8 +1599,11 @@ class CalibrationObservation:
             The frequencies at which to evaluate C1. By default, the frequencies of this
             instance.
         """
-        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-        return self.C1_poly(fnorm)
+        if hasattr(self, "_injected_c1") and self._injected_c1 is not None:
+            return np.array(self._injected_c1)
+        else:
+            fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
+            return self.C1_poly(fnorm)
 
     def C2(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
         """
@@ -1587,8 +1615,11 @@ class CalibrationObservation:
             The frequencies at which to evaluate C2. By default, the frequencies of this
             instance.
         """
-        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-        return self.C2_poly(fnorm)
+        if hasattr(self, "_injected_c2") and self._injected_c2 is not None:
+            return np.array(self._injected_c2)
+        else:
+            fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
+            return self.C2_poly(fnorm)
 
     def Tunc(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
         """
@@ -1600,8 +1631,11 @@ class CalibrationObservation:
             The frequencies at which to evaluate Tunc. By default, the frequencies of this
             instance.
         """
-        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-        return self.Tunc_poly(fnorm)
+        if hasattr(self, "_injected_t_unc") and self._injected_t_unc is not None:
+            return np.array(self._injected_t_unc)
+        else:
+            fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
+            return self.Tunc_poly(fnorm)
 
     def Tcos(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
         """
@@ -1613,8 +1647,11 @@ class CalibrationObservation:
             The frequencies at which to evaluate Tcos. By default, the frequencies of this
             instance.
         """
-        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-        return self.Tcos_poly(fnorm)
+        if hasattr(self, "_injected_t_cos") and self._injected_t_cos is not None:
+            return np.array(self._injected_t_cos)
+        else:
+            fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
+            return self.Tcos_poly(fnorm)
 
     def Tsin(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
         """
@@ -1626,8 +1663,11 @@ class CalibrationObservation:
             The frequencies at which to evaluate Tsin. By default, the frequencies of this
             instance.
         """
-        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-        return self.Tsin_poly(fnorm)
+        if hasattr(self, "_injected_t_sin") and self._injected_t_sin is not None:
+            return np.array(self._injected_t_sin)
+        else:
+            fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
+            return self.Tsin_poly(fnorm)
 
     def get_linear_coefficients(self, load: [Load, str]):
         """
@@ -1638,16 +1678,27 @@ class CalibrationObservation:
         load : str or :class:`Load`
             The load for which to get the linear coefficients.
         """
-        load = self._load_str_to_load(load)
+        if isinstance(load, str):
+            load_s11 = self.s11_correction_models[load]
+        elif load.load_name in self.s11_correction_models:
+            load_s11 = self.s11_correction_models[load.load_name]
+        else:
+            load_s11 = load.s11_model(self.freq.freq)
+
+        if hasattr(self, "_injected_lna_s11") and self._injected_lna_s11 is not None:
+            lna_s11 = self._injected_lna_s11
+        else:
+            lna_s11 = self.lna.s11_model(self.freq.freq)
+
         return rcf.get_linear_coefficients(
-            load.s11_model(self.freq.freq),
-            self.lna.s11_model(self.freq.freq),
+            load_s11,
+            lna_s11,
             self.C1(self.freq.freq),
             self.C2(self.freq.freq),
             self.Tunc(self.freq.freq),
             self.Tcos(self.freq.freq),
             self.Tsin(self.freq.freq),
-            t_load=300,
+            t_load=self.t_load,
         )
 
     def calibrate(self, load: [Load, str]):
@@ -1718,6 +1769,15 @@ class CalibrationObservation:
 
         a, b = self.get_linear_coefficients(load)
         return (temp - b) / a
+
+    def get_K(self) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+        """Get the source-S11-dependent factors of Monsalve (2017) Eq. 7."""
+        return {
+            name: rcf.get_K(
+                gamma_rec=self.lna.s11_model(self.freq.freq), gamma_ant=gamma_ant
+            )
+            for name, gamma_ant in self.s11_correction_models.items()
+        }
 
     def plot_calibrated_temp(
         self,
@@ -1958,11 +2018,13 @@ class CalibrationObservation:
         """
         with h5py.File(filename, "w") as fl:
             # Write attributes
-            fl.attrs["path"] = str(self.path)
+            fl.attrs["path"] = str(self.io.original_path)
             fl.attrs["cterms"] = self.cterms
             fl.attrs["wterms"] = self.wterms
             fl.attrs["switch_path"] = str(self.lna.internal_switch.path)
             fl.attrs["switch_repeat_num"] = self.lna.internal_switch.repeat_num
+            fl.attrs["t_load"] = self.open.spectrum.t_load
+            fl.attrs["t_load_ns"] = self.open.spectrum.t_load_ns
 
             fl["C1"] = self.C1_poly.coefficients
             fl["C2"] = self.C2_poly.coefficients
@@ -1973,9 +2035,59 @@ class CalibrationObservation:
             fl["lna_s11_real"] = self.lna.s11_model(self.freq.freq).real
             fl["lna_s11_imag"] = self.lna.s11_model(self.freq.freq).imag
 
+    def to_calfile(self):
+        """Directly create a :class:`Calibration` object without writing to file."""
+        return Calibration.from_calobs(self)
+
+    def inject(
+        self,
+        lna_s11: np.ndarray = None,
+        source_s11s: Dict[str, np.ndarray] = None,
+        c1: np.ndarray = None,
+        c2: np.ndarray = None,
+        t_unc: np.ndarray = None,
+        t_cos: np.ndarray = None,
+        t_sin: np.ndarray = None,
+    ) -> CalibrationObservation:
+        """Generate a new :class:`CalibrationObservation` based on this one, but with injections.
+
+        Parameters
+        ----------
+        lna_s11
+            The LNA S11 as a function of frequency to inject.
+        source_s11s
+            Dictionary of ``{source: S11}`` for each source to inject.
+        c1
+            Scaling parameter as a function of frequency to inject.
+        c2 : [type], optional
+            Offset parameter to inject as a function of frequency.
+        t_unc
+            Uncorrelated temperature to inject (as function of frequency)
+        t_cos
+            Correlated temperature to inject (as function of frequency)
+        t_sin
+            Correlated temperature to inject (as function of frequency)
+
+        Returns
+        -------
+        :class:`CalibrationObservation`
+            A new observation object with the injected models.
+        """
+        new = copy(self)
+        new.invalidate_cache()
+        new._injected_lna_s11 = lna_s11
+        new._injected_source_s11s = source_s11s
+        new._injected_c1 = c1
+        new._injected_c2 = c2
+        new._injected_t_unc = t_unc
+        new._injected_t_cos = t_cos
+        new._injected_t_sin = t_sin
+
+        return new
+
 
 class Calibration:
-    def __init__(self, filename: [str, Path]):
+    def __init__(self, filename: Union[str, Path]):
         """
         A class defining an interface to a HDF5 file containing calibration information.
 
@@ -1990,6 +2102,8 @@ class Calibration:
             self.calobs_path = fl.attrs["path"]
             self.cterms = fl.attrs["cterms"]
             self.wterms = fl.attrs["wterms"]
+            self.t_load = fl.attrs.get("t_load", 300)
+            self.t_load_ns = fl.attrs.get("t_load_ns", 400)
 
             self.C1_poly = np.poly1d(fl["C1"][...])
             self.C2_poly = np.poly1d(fl["C2"][...])
@@ -2007,6 +2121,13 @@ class Calibration:
                 )
             except (ValueError, io.utils.FileStructureError):
                 self.internal_switch = None
+
+    @classmethod
+    def from_calobs(cls, calobs: CalibrationObservation) -> Calibration:
+        """Generate a :class:`Calibration` from an in-memory observation."""
+        tmp = tempfile.mktemp()
+        calobs.write(tmp)
+        return cls(tmp)
 
     def lna_s11(self, freq=None):
         """Get the LNA S11 at given frequencies."""
@@ -2123,7 +2244,7 @@ class Calibration:
         temp : np.ndarray
             The calibrated temperature.
         """
-        uncal_temp = 400 * q + 300
+        uncal_temp = self.t_load_ns * q + self.t_load
 
         return self.calibrate_temp(freq, uncal_temp, ant_s11)
 
