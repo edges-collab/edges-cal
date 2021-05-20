@@ -413,7 +413,7 @@ class NoiseWaves(Model):
         **kwargs,
     ):
         self.freq = FrequencyRange(freq)
-        n_sources = 4  # ambient, hot, short, open
+        n_sources = len(gamma_coeffs)  # ambient, hot, short, open / other?
         n_freq = self.freq.n
 
         assert (
