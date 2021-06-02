@@ -108,7 +108,6 @@ class _S11Base(metaclass=ABCMeta):
         load_s11: Union[io._S11SubDir, io.ReceiverReading],
         f_low: Optional[float] = None,
         f_high: Optional[float] = None,
-        #        resistance: float = 50.166,
         n_terms: Optional[int] = None,
         model_type: str = "fourier",
     ):
