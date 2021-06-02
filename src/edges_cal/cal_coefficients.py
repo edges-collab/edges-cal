@@ -177,8 +177,8 @@ class _S11Base(metaclass=ABCMeta):
             )
         return res
 
-    @abstractmethod
     @classmethod
+    @abstractmethod
     def from_path(cls, **kwargs):
         pass
 
@@ -2062,6 +2062,9 @@ class CalibrationObservation:
             fl.attrs["wterms"] = self.wterms
             fl.attrs["switch_path"] = str(self.internal_switch.data.path)
             fl.attrs["switch_repeat_num"] = self.internal_switch.data.repeat_num
+            fl.attrs["switch_resistance"] = self.internal_switch.resistance
+            fl.attrs["switch_nterms"] = self.internal_switch.n_terms[0]
+            fl.attrs["switch_model"] = self.internal_switch.model.__name__.lower()
             fl.attrs["t_load"] = self.open.spectrum.t_load
             fl.attrs["t_load_ns"] = self.open.spectrum.t_load_ns
 
@@ -2161,8 +2164,14 @@ class Calibration:
             self._lna_s11_im = Spline(self.freq.freq, fl["lna_s11_imag"][...])
 
             try:
-                self.internal_switch = io.SwitchingState(
-                    fl.attrs["switch_path"], repeat_num=fl.attrs["switch_repeat_num"],
+                self.internal_switch = s11.InternalSwitch(
+                    data=io.SwitchingState(
+                        fl.attrs["switch_path"],
+                        repeat_num=fl.attrs["switch_repeat_num"],
+                    ),
+                    resistance=fl.attrs["switch_resistance"],
+                    model=fl.attrs["switch_model"],
+                    n_terms=fl.attrs["switch_nterms"],
                 )
             except (ValueError, io.utils.FileStructureError):
                 self.internal_switch = None

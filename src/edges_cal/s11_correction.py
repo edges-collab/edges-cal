@@ -57,7 +57,7 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
 
 
 def _tuplify(x):
-    if isinstance(x, int):
+    if not hasattr(x, "__len__"):
         return (x, x, x)
     else:
         return x
