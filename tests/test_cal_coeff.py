@@ -32,13 +32,13 @@ def test_vna_bad_input():
 
 
 def test_even_nterms_s11(cal_data):
-    s11 = cc.SwitchCorrection.from_path("ambient", cal_data, n_terms=40)
+    s11 = cc.LoadS11.from_path("ambient", cal_data, n_terms=40)
 
     with pytest.raises(ValueError):
         s11.n_terms
 
     with pytest.raises(ValueError):
-        s11.get_s11_correction_model(n_terms=100)
+        s11.get_corrected_s11_model(n_terms=100)
 
 
 def test_lna_from_path(cal_data):

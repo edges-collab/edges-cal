@@ -136,6 +136,24 @@ class FrequencyRange:
         """
         return 2 * (f - self.center) / self.range
 
+    def denormalize(self, f):
+        """
+        De-normalise a set of frequencies.
+
+        Normalizes such that -1 aligns with ``min`` and +1 aligns with ``max``.
+
+        Parameters
+        ----------
+        f : array_like
+            Frequencies to de-normalize
+
+        Returns
+        -------
+        array_like, shape [f,]
+            The de-normalized frequencies.
+        """
+        return f * self.range / 2 + self.center
+
 
 class EdgesFrequencyRange(FrequencyRange):
     def __init__(self, n_channels=16384 * 2, max_freq=200.0, **kwargs):

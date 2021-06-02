@@ -175,14 +175,12 @@ class Model:
         model : np.ndarray
             The model evaluated at the input ``x`` or ``basis``.
         """
-        if parameters is None:
-            parameters = self.parameters
+        parameters = self.parameters if parameters is None else np.array(parameters)
 
         if parameters is None:
             raise ValueError("You must supply parameters to evaluate the model!")
 
-        if indices is None:
-            indices = np.arange(len(parameters))
+        indices = np.arange(len(parameters)) if indices is None else np.array(indices)
 
         if x is None and basis is None and self.default_basis is None:
             raise ValueError("You need to provide either 'x' or 'basis'.")
@@ -392,7 +390,8 @@ class NoiseWaves(Model):
     gamma_coeffs
         The linear coefficients that are functions of the S11 for the sources (i.e.
         the K_X in the above equation). Formulas for these are given in Monsalve et al.
-        (2017) Eq. 7.
+        (2017) Eq. 7. Each array (there should be three, one for each term) should have shape
+        (n_sources, n_freq).
     c_terms
         The number of polynomial terms describing T_L.
     w_terms
@@ -409,17 +408,26 @@ class NoiseWaves(Model):
         gamma_coeffs: Tuple[np.ndarray, np.ndarray, np.ndarray],
         c_terms: int = 6,
         w_terms: int = 6,
+        fg_terms: int = 0,
         model: Union[Type[Model], str] = "polynomial",
+        fg_model: Optional[Union[Type[Model], str]] = "linlog",
+        gamma_coeff_fg: Optional[np.ndarray] = None,
         **kwargs,
     ):
         self.freq = FrequencyRange(freq)
-        n_sources = len(gamma_coeffs)  # ambient, hot, short, open / other?
+        n_sources = len(gamma_coeffs[0])  # ambient, hot, short, open / other?
         n_freq = self.freq.n
 
         assert (
             len(gamma_coeffs) == 3
         )  # remember we don't have K_0 here, as it's part of the data vector.
         assert (kk.shape == (n_sources, n_freq) for kk in gamma_coeffs)
+
+        if fg_terms:
+            # Assume that the LAST source is the actual antenna.
+            self.fg_model = Model.get_mdl(fg_model)(
+                default_x=self.freq.freq, n_terms=fg_terms
+            )
 
         # Add in the coefficient of unity for T_L
         self.K = np.array(
@@ -431,6 +439,16 @@ class NoiseWaves(Model):
             ]
         )
         self.K = self.K.reshape((4, -1))
+        self.gamma_coeff_fg = gamma_coeff_fg
+
+        if gamma_coeff_fg is not None:
+            assert self.gamma_coeff_fg.shape == (n_freq,)
+
+            # Make the K[0] for the foreground term zero everywhere except for the field data,
+            # which is assumed to be the last dimension!
+            self.gamma_coeff_fg = np.concatenate(
+                (np.zeros(n_freq),) * (n_sources - 1) + (self.gamma_coeff_fg,)
+            )
 
         # TODO might be good to re-centre the frequencies?
         self.c_terms = c_terms
@@ -441,7 +459,7 @@ class NoiseWaves(Model):
 
         super().__init__(
             parameters=kwargs.get("parameters"),
-            n_terms=c_terms + 3 * w_terms,
+            n_terms=c_terms + 3 * w_terms + fg_terms,
             default_x=np.concatenate((self.freq.freq_recentred,) * n_sources),
         )
 
@@ -457,6 +475,10 @@ class NoiseWaves(Model):
         elif indx < self.c_terms + 3 * self.w_terms:
             return self.K[3] * self.model.get_basis_term(
                 indx - self.c_terms - 2 * self.w_terms, x
+            )
+        elif indx < self.c_terms + 3 * self.w_terms + self.fg_model.n_terms:
+            return self.gamma_coeff_fg * self.fg_model.get_basis_term(
+                indx - self.c_terms - 3 * self.w_terms, self.freq.denormalize(x)
             )
 
     def _get_normalized_freq(self, freq):
@@ -526,9 +548,25 @@ class NoiseWaves(Model):
         if len(parameters) == self.w_terms:
             p = parameters
         else:
-            p = parameters[self.c_terms + 2 * self.w_terms :]
+            p = parameters[
+                self.c_terms + 2 * self.w_terms : self.c_terms + 3 * self.w_terms
+            ]
 
         return self.model(parameters=p, indices=np.arange(self.w_terms))
+
+    def t_fg(
+        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """Compute foreground temperature for given parameters and frequencies."""
+        if parameters is None:
+            parameters = self.parameters
+
+        if len(parameters) == self.fg_model.n_terms:
+            p = parameters
+        else:
+            p = parameters[self.c_terms + 3 * self.w_terms :]
+
+        return self.fg_model(parameters=p)
 
 
 class ModelFit:

@@ -12,6 +12,7 @@ import numpy as np
 import os
 import tempfile
 import warnings
+from abc import ABCMeta, abstractclassmethod, abstractmethod
 from astropy.convolution import Gaussian1DKernel, convolve
 from copy import copy, deepcopy
 from edges_io import io
@@ -89,7 +90,7 @@ class S1P:
 VNA = S1P
 
 
-class SwitchCorrection:
+class _S11Base(metaclass=ABCMeta):
     default_nterms = {
         "ambient": 37,
         "hot_load": 37,
@@ -103,15 +104,13 @@ class SwitchCorrection:
 
     def __init__(
         self,
-        load_s11: [io._S11SubDir, io.ReceiverReading],
-        internal_switch: io.SwitchingState,
+        *,
+        load_s11: Union[io._S11SubDir, io.ReceiverReading],
         f_low: Optional[float] = None,
         f_high: Optional[float] = None,
-        resistance: float = 50.166,
+        #        resistance: float = 50.166,
         n_terms: Optional[int] = None,
         model_type: str = "fourier",
-        n_terms_internal_switch: int = 7,
-        model_type_internal_switch: str = "polynomial",
     ):
         """
         A class representing relevant switch corrections for a load.
@@ -142,9 +141,7 @@ class SwitchCorrection:
             self.load_name = None
 
         self.run_num = self.load_s11.run_num
-        self.resistance = resistance
 
-        self.internal_switch = internal_switch
         switchvals = {"open": 1, "short": -1, "match": 0}
 
         for name in self.load_s11.STANDARD_NAMES:
@@ -162,8 +159,6 @@ class SwitchCorrection:
         # Expose one of the frequency objects
         self.freq = self.open.freq
         self._nterms = int(n_terms) if n_terms is not None else None
-        self.n_terms_internal_switch = n_terms_internal_switch
-        self.model_type_internal_switch = model_type_internal_switch
         self.model_type = model_type
 
     @cached_property
@@ -182,82 +177,24 @@ class SwitchCorrection:
             )
         return res
 
+    @abstractclassmethod
     @classmethod
-    def from_path(
-        cls,
-        load_name: str,
-        path: [str, Path],
-        run_num_load: int = 1,
-        run_num_switch: int = 1,
-        repeat_num_load: int = None,
-        repeat_num_switch: int = None,
-        **kwargs,
-    ):
-        """
-        Create a new object from a given path and load name.
-
-        Parameters
-        ----------
-        load_name : str
-            The name of the load to create.
-        path : str or Path
-            The path to the overall calibration observation.
-        run_num_load : int
-            The run to use (default is last run available).
-        run_num_switch : int
-            The run to use for the switch S11 (default is last run available).
-        kwargs
-            All other arguments are passed through to the constructor of :class:`SwitchCorrection`.
-
-        Returns
-        -------
-        s11 : :class:`SwitchCorrection`
-            The S11 of the load.
-        """
-        antsim = load_name.startswith("AntSim")
-        path = Path(path)
-
-        if not antsim:
-            load_name = io.LOAD_ALIASES[load_name]
-
-        s11_load_dir = (io.AntSimS11 if antsim else io.LoadS11)(
-            path / "S11" / f"{load_name}{run_num_load:02}", repeat_num=repeat_num_load
-        )
-
-        internal_switch = io.SwitchingState(
-            path / "S11" / f"SwitchingState{run_num_switch:02}",
-            repeat_num=repeat_num_switch,
-        )
-        return cls(s11_load_dir, internal_switch=internal_switch, **kwargs)
+    def from_path(cls, **kwargs):
+        pass
 
     @cached_property
-    def switch_corrections(self):
-        """The corrections at the switch."""
-        return rc.de_embed(
-            self.open.switchval,
-            self.short.switchval,
-            self.match.switchval,
-            self.open.s11,
-            self.short.s11,
-            self.match.s11,
-            self.external.s11,
-        )
+    @abstractmethod
+    def measured_load_s11_raw(self):
+        pass
 
     @cached_property
-    def s11_correction(self) -> np.ndarray:
-        """The correction required for the S11 due to the switch."""
-        return s11.get_switch_correction(
-            self.switch_corrections[0],
-            self.internal_switch,
-            f_in=self.freq.freq,
-            resistance_m=self.resistance,
-            n_terms=self.n_terms_internal_switch,
-            model_type=self.model_type_internal_switch,
-        )[0]
+    def corrected_load_s11(self) -> np.ndarray:
+        """The measured S11 of the load, corrected for internal switch (if necessary)."""
+        return self.measured_load_s11_raw
 
     @lru_cache()
-    def get_s11_correction_model(
-        self, n_terms: [int, None] = None, model_type: [None, str] = None,
+    def get_corrected_s11_model(
+        self, n_terms: Union[int, None] = None, model_type: Union[None, str] = None,
     ):
         """Generate a callable model for the S11 correction.
 
@@ -288,7 +225,7 @@ class SwitchCorrection:
                 f"n_terms must be odd for S11 models. For {self.load_name} got n_terms={n_terms}."
             )
 
-        s11_correction = self.s11_correction
+        s11_correction = self.corrected_load_s11
 
         def get_model(mag):
             # Returns a callable function that will evaluate a model onto a set of
@@ -313,7 +250,7 @@ class SwitchCorrection:
     @cached_property
     def s11_model(self) -> callable:
         """The S11 model."""
-        return self.get_s11_correction_model()
+        return self.get_corrected_s11_model()
 
     def plot_residuals(
         self,
@@ -325,13 +262,11 @@ class SwitchCorrection:
         title=None,
         decade_ticks=True,
         ylabels=True,
-        n_terms_correction: int = 9,
-        model_type_correction="polynomial",
     ) -> plt.Figure:
         """
         Make a plot of the residuals of the S11 model and the correction data.
 
-        Residuals obtained  via :func:`get_s11_correction_model`
+        Residuals obtained  via :func:`get_corrected_s11_model`
 
         Returns
         -------
@@ -352,7 +287,7 @@ class SwitchCorrection:
                 axx.grid(True)
         ax[-1].set_xlabel("Frequency [MHz]")
 
-        corr = self.s11_correction
+        corr = self.corrected_load_s11
         model = self.s11_model
         model = model(self.freq.freq)
 
@@ -391,7 +326,94 @@ class SwitchCorrection:
         return fig
 
 
-class LNA(SwitchCorrection):
+class LoadS11(_S11Base):
+    def __init__(self, *, internal_switch: s11.InternalSwitch, **kwargs):
+        assert isinstance(internal_switch, s11.InternalSwitch)
+        self.internal_switch = internal_switch
+        super().__init__(**kwargs)
+
+    @classmethod
+    def from_path(
+        cls,
+        load_name: str,
+        path: [str, Path],
+        run_num_load: int = 1,
+        run_num_switch: int = 1,
+        repeat_num_load: int = None,
+        repeat_num_switch: int = None,
+        resistance: float = 50.166,
+        model_type_internal_switch: Union[str, mdl.Model] = "polynomial",
+        n_terms_internal_switch: int = 7,
+        **kwargs,
+    ):
+        """
+        Create a new object from a given path and load name.
+
+        Parameters
+        ----------
+        load_name : str
+            The name of the load to create.
+        path : str or Path
+            The path to the overall calibration observation.
+        run_num_load : int
+            The run to use (default is last run available).
+        run_num_switch : int
+            The run to use for the switch S11 (default is last run available).
+        kwargs
+            All other arguments are passed through to the constructor of :class:`SwitchCorrection`.
+
+        Returns
+        -------
+        s11 : :class:`SwitchCorrection`
+            The S11 of the load.
+        """
+        antsim = load_name.startswith("AntSim")
+        path = Path(path)
+
+        if not antsim:
+            load_name = io.LOAD_ALIASES[load_name]
+
+        s11_load_dir = (io.AntSimS11 if antsim else io.LoadS11)(
+            path / "S11" / f"{load_name}{run_num_load:02}", repeat_num=repeat_num_load
+        )
+
+        internal_switch = s11.InternalSwitch(
+            data=io.SwitchingState(
+                path / "S11" / f"SwitchingState{run_num_switch:02}",
+                repeat_num=repeat_num_switch,
+            ),
+            resistance=resistance,
+            model=model_type_internal_switch,
+            n_terms=n_terms_internal_switch,
+        )
+        return cls(load_s11=s11_load_dir, internal_switch=internal_switch, **kwargs)
+
+    @cached_property
+    def measured_load_s11_raw(self):
+        """The measured S11 of the load, calculated from raw internal standards."""
+        return rc.de_embed(
+            self.open.switchval,
+            self.short.switchval,
+            self.match.switchval,
+            self.open.s11,
+            self.short.s11,
+            self.match.s11,
+            self.external.s11,
+        )[0]
+
+    @cached_property
+    def corrected_load_s11(self) -> np.ndarray:
+        """The measured S11 of the load, corrected for the internal switch."""
+        print(len(self.measured_load_s11_raw), len(self.freq.freq))
+        return rc.gamma_de_embed(
+            self.internal_switch.s11_model(self.freq.freq),
+            self.internal_switch.s12_model(self.freq.freq),
+            self.internal_switch.s22_model(self.freq.freq),
+            self.measured_load_s11_raw,
+        )
+
+
+class LNA(_S11Base):
     def __init__(
         self, load_s11: io.ReceiverReading, resistance: float = 50.009, **kwargs
     ):
@@ -406,7 +428,8 @@ class LNA(SwitchCorrection):
         kwargs :
             All other arguments passed to :class:`SwitchCorrection`.
         """
-        super().__init__(load_s11=load_s11, resistance=resistance, **kwargs)
+        super().__init__(load_s11=load_s11, **kwargs)
+        self.resistance = resistance
         self.load_name = "lna"
         self.repeat_num = self.load_s11.repeat_num
 
@@ -414,10 +437,8 @@ class LNA(SwitchCorrection):
     def from_path(
         cls,
         path: [str, Path],
-        repeat_num_load: Optional[int] = None,
-        repeat_num_switch: Optional[int] = None,
-        run_num_load: int = 1,
-        run_num_switch: int = 1,
+        repeat_num: Optional[int] = None,
+        run_num: int = 1,
         **kwargs,
     ):
         """
@@ -441,16 +462,12 @@ class LNA(SwitchCorrection):
         """
         path = Path(path)
         load_s11 = io.ReceiverReading(
-            path=path / "S11" / f"ReceiverReading{run_num_load:02}",
-            repeat_num=repeat_num_load,
+            path=path / "S11" / f"ReceiverReading{run_num:02}",
+            repeat_num=repeat_num,
             fix=False,
         )
 
-        internal_switch = io.SwitchingState(
-            path=path / "S11" / f"SwitchingState{run_num_switch:02}",
-            repeat_num=repeat_num_switch,
-        )
-        return cls(load_s11, internal_switch=internal_switch, **kwargs)
+        return cls(load_s11=load_s11, **kwargs)
 
     @cached_property
     def external(self):
@@ -462,8 +479,8 @@ class LNA(SwitchCorrection):
         )
 
     @cached_property
-    def switch_corrections(self):
-        """Switch corrections of the LNA."""
+    def measured_load_s11_raw(self):
+        """Measured S11 of of the LNA."""
         # Models of standards
         oa, sa, la = rc.agilent_85033E(
             self.freq.freq, self.resistance, match_delay=True
@@ -474,18 +491,13 @@ class LNA(SwitchCorrection):
             oa, sa, la, self.open.s11, self.short.s11, self.match.s11, self.external.s11
         )[0]
 
-    @cached_property
-    def s11_correction(self):
-        """Alias of :attr:`switch_corrections`."""
-        return self.switch_corrections
-
 
 class LoadSpectrum:
     def __init__(
         self,
         spec_obj: List[io.Spectrum],
         resistance_obj: io.Resistance,
-        switch_correction: Optional[SwitchCorrection] = None,
+        switch_correction: Optional[LoadS11] = None,
         f_low: float = 40.0,
         f_high: Optional[float] = None,
         ignore_times_percent: float = 5.0,
@@ -941,7 +953,7 @@ class HotLoadCorrection:
 
     def _get_model_part(self, kind: str, mag: bool = True):
         """
-        Compute an evaluated S11 model, having fit to the data.
+        Compute an evaluated S-parameter model, having fit to the data.
 
         Parameters
         ----------
@@ -991,9 +1003,7 @@ class HotLoadCorrection:
         """The reflection coefficient from the other side."""
         return self._get_model_kind("s22")
 
-    def power_gain(
-        self, freq: np.ndarray, hot_load_s11: SwitchCorrection
-    ) -> np.ndarray:
+    def power_gain(self, freq: np.ndarray, hot_load_s11: LoadS11) -> np.ndarray:
         """
         Calculate the power gain.
 
@@ -1001,7 +1011,7 @@ class HotLoadCorrection:
         ----------
         freq : np.ndarray
             The frequencies.
-        hot_load_s11 : :class:`SwitchCorrection`
+        hot_load_s11 : :class:`LoadS11`
             The S11 of the hot load.
 
         Returns
@@ -1010,12 +1020,13 @@ class HotLoadCorrection:
             The power gain as a function of frequency.
         """
         assert isinstance(
-            hot_load_s11, SwitchCorrection
+            hot_load_s11, LoadS11
         ), "hot_load_s11 must be a switch correction"
         assert (
             hot_load_s11.load_name == "hot_load"
         ), "hot_load_s11 must be a hot_load s11"
 
+        print("In hot_load, len(freq)=", len(freq))
         return self.get_power_gain(
             {
                 "s11": self.s11_model(freq),
@@ -1035,7 +1046,7 @@ class HotLoadCorrection:
         ----------
         semi_rigid_sparams : dict
             A dictionary of reflection coefficient measurements as a function of frequency
-            for the semi rigid cable.
+            for the semi-rigid cable.
         hot_load_s11 : array-like
             The S11 measurement of the hot_load.
 
@@ -1065,7 +1076,7 @@ class Load:
     def __init__(
         self,
         spectrum: LoadSpectrum,
-        reflections: SwitchCorrection,
+        reflections: LoadS11,
         hot_load_correction: [HotLoadCorrection, None] = None,
         ambient: [LoadSpectrum, None] = None,
     ):
@@ -1083,9 +1094,7 @@ class Load:
             If this is a hot load, need to provide an ambient spectrum to correct it.
         """
         assert isinstance(spectrum, LoadSpectrum), "spectrum must be a LoadSpectrum"
-        assert isinstance(
-            reflections, SwitchCorrection
-        ), "spectrum must be a SwitchCorrection"
+        assert isinstance(reflections, LoadS11), "spectrum must be a SwitchCorrection"
         assert spectrum.load_name == reflections.load_name
 
         self.spectrum = spectrum
@@ -1138,7 +1147,7 @@ class Load:
             load_name, path, f_low=f_low, f_high=f_high, **spec_kwargs,
         )
 
-        refl = SwitchCorrection.from_path(
+        refl = LoadS11.from_path(
             load_name, path, f_low=f_low, f_high=f_high, **reflection_kwargs,
         )
 
@@ -1154,11 +1163,11 @@ class Load:
         """The average temperature of the thermistor (over frequency and time)."""
         if self.load_name != "hot_load":
             return self.spectrum.temp_ave
-        else:
-            gain = self._correction.power_gain(self.freq.freq, self.reflections)
 
-            # temperature
-            return gain * self.spectrum.temp_ave + (1 - gain) * self._ambient.temp_ave
+        gain = self._correction.power_gain(self.freq.freq, self.reflections)
+        print("len of gain = ", len(gain))
+        # temperature
+        return gain * self.spectrum.temp_ave + (1 - gain) * self._ambient.temp_ave
 
     @property
     def averaged_Q(self):
@@ -1196,6 +1205,7 @@ class CalibrationObservation:
         load_s11s: [None, dict] = None,
         compile_from_def: bool = True,
         include_previous: bool = False,
+        internal_switch_kwargs: Optional[Dict[str, Any]] = None,
     ):
         """
         A composite object representing a full Calibration Observation.
@@ -1291,6 +1301,7 @@ class CalibrationObservation:
         load_s11s = load_s11s or {}
         load_kwargs = load_kwargs or {}
         s11_kwargs = s11_kwargs or {}
+        internal_switch_kwargs = internal_switch_kwargs or {}
 
         assert all(name in self._sources for name in load_spectra)
         assert all(name in self._sources + ("lna",) for name in load_s11s)
@@ -1308,7 +1319,15 @@ class CalibrationObservation:
 
         self.path = Path(self.io.path)
 
-        hot_load_correction = HotLoadCorrection(semi_rigid_path, f_low, f_high,)
+        hot_load_correction = HotLoadCorrection(semi_rigid_path, f_low, f_high)
+
+        self.internal_switch = s11.InternalSwitch(
+            data=self.io.s11.switching_state,
+            resistance=self.io.definition["measurements"]["resistance_m"][
+                self.io.s11.switching_state.run_num
+            ],
+            **internal_switch_kwargs,
+        )
 
         self._loads = {}
         for source in self._sources:
@@ -1330,14 +1349,11 @@ class CalibrationObservation:
             refl = load_s11s.get(source, {})
 
             if isinstance(refl, dict):
-                refl = SwitchCorrection(
-                    getattr(self.io.s11, source),
-                    self.io.s11.switching_state,
+                refl = LoadS11(
+                    load_s11=getattr(self.io.s11, source),
+                    internal_switch=self.internal_switch,
                     f_low=f_low,
                     f_high=f_high,
-                    resistance=self.io.definition["measurements"]["resistance_m"][
-                        self.io.s11.switching_state.run_num
-                    ],
                     **{**s11_kwargs, **refl},
                 )
 
@@ -1357,8 +1373,7 @@ class CalibrationObservation:
         refl = load_s11s.get("lna", {})
 
         self.lna = LNA(
-            self.io.s11.receiver_reading,
-            internal_switch=self.io.s11.switching_state,
+            load_s11=self.io.s11.receiver_reading,
             f_low=f_low,
             f_high=f_high,
             resistance=resistance_f
@@ -1435,7 +1450,10 @@ class CalibrationObservation:
 
         # Fill up kwargs with keywords from this instance
         if "resistance" not in reflection_kwargs:
-            reflection_kwargs["resistance"] = self.open.reflections.resistance
+            reflection_kwargs[
+                "resistance"
+            ] = self.open.reflections.internal_switch.resistance
+
         for key in [
             "ignore_times_percent",
             "rfi_removal",
@@ -1520,19 +1538,43 @@ class CalibrationObservation:
             }
 
     @cached_property
+    def source_thermistor_temps(self) -> Dict[str, Union[float, np.ndarray]]:
+        """Dictionary of input source thermistor temperatures."""
+        if (
+            hasattr(self, "_injected_source_temps")
+            and self._injected_source_temps is not None
+        ):
+            return self._injected_source_temps
+
+        print("hot_load: ", self.hot_load.freq.n, len(self.hot_load.temp_ave))
+        print(
+            {
+                k: len(source.temp_ave)
+                if hasattr(source.temp_ave, "__len__")
+                else source.temp_ave
+                for k, source in self._loads.items()
+            }
+        )
+        return {k: source.temp_ave for k, source in self._loads.items()}
+
+    @cached_property
     def _calibration_coefficients(self):
         """The calibration polynomials, C1, C2, Tunc, Tcos, Tsin, evaluated at `freq.freq`."""
-        if hasattr(self, "_injected_lna_s11") and self._injected_lna_s11 is not None:
-            lna_s11 = np.array(self._injected_lna_s11)
+        if (
+            hasattr(self, "_injected_averaged_spectra")
+            and self._injected_averaged_spectra is not None
+        ):
+            ave_spec = self._injected_averaged_spectra
         else:
-            lna_s11 = self.lna.s11_model(self.freq.freq)
-
+            ave_spec = {
+                k: source.averaged_spectrum for k, source in self._loads.items()
+            }
         scale, off, Tu, TC, TS = rcf.get_calibration_quantities_iterative(
             self.freq.freq_recentred,
-            temp_raw={k: source.averaged_spectrum for k, source in self._loads.items()},
-            gamma_rec=lna_s11,
+            temp_raw=ave_spec,
+            gamma_rec=self.lna_s11,
             gamma_ant=self.s11_correction_models,
-            temp_ant={k: source.temp_ave for k, source in self._loads.items()},
+            temp_ant=self.source_thermistor_temps,
             cterms=self.cterms,
             wterms=self.wterms,
             temp_amb_internal=self.t_load,
@@ -1601,9 +1643,8 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_c1") and self._injected_c1 is not None:
             return np.array(self._injected_c1)
-        else:
-            fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-            return self.C1_poly(fnorm)
+        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
+        return self.C1_poly(fnorm)
 
     def C2(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
         """
@@ -1617,9 +1658,8 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_c2") and self._injected_c2 is not None:
             return np.array(self._injected_c2)
-        else:
-            fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-            return self.C2_poly(fnorm)
+        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
+        return self.C2_poly(fnorm)
 
     def Tunc(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
         """
@@ -1633,9 +1673,8 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_t_unc") and self._injected_t_unc is not None:
             return np.array(self._injected_t_unc)
-        else:
-            fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-            return self.Tunc_poly(fnorm)
+        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
+        return self.Tunc_poly(fnorm)
 
     def Tcos(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
         """
@@ -1649,9 +1688,8 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_t_cos") and self._injected_t_cos is not None:
             return np.array(self._injected_t_cos)
-        else:
-            fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-            return self.Tcos_poly(fnorm)
+        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
+        return self.Tcos_poly(fnorm)
 
     def Tsin(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
         """
@@ -1665,9 +1703,16 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_t_sin") and self._injected_t_sin is not None:
             return np.array(self._injected_t_sin)
+        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
+        return self.Tsin_poly(fnorm)
+
+    @cached_property
+    def lna_s11(self):
+        """The corrected S11 of the LNA evaluated at the data frequencies."""
+        if hasattr(self, "_injected_lna_s11") and self._injected_lna_s11 is not None:
+            return self._injected_lna_s11
         else:
-            fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-            return self.Tsin_poly(fnorm)
+            return self.lna.s11_model(self.freq.freq)
 
     def get_linear_coefficients(self, load: [Load, str]):
         """
@@ -1685,14 +1730,9 @@ class CalibrationObservation:
         else:
             load_s11 = load.s11_model(self.freq.freq)
 
-        if hasattr(self, "_injected_lna_s11") and self._injected_lna_s11 is not None:
-            lna_s11 = self._injected_lna_s11
-        else:
-            lna_s11 = self.lna.s11_model(self.freq.freq)
-
         return rcf.get_linear_coefficients(
             load_s11,
-            lna_s11,
+            self.lna_s11,
             self.C1(self.freq.freq),
             self.C2(self.freq.freq),
             self.Tunc(self.freq.freq),
@@ -1719,7 +1759,7 @@ class CalibrationObservation:
         return a * load.averaged_spectrum + b
 
     def _load_str_to_load(self, load: [Load, str]):
-        if type(load) == str:
+        if isinstance(load, str):
             try:
                 load = self._loads[load]
             except AttributeError:
@@ -1835,14 +1875,13 @@ class CalibrationObservation:
             label=f"Calibrated {load.spectrum.load_name} [RMS = {rms:.3f}]",
         )
 
-        if load.load_name != "hot_load":
-            ax.axhline(load.temp_ave, color="C2", label="Average thermistor temp")
+        temp_ave = self.source_thermistor_temps.get(load.load_name, load.temp_ave)
+
+        if not hasattr(temp_ave, "__len__"):
+            ax.axhline(temp_ave, color="C2", label="Average thermistor temp")
         else:
             ax.plot(
-                self.freq.freq,
-                load.temp_ave,
-                color="C2",
-                label="Average thermistor temp",
+                self.freq.freq, temp_ave, color="C2", label="Average thermistor temp",
             )
 
         ax.set_ylim([np.nanmin(freq_ave_cal), np.nanmax(freq_ave_cal)])
@@ -1864,7 +1903,7 @@ class CalibrationObservation:
         for source in self._sources:
             load = self._load_str_to_load(source)
             cal = self.calibrate(load)
-            true = load.temp_ave
+            true = self.source_thermistor_temps[source]
             out[source] = cal - true
         return out
 
@@ -2021,8 +2060,8 @@ class CalibrationObservation:
             fl.attrs["path"] = str(self.io.original_path)
             fl.attrs["cterms"] = self.cterms
             fl.attrs["wterms"] = self.wterms
-            fl.attrs["switch_path"] = str(self.lna.internal_switch.path)
-            fl.attrs["switch_repeat_num"] = self.lna.internal_switch.repeat_num
+            fl.attrs["switch_path"] = str(self.internal_switch.data.path)
+            fl.attrs["switch_repeat_num"] = self.internal_switch.data.repeat_num
             fl.attrs["t_load"] = self.open.spectrum.t_load
             fl.attrs["t_load_ns"] = self.open.spectrum.t_load_ns
 
@@ -2048,6 +2087,8 @@ class CalibrationObservation:
         t_unc: np.ndarray = None,
         t_cos: np.ndarray = None,
         t_sin: np.ndarray = None,
+        averaged_spectra: Dict[str, np.ndarray] = None,
+        thermistor_temp_ave: Dict[str, np.ndarray] = None,
     ) -> CalibrationObservation:
         """Generate a new :class:`CalibrationObservation` based on this one, but with injections.
 
@@ -2067,6 +2108,8 @@ class CalibrationObservation:
             Correlated temperature to inject (as function of frequency)
         t_sin
             Correlated temperature to inject (as function of frequency)
+        averaged_spectra
+            Dictionary of ``{source: spectrum}`` for each source to inject.
 
         Returns
         -------
@@ -2082,6 +2125,8 @@ class CalibrationObservation:
         new._injected_t_unc = t_unc
         new._injected_t_cos = t_cos
         new._injected_t_sin = t_sin
+        new._injected_averaged_spectra = averaged_spectra
+        new._injected_source_temps = thermistor_temp_ave
 
         return new
 
@@ -2345,7 +2390,6 @@ def perform_term_sweep(
 
             calobs.lna = LNA(
                 calobs.io.s11.receiver_reading,
-                internal_switch=calobs.io.s11.switching_state,
                 f_low=calobs.freq.min,
                 f_high=calobs.freq.max,
                 resistance=calobs.lna.resistance,
@@ -2353,7 +2397,7 @@ def perform_term_sweep(
 
             # If we're changing anything else, we need to change each load.
             for name, load in calobs._loads.items():
-                load.reflections = SwitchCorrection.from_path(
+                load.reflections = LoadS11.from_path(
                     load_name=name,
                     path=calobs.io.path,
                     repeat_num_load=this_rep_num[name],
@@ -2441,7 +2485,6 @@ def perform_term_sweep(
 
     calobs.lna = LNA(
         calobs.io.s11.receiver_reading,
-        internal_switch=calobs.io.s11.switching_state,
         f_low=calobs.freq.min,
         f_high=calobs.freq.max,
         resistance=calobs.lna.resistance,

@@ -340,7 +340,7 @@ def get_calibration_quantities_iterative(
     gamma_ant = {key: value[mask] for key, value in gamma_ant.items()}
     temp_raw = {key: value[mask] for key, value in temp_raw.items()}
     gamma_rec = gamma_rec[mask]
-    temp_ant["hot_load"] = temp_ant["hot_load"][mask]
+    temp_ant_hot = temp_ant["hot_load"][mask]
 
     # Get F and alpha for each load (Eqs. 3 and 4)
     F = {k: get_F(gamma_rec, v) for k, v in gamma_ant.items()}
@@ -390,9 +390,7 @@ def get_calibration_quantities_iterative(
         # Step 2: scale and offset
 
         # Updating scale and offset
-        sca_new = (temp_ant["hot_load"] - temp_ant["ambient"]) / (
-            th_iter[i, :] - ta_iter[i, :]
-        )
+        sca_new = (temp_ant_hot - temp_ant["ambient"]) / (th_iter[i, :] - ta_iter[i, :])
         off_new = ta_iter[i, :] - temp_ant["ambient"]
 
         if i == 0:
