@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import h5py
 import numpy as np
-import os
 import tempfile
 import warnings
 from abc import ABCMeta, abstractmethod
 from astropy.convolution import Gaussian1DKernel, convolve
-from copy import copy, deepcopy
+from copy import copy
 from edges_io import io
 from edges_io.logging import logger
 from functools import lru_cache
@@ -118,9 +117,6 @@ class _S11Base(metaclass=ABCMeta):
         ----------
         load_s11 : :class:`io._S11SubDir`
             An instance of the basic ``io`` S11 folder.
-        internal_switch : :class:`io.SwitchingState`
-            An instance of the basic ``io`` Switching State class, defining the switching
-            state S11 to use for this load.
         f_low : float
             Minimum frequency to use. Default is all frequencies.
         f_high : float
@@ -172,7 +168,8 @@ class _S11Base(metaclass=ABCMeta):
         res = self._nterms or self.default_nterms.get(self.load_name, None)
         if not (isinstance(res, int) and res % 2):
             raise ValueError(
-                f"n_terms must be odd for S11 models. For {self.load_name} got n_terms={res}."
+                f"n_terms must be odd for S11 models. For {self.load_name} got "
+                f"n_terms={res}."
             )
         return res
 
@@ -188,7 +185,7 @@ class _S11Base(metaclass=ABCMeta):
 
     @cached_property
     def corrected_load_s11(self) -> np.ndarray:
-        """The measured S11 of the load, corrected for internal switch (if necessary)."""
+        """The measured S11 of the load, corrected for internal switch."""
         return self.measured_load_s11_raw
 
     @lru_cache()
@@ -202,8 +199,8 @@ class _S11Base(metaclass=ABCMeta):
         Parameters
         ----------
         n_terms : int
-            Number of terms used in the fourier-based model. Not necessary if `load_name`
-            is specified in the class.
+            Number of terms used in the fourier-based model. Not necessary if
+            `load_name` is specified in the class.
 
         Returns
         -------
@@ -221,7 +218,8 @@ class _S11Base(metaclass=ABCMeta):
 
         if not (isinstance(n_terms, int) and n_terms % 2):
             raise ValueError(
-                f"n_terms must be odd for S11 models. For {self.load_name} got n_terms={n_terms}."
+                f"n_terms must be odd for S11 models. For {self.load_name} got "
+                f"n_terms={n_terms}."
             )
 
         s11_correction = self.corrected_load_s11
@@ -327,6 +325,17 @@ class _S11Base(metaclass=ABCMeta):
 
 class LoadS11(_S11Base):
     def __init__(self, *, internal_switch: s11.InternalSwitch, **kwargs):
+        """S11 for a lab calibration load.
+
+        Parameters
+        ----------
+        internal_switch : :class:`s11.InternalSwitch`
+            The internal switch state corresponding to the load.
+
+        Other Parameters
+        ----------------
+        Passed through to :class:`_S11Base`.
+        """
         assert isinstance(internal_switch, s11.InternalSwitch)
         self.internal_switch = internal_switch
         super().__init__(**kwargs)
@@ -359,11 +368,12 @@ class LoadS11(_S11Base):
         run_num_switch : int
             The run to use for the switch S11 (default is last run available).
         kwargs
-            All other arguments are passed through to the constructor of :class:`SwitchCorrection`.
+            All other arguments are passed through to the constructor of
+            :class:`LoadS11`.
 
         Returns
         -------
-        s11 : :class:`SwitchCorrection`
+        s11 : :class:`LoadS11`
             The S11 of the load.
         """
         antsim = load_name.startswith("AntSim")
@@ -629,7 +639,14 @@ class LoadSpectrum:
 
     @cached_property
     def averaged_Q(self) -> np.ndarray:
-        """Ratio of powers, Q = (P_source - P_load)/(P_noise - P_load), averaged over time."""
+        """Ratio of powers averaged over time.
+
+        Notes
+        -----
+        The formula is
+
+        .. math:: Q = (P_source - P_load)/(P_noise - P_load)
+        """
         # TODO: should also get weights!
         spec = self._ave_and_var_spec[0]["Q"]
 
@@ -691,7 +708,7 @@ class LoadSpectrum:
         return self._ave_and_var_spec[1]["p2"]
 
     def _get_integrated_filename(self):
-        """Determine the relevant unique filename for the reduced data  for this instance."""
+        """Determine a unique filename for the reduced data of this instance."""
         params = (
             self.rfi_threshold,
             self.rfi_kernel_width_time,
@@ -782,7 +799,8 @@ class LoadSpectrum:
 
         if self.rfi_removal == "2D":
             for key, val in spec.items():
-                # Need to set nans and zeros to inf so that median/mean detrending can work.
+                # Need to set nans and zeros to inf so that median/mean detrending
+                # can work.
                 val[np.isnan(val)] = np.inf
 
                 if key != "Q":
@@ -1042,8 +1060,8 @@ class HotLoadCorrection:
         Parameters
         ----------
         semi_rigid_sparams : dict
-            A dictionary of reflection coefficient measurements as a function of frequency
-            for the semi-rigid cable.
+            A dictionary of reflection coefficient measurements as a function of
+            frequency for the semi-rigid cable.
         hot_load_s11 : array-like
             The S11 measurement of the hot_load.
 
@@ -1235,9 +1253,10 @@ class CalibrationObservation:
             for each. Passing an int will attempt to use that run for each source. Pass
             a dict mapping sources to numbers to use different combinations.
         repeat_num : int or dict
-            Which repeat number to use for the calibrators. Default is to use the last repeat
-            for each. Passing an int will attempt to use that repeat for each source. Pass
-            a dict mapping sources to numbers to use different combinations.
+            Which repeat number to use for the calibrators. Default is to use the last
+            repeat for each. Passing an int will attempt to use that repeat for each
+            source. Pass a dict mapping sources to numbers to use different
+            combinations.
         resistance_f : float
             Female resistance (Ohms). Used for the LNA S11.
         cterms : int
@@ -1251,46 +1270,54 @@ class CalibrationObservation:
             objects. See its documentation for relevant parameters. Parameters specified
             here are used for _all_ calibrator sources.
         s11_kwargs : dict
-            Keyword arguments used to instantiate the calibrator :class:`SwitchCorrection`
+            Keyword arguments used to instantiate the calibrator :class:`LoadS11`
             objects. See its documentation for relevant parameters. Parameters specified
             here are used for _all_ calibrator sources.
         load_spectra : dict
             A dictionary mapping load names of calibration sources (eg. ambient, short)
             to either :class:`LoadSpectrum` instances or dictionaries of keywords to
             instantiate those objects. Useful for individually specifying
-            properties of each load separately. Values in these dictionaries (if supplied)
-            over-ride those given in ``load_kwargs`` (but values in ``load_kwargs`` are
-            still used if not over-ridden).
+            properties of each load separately. Values in these dictionaries (if
+            supplied) over-ride those given in ``load_kwargs`` (but values in
+            ``load_kwargs`` are still used if not over-ridden).
         load_s11s : dict
             A dictionary mapping load names of calibration sources (eg. ambient, short)
-            to :class:`SwitchCorrection` instances or dictionaries of keywords to
-            instantiate those objects. Useful for individually specifying
-            properties of each load separately. Values in these dictionaries (if supplied)
-            over-ride those given in ``s11_kwargs`` (but values in ``s11_kwargs`` are
-            still used if not over-ridden).
+            to :class:`LoadS11` instances or dictionaries of keywords to instantiate
+            those objects. Useful for individually specifying properties of each load
+            separately. Values in these dictionaries (if  supplied) over-ride those
+            given in ``s11_kwargs`` (but values in ``s11_kwargs`` are still used if not
+            over-ridden).
         compile_from_def : bool
-            Whether to attempt compiling a virtual observation from a ``definition.yaml``
-            inside the observation directory. This is the default behaviour, but can
-            be turned off to enforce that the current directory should be used directly.
+            Whether to attempt compiling a virtual observation from a
+            ``definition.yaml`` inside the observation directory. This is the default
+            behaviour, but can be turned off to enforce that the current directory
+            should be used directly.
         include_previous : bool
-            Whether to include the previous observation by default to supplement this one
-            if required files are missing.
+            Whether to include the previous observation by default to supplement this
+            one if required files are missing.
 
         Examples
         --------
         This will setup an observation with all default options applied:
 
-        >>> path = '/data5/edges/data/CalibrationObservations/Receiver01/Receiver01_25C_2019_11_26_040_to_200MHz'
+        >>> path = '/CalibrationObservations/Receiver01_25C_2019_11_26_040_to_200MHz'
         >>> calobs = CalibrationObservation(path)
 
         To specify some options for constructing the various calibrator load spectra:
 
-        >>> calobs = CalibrationObservation(path, load_kwargs={"cache_dir":".", "ignore_times_percent": 50})
+        >>> calobs = CalibrationObservation(
+        >>>     path,
+        >>>    load_kwargs={"cache_dir":".", "ignore_times_percent": 50}
+        >>> )
 
-        But if we typically wanted 50% of times ignored, but in one special case we'd like 80%:
+        But if we typically wanted 50% of times ignored, but in one special case we'd
+        like 80%:
 
-        >>> calobs = CalibrationObservation(path, load_kwargs={"cache_dir":".", "ignore_times_percent": 50},
-        >>>                                 load_spectra={"short": {"ignore_times_percent": 80}})
+        >>> calobs = CalibrationObservation(
+        >>>     path,
+        >>>     load_kwargs={"cache_dir":".", "ignore_times_percent": 50},
+        >>>     load_spectra={"short": {"ignore_times_percent": 80}}
+        >>> )
 
         """
         load_spectra = load_spectra or {}
@@ -1426,7 +1453,9 @@ class CalibrationObservation:
         reflection_kwargs: Optional[dict] = None,
         spec_kwargs: Optional[dict] = None,
     ):
-        """Create a new load with the given load name, from files inside the current observation.
+        """Create a new load with the given load name.
+
+        Uses files inside the current observation.
 
         Parameters
         ----------
@@ -1513,7 +1542,7 @@ class CalibrationObservation:
         Returns
         -------
         dict:
-            Each entry has a key of the source name, and the value is a matplotlib figure.
+            Each entry has a key of the source name, and the value is a matplotlib fig.
         """
         out = {
             name: source.reflections.plot_residuals(**kwargs)
@@ -1546,7 +1575,7 @@ class CalibrationObservation:
 
     @cached_property
     def _calibration_coefficients(self):
-        """The calibration polynomials, C1, C2, Tunc, Tcos, Tsin, evaluated at `freq.freq`."""
+        """The calibration polynomials, evaluated at `freq.freq`."""
         if (
             hasattr(self, "_injected_averaged_spectra")
             and self._injected_averaged_spectra is not None
@@ -1573,8 +1602,8 @@ class CalibrationObservation:
         """`np.poly1d` object describing the Scaling calibration coefficient C1.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
-        and `freq.max` map to -1 and 1 respectively. Use :func:`~C1` as a direct function
-        on frequency.
+        and `freq.max` map to -1 and 1 respectively. Use :func:`~C1` as a direct
+        function on frequency.
         """
         return self._calibration_coefficients[0]
 
@@ -1583,8 +1612,8 @@ class CalibrationObservation:
         """`np.poly1d` object describing the offset calibration coefficient C2.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
-        and `freq.max` map to -1 and 1 respectively. Use :func:`~C2` as a direct function
-        on frequency.
+        and `freq.max` map to -1 and 1 respectively. Use :func:`~C2` as a direct
+        function on frequency.
         """
         return self._calibration_coefficients[1]
 
@@ -1593,8 +1622,8 @@ class CalibrationObservation:
         """`np.poly1d` object describing the uncorrelated noise-wave parameter, Tunc.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
-        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tunc` as a direct function
-        on frequency.
+        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tunc` as a direct
+        function on frequency.
         """
         return self._calibration_coefficients[2]
 
@@ -1603,8 +1632,8 @@ class CalibrationObservation:
         """`np.poly1d` object describing the cosine noise-wave parameter, Tcos.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
-        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tcos` as a direct function
-        on frequency.
+        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tcos` as a direct
+        function on frequency.
         """
         return self._calibration_coefficients[3]
 
@@ -1613,8 +1642,8 @@ class CalibrationObservation:
         """`np.poly1d` object describing the sine noise-wave parameter, Tsin.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
-        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tsin` as a direct function
-        on frequency.
+        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tsin` as a direct
+        function on frequency.
         """
         return self._calibration_coefficients[4]
 
@@ -1655,8 +1684,8 @@ class CalibrationObservation:
         Parameters
         ----------
         f : array-like
-            The frequencies at which to evaluate Tunc. By default, the frequencies of this
-            instance.
+            The frequencies at which to evaluate Tunc. By default, the frequencies of
+            thisinstance.
         """
         if hasattr(self, "_injected_t_unc") and self._injected_t_unc is not None:
             return np.array(self._injected_t_unc)
@@ -1670,8 +1699,8 @@ class CalibrationObservation:
         Parameters
         ----------
         f : array-like
-            The frequencies at which to evaluate Tcos. By default, the frequencies of this
-            instance.
+            The frequencies at which to evaluate Tcos. By default, the frequencies of
+            this instance.
         """
         if hasattr(self, "_injected_t_cos") and self._injected_t_cos is not None:
             return np.array(self._injected_t_cos)
@@ -1685,8 +1714,8 @@ class CalibrationObservation:
         Parameters
         ----------
         f : array-like
-            The frequencies at which to evaluate Tsin. By default, the frequencies of this
-            instance.
+            The frequencies at which to evaluate Tsin. By default, the frequencies of
+            this instance.
         """
         if hasattr(self, "_injected_t_sin") and self._injected_t_sin is not None:
             return np.array(self._injected_t_sin)
@@ -1751,7 +1780,8 @@ class CalibrationObservation:
                 load = self._loads[load]
             except AttributeError:
                 raise AttributeError(
-                    "load must be a Load object or a string (one of {ambient,hot_load,open,short}"
+                    "load must be a Load object or a string (one of "
+                    "{ambient,hot_load,open,short})"
                 )
         else:
             assert isinstance(
@@ -1782,17 +1812,12 @@ class CalibrationObservation:
 
         if freq.min() < self.freq.freq.min():
             warnings.warn(
-                "The minimum frequency is outside the calibrated range ({} - {} MHz)".format(
-                    self.freq.freq.min(), self.freq.freq.max()
-                )
+                "The minimum frequency is outside the calibrated range "
+                f"({self.freq.freq.min()} - {self.freq.freq.max()} MHz)"
             )
 
         if freq.min() > self.freq.freq.max():
-            warnings.warn(
-                "The maximum frequency is outside the calibrated range ({} - {} MHz)".format(
-                    self.freq.freq.min(), self.freq.freq.max()
-                )
-            )
+            warnings.warn("The maximum frequency is outside the calibrated range ")
 
         a, b = self.get_linear_coefficients(load)
         return (temp - b) / a
@@ -1952,9 +1977,9 @@ class CalibrationObservation:
         Parameters
         ----------
         path : str
-            Directory in which to write the file. The filename starts with `All_cal-params`
-            and includes parameters of the class in the filename. By default, current
-            directory.
+            Directory in which to write the file. The filename starts with
+            `All_cal-params` and includes parameters of the class in the filename.
+            By default, current directory.
         """
         path = Path(path or ".")
 
@@ -2080,7 +2105,7 @@ class CalibrationObservation:
         averaged_spectra: Dict[str, np.ndarray] = None,
         thermistor_temp_ave: Dict[str, np.ndarray] = None,
     ) -> CalibrationObservation:
-        """Generate a new :class:`CalibrationObservation` based on this one, but with injections.
+        """Make a new :class:`CalibrationObservation` based on this, with injections.
 
         Parameters
         ----------
@@ -2428,7 +2453,7 @@ def perform_term_sweep(
                     if verbose:
                         print(f"Nc = {c:02}, Nw = {w:02}; RMS/dof = {rms[i, j]:1.3e}")
 
-                    # If we've decreased by more than the threshold, this #wterms becomes
+                    # If we've decreased by more than the threshold, this wterms becomes
                     # the new winner (for this number of cterms)
                     if j > 0 and rms[i, j] >= rms[i, j - 1] - delta_rms_thresh:
                         winner[i] = j - 1

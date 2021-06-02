@@ -6,11 +6,10 @@ import numpy as np
 from cached_property import cached_property
 from edges_io import io
 from os import path
-from pathlib import Path
 from typing import Callable, Tuple, Type, Union
 
 from . import reflection_coefficient as rc
-from .modelling import Model, ModelFit, Polynomial
+from .modelling import Model, Polynomial
 
 
 def _get_parameters_at_temperature(data_path, temp):
@@ -78,7 +77,8 @@ class InternalSwitch:
     def _n_terms_val(self, att, val):
         if len(val) != 3:
             raise TypeError(
-                f"n_terms must be an integer or tuple of three integers (for s11, s12, s22). Got {val}."
+                f"n_terms must be an integer or tuple of three integers "
+                f"(for s11, s12, s22). Got {val}."
             )
         if any(not isinstance(v, (np.int, int)) for v in val):
             raise TypeError(f"n_terms must be integer, got {val}.")

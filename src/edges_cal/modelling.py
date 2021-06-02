@@ -163,10 +163,12 @@ class Model:
         Parameters
         ----------
         x : np.ndarray, optional
-            The co-ordinates at which to evaluate the model (by default, use ``default_x``).
+            The co-ordinates at which to evaluate the model (by default, use
+            ``default_x``).
         basis : np.ndarray, optional
-            The basis functions at which to evaluate the model. This is useful if calling
-            the model multiple times, as the basis itself can be cached and re-used.
+            The basis functions at which to evaluate the model. This is useful if
+            calling the model multiple times, as the basis itself can be cached and
+            re-used.
         parameters :
             A list/array of parameters at which to evaluate the model. Will use the
             instance's parameters if available.
@@ -238,7 +240,8 @@ class Foreground(Model, is_meta=True):
             If provided, a set of parameters at which to evaluate the model.
         f_center : float
             A "center" or "reference" frequency. Typically models will have their
-            co-ordindates divided by this frequency before solving for the co-efficients.
+            co-ordindates divided by this frequency before solving for the
+            co-efficients.
         with_cmb : bool
             Whether to add a simply CMB component to the foreground.
         kwargs
@@ -260,10 +263,12 @@ class Foreground(Model, is_meta=True):
         Parameters
         ----------
         x : np.ndarray, optional
-            The co-ordinates at which to evaluate the model (by default, use ``default_x``).
+            The co-ordinates at which to evaluate the model (by default, use
+            ``default_x``).
         basis : np.ndarray, optional
-            The basis functions at which to evaluate the model. This is useful if calling
-            the model multiple times, as the basis itself can be cached and re-used.
+            The basis functions at which to evaluate the model. This is useful if
+            calling the model multiple times, as the basis itself can be cached and
+            re-used.
         parameters :
             A list/array of parameters at which to evaluate the model. Will use the
             instance's parameters if available.
@@ -333,7 +338,7 @@ class Polynomial(Foreground):
 class EdgesPoly(Polynomial):
     def __init__(self, offset: float = -2.5, **kwargs):
         """
-        Polynomial foregrounds with an offset corresponding to approximate galaxy spectral index.
+        Polynomial with an offset corresponding to approximate galaxy spectral index.
 
         Parameters
         ----------
@@ -379,10 +384,10 @@ class NoiseWaves(Model):
 
     .. math:: T_{NS}Q - K_0 T_{ant} = T_{unc} K_1 + T_{cos} K_2 + T_{sin} K_3 - T_L
 
-    where the LHS is non-deterministic (i.e. contains random measured variables Q and T_ANT).
-    Each of the T variables is in fact a polynomial.
-    We *cannot*  estimate T_NS as part of the linear model because it multiples the non-deterministic
-    Q and therefore scales the variance non-uniformly.
+    where the LHS is non-deterministic (i.e. contains random measured variables Q and
+    T_ANT). Each of the T variables is in fact a polynomial.
+    We *cannot*  estimate T_NS as part of the linear model because it multiples the
+    non-deterministic Q and therefore scales the variance non-uniformly.
 
     Parameers
     ---------
@@ -391,16 +396,17 @@ class NoiseWaves(Model):
     gamma_coeffs
         The linear coefficients that are functions of the S11 for the sources (i.e.
         the K_X in the above equation). Formulas for these are given in Monsalve et al.
-        (2017) Eq. 7. Each array (there should be three, one for each term) should have shape
-        (n_sources, n_freq).
+        (2017) Eq. 7. Each array (there should be three, one for each term) should have
+        shape (n_sources, n_freq).
     c_terms
         The number of polynomial terms describing T_L.
     w_terms
         The number of polynomial terms describing the noise-wave temperatures,
         T_unc, T_cos and T_sin.
     model
-        The kind of model to use for the unknown models (noise-waves and T_load). Typically
-        this is a polynomial, but you can choose another linear model if you choose.
+        The kind of model to use for the unknown models (noise-waves and T_load).
+        Typically this is a polynomial, but you can choose another linear model if you
+        choose.
     """
 
     def __init__(
@@ -445,8 +451,8 @@ class NoiseWaves(Model):
         if gamma_coeff_fg is not None:
             assert self.gamma_coeff_fg.shape == (n_freq,)
 
-            # Make the K[0] for the foreground term zero everywhere except for the field data,
-            # which is assumed to be the last dimension!
+            # Make the K[0] for the foreground term zero everywhere except for the
+            # field data, which is assumed to be the last dimension!
             self.gamma_coeff_fg = np.concatenate(
                 (np.zeros(n_freq),) * (n_sources - 1) + (self.gamma_coeff_fg,)
             )
@@ -593,9 +599,9 @@ class ModelFit:
             The values of the measured data.
         weights
             The weight of the measured data at each point. This corresponds to the
-            *variance* of the measurement (not the standard deviation). This is appropriate
-            if the weights represent the number of measurements going into each piece
-            of data.
+            *variance* of the measurement (not the standard deviation). This is
+            appropriate if the weights represent the number of measurements going into
+            each piece of data.
         n_terms
             The number of terms to use in the model (useful for models with an
             arbitrary number of terms).

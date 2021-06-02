@@ -2,16 +2,10 @@
 import click
 import papermill as pm
 import yaml
-from astropy.units import Quantity
 from datetime import datetime
 from nbconvert import PDFExporter
 from pathlib import Path
-from rich import box
 from rich.console import Console
-from rich.panel import Panel
-from rich.rule import Rule
-from rich.table import Table
-from time import time
 from traitlets.config import Config
 
 from edges_cal import cal_coefficients as cc
@@ -360,7 +354,8 @@ def compare(
 
     # Describe the filename...
     fname = Path(
-        f"calibration-compare-{cmppath.name}_{datetime.now().strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
+        f"calibration-compare-{cmppath.name}_"
+        f"{datetime.now().strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
     )
 
     if config is not None:
@@ -444,7 +439,7 @@ def make_pdf(out, fname):
 def upload_memo(fname, title, memo, quiet):  # pragma: nocover
     """Upload as memo to loco.lab.asu.edu."""
     try:
-        import upload_memo
+        import upload_memo  # noqa
     except ImportError:
         raise ImportError(
             "You need to manually install upload-memo to use this option."

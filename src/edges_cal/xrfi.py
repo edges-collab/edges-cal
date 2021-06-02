@@ -19,7 +19,8 @@ def _check_convolve_dims(data, half_size: [None, Tuple[int, None]] = None):
     If the kernel sizes are too big, replace them with the largest allowable size
     and issue a warning to the user.
 
-    .. note:: ripped from here: https://github.com/HERA-Team/hera_qm/blob/master/hera_qm/xrfi.py
+    .. note:: ripped from here:
+              https://github.com/HERA-Team/hera_qm/blob/master/hera_qm/xrfi.py
 
     Parameters
     ----------
@@ -114,13 +115,13 @@ def flagged_filter(
         in `data`.
     kind : str, optional
         The function to apply in each window. Typical options are `mean` and `median`.
-        For this function to work, the function kind chosen here must have a corresponding
-        `nan<function>` implementation in numpy.
+        For this function to work, the function kind chosen here must have a
+        corresponding `nan<function>` implementation in numpy.
     flags : np.ndarray, optional
         A boolean array specifying data to omit from the filtering.
     mode : str, optional
-        The mode of the filter. See ``scipy.ndimage.generic_filter`` for details. By default,
-        'nearest' if size < data.size otherwise 'reflect'.
+        The mode of the filter. See ``scipy.ndimage.generic_filter`` for details. By
+        default, 'nearest' if size < data.size otherwise 'reflect'.
     interp_flagged : bool, optional
         Whether to fill in flagged entries with its filtered value. Otherwise,
         flagged entries are set to their original value.
@@ -195,7 +196,8 @@ def detrend_medfilt(
 ):
     """Detrend array using a median filter.
 
-    .. note:: ripped from here: https://github.com/HERA-Team/hera_qm/blob/master/hera_qm/xrfi.py
+    .. note:: ripped from here:
+              https://github.com/HERA-Team/hera_qm/blob/master/hera_qm/xrfi.py
 
     Parameters
     ----------
@@ -214,15 +216,16 @@ def detrend_medfilt(
     Returns
     -------
     out : array
-        An array containing the outlier significance metric. Same type and size as `data`.
+        An array containing the outlier significance metric. Same type and size as
+        `data`.
 
     Notes
     -----
     This detrending is very good for data with large RFI compared to the noise, but also
     reasonably large noise compared to the spectrum steepness. If the noise is small
-    compared to the steepness of the spectrum, individual windows can become *almost always*
-    monotonic, in which case the randomly non-monotonic bins "stick out" and get wrongly
-    flagged. This can be helped three ways:
+    compared to the steepness of the spectrum, individual windows can become *almost
+    always* monotonic, in which case the randomly non-monotonic bins "stick out" and get
+    wrongly flagged. This can be helped three ways:
 
     1) Use a smaller bin width. This helps by reducing the probability that a bin will
        be randomly non-monotonic. However it also loses signal-to-noise on the RFI.
@@ -279,7 +282,8 @@ def detrend_meanfilt(
     Returns
     -------
     out : array
-        An array containing the outlier significance metric. Same type and size as `data`.
+        An array containing the outlier significance metric. Same type and size as
+        `data`.
 
     Notes
     -----
@@ -370,17 +374,18 @@ def xrfi_medfilt(
     false positives (as it doesn't get pinned to zero when the function is monotonic).
 
     It is unclear whether performing an iterative filtering is very useful unless using
-    a polynomial subtraction. With polynomial subtraction, one should likely use at least
-    a few iterations, without accumulation, so that the polynomial is not skewed by the
-    as-yet-unflagged RFI.
+    a polynomial subtraction. With polynomial subtraction, one should likely use at
+    least a few iterations, without accumulation, so that the polynomial is not skewed
+    by the as-yet-unflagged RFI.
 
-    Choice of kernel size can be important. The wider the kernel, the more "signal-to-noise"
-    one will get on the RFI. Also, if there is a bunch of RFI all clumped together, it will
-    definitely be missed by a kernel window of order double the size of the clump or less.
-    By increasing the kernel size, these clumps are picked up, but edge-effects become
-    more prevalent in this case. One option here would be to iterate over kernel sizes
-    (getting smaller), such that very large blobs are first flagged out, then progressively
-    finer detail is added. Use ``xrfi_iterative_medfilt`` for that.
+    Choice of kernel size can be important. The wider the kernel, the more
+    "signal-to-noise" one will get on the RFI. Also, if there is a bunch of RFI all
+    clumped together, it will definitely be missed by a kernel window of order double
+    the size of the clump or less. By increasing the kernel size, these clumps are
+    picked up, but edge-effects become more prevalent in this case. One option here
+    would be to iterate over kernel sizes (getting smaller), such that very large blobs
+    are first flagged out, then progressively finer detail is added. Use
+    ``xrfi_iterative_medfilt`` for that.
     """
     ii = 0
 
@@ -403,14 +408,14 @@ def xrfi_medfilt(
         if spectrum.ndim == 1 and poly_order:
             # Subtract a smooth polynomial first.
             # The point of this is that steep spectra with only a little bit of noise
-            # tend to detrend to exactly zero, but randomly may detrend to something non-zero.
-            # In this case, the behaviour is to set the significance to infinity. This is not
-            # a problem for data in which the noise is large compared to the signal. We can
-            # force this by initially detrending by some flexible polynomial over the whole
-            # band. This is not guaranteed to work -- the poly fit itself could over-fit
-            # for RFI. Therefore the order of the fit should be low. Its purpose is not to
-            # do a "good fit" to the data, but rather to get the residuals "flat enough" that
-            # the median filter works.
+            # tend to detrend to exactly zero, but randomly may detrend to something
+            # non-zero. In this case, the behaviour is to set the significance to
+            # infinity. This is not a problem for data in which the noise is large
+            # compared to the signal. We can force this by initially detrending by some
+            # flexible polynomial over the whole band. This is not guaranteed to work --
+            # the poly fit itself could over-fit for RFI. Therefore the order of the fit
+            # should be low. Its purpose is not to do a "good fit" to the data, but
+            # rather to get the residuals "flat enough" that the median filter works.
             # TODO: the following is pretty limited (why polynomial?) but it seems to do
             # reasonably well.
             f = np.linspace(0, 1, len(spectrum))
@@ -479,10 +484,12 @@ def xrfi_explicit(
         Known flags.
     rfi_file : str, optional
         A YAML file containing the key 'rfi_ranges', which should be a list of 2-tuples
-        giving the (min, max) frequency range of known RFI channels (in MHz). By default,
-        uses a file included in `edges-analysis` with known RFI channels from the MRO.
+        giving the (min, max) frequency range of known RFI channels (in MHz). By
+        default, uses a file included in `edges-analysis` with known RFI channels from
+        the MRO.
     extra_rfi : list, optional
-        A list of extra RFI channels (in the format of the `rfi_ranges` from the `rfi_file`).
+        A list of extra RFI channels (in the format of the `rfi_ranges` from the
+        `rfi_file`).
 
     Returns
     -------
@@ -558,9 +565,9 @@ def xrfi_model_sweep(
     window_width : int, optional
         The width of the moving window in number of channels.
     use_median : bool, optional
-        Instead of using bootstrap for the initial window, use Median Absolute Deviation.
-        If True, ``n_bootstrap`` is not used. Note that this is typically more robust
-        than bootstrap.
+        Instead of using bootstrap for the initial window, use Median Absolute
+        Deviation. If True, ``n_bootstrap`` is not used. Note that this is typically
+        more robust than bootstrap.
     n_bootstrap : int, optional
         Number of bootstrap samples to take to estimate the standard deviation of
         the data without RFI.
@@ -637,8 +644,8 @@ def xrfi_model_sweep(
     if np.sum(weights) == 0 or np.all(flags):
         return np.ones_like(spectrum, dtype=bool), {}
 
-    # Have to get flags aligned with input weights, and also input weights aligned with flags.
-    # But we don't want to overwrite the input weights...
+    # Have to get flags aligned with input weights, and also input weights aligned with
+    # flags. But we don't want to overwrite the input weights...
     flags |= weights <= 0
     weights = np.where(flags, 0, weights)
 
@@ -761,7 +768,8 @@ def _flag_a_window(
 
     if counter == max_iter and max_iter > 1:
         warnings.warn(
-            "Max iterations reached without finding all xRFI. Consider increasing max_iter."
+            "Max iterations reached without finding all xRFI. Consider increasing "
+            "max_iter."
         )
 
     return new_flags, r_std, fit.model_parameters, counter
@@ -797,8 +805,8 @@ def xrfi_model(
 
     On each iteration, a model is fit to the unflagged data, and another model is fit
     to the absolute residuals. Bins with absolute residuals greater than
-    ``n_abs_resid_threshold`` are flagged, and the process is repeated until no new flags
-    are found.
+    ``n_abs_resid_threshold`` are flagged, and the process is repeated until no new
+    flags are found.
 
     Parameters
     ----------
@@ -856,7 +864,7 @@ def xrfi_model(
     )
     if decrement_threshold > 0 and min_threshold > threshold:
         warnings.warn(
-            f"You've set a threshold smaller than the min_threshold of {min_threshold}. "
+            f"You've set a threshold smaller than the min_threshold of {min_threshold}."
             f"Will use threshold={min_threshold}."
         )
         threshold = min_threshold
@@ -877,7 +885,7 @@ def xrfi_model(
     n_flags_changed = 1
     counter = 0
 
-    # Set up a few lists that we can update on each iteration to return info to the user.
+    # Set up a few lists that we can update on each iteration to return info to the user
     n_flags_changed_list = []
     total_flags_list = []
     model_list = []
@@ -908,8 +916,8 @@ def xrfi_model(
     orig_weights = np.ones_like(spectrum) if weights is None else weights.copy()
 
     # Iterate until either no flags are changed between iterations, or we get to the
-    # requested maximum iterations, or until we have too few unflagged data to fit appropriately.
-    # keep iterating
+    # requested maximum iterations, or until we have too few unflagged data to fit
+    # appropriately. keep iterating
     while counter < max_iter and (
         n_signal <= min_terms or (n_flags_changed > 0 and np.sum(~flags) > n_signal * 2)
     ):
@@ -992,7 +1000,8 @@ def xrfi_model(
 
     if np.sum(~flags) <= n_signal * 2:
         warnings.warn(
-            "Termination of iterative loop due to too many flags. Reduce n_signal or check data."
+            "Termination of iterative loop due to too many flags. Reduce n_signal or "
+            "check data."
         )
         if flag_if_broken:
             flags[:] = True

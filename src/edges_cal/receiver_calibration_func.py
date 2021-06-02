@@ -126,7 +126,8 @@ def noise_wave_param_fit(
     M = A.T
     ydata = np.reshape(b, (-1, 1))
 
-    # Solving system using 'short' QR decomposition (see R. Butt, Num. Anal. Using MATLAB)
+    # Solving system using 'short' QR decomposition
+    # (see R. Butt, Num. Anal. Using MATLAB)
     Q1, R1 = sp.linalg.qr(M, mode="economic")
     param = sp.linalg.solve(R1, np.dot(Q1.T, ydata)).flatten()
 
@@ -289,9 +290,9 @@ def get_calibration_quantities_iterative(
     temp_amb_internal: float = 300,
 ):
     """
-    Derive calibration parameters using the scheme laid out in Monsalve (2017) [arxiv:1602.08065].
+    Derive calibration parameters using the scheme laid out in Monsalve (2017).
 
-    All equation numbers and symbol names come from M17.
+    All equation numbers and symbol names come from M17 (arxiv:1602.08065).
 
     Parameters
     ----------
@@ -317,7 +318,6 @@ def get_calibration_quantities_iterative(
     temp_amb_internal : float
         The ambient internal temperature, interpreted as T_L.
         Note: this must be the same as the T_L used to generate T*.
-
 
     Returns
     -------
