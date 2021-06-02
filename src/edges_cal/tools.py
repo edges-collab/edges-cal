@@ -172,6 +172,4 @@ class EdgesFrequencyRange(FrequencyRange):
         freqs: 1D-array
             full frequency array from 0 to 200 MHz, at raw resolution
         """
-        # Full frequency vector
-        fstep = max_freq / n_channels
-        return np.arange(0, max_freq, fstep)
+        return np.linspace(0, max_freq, n_channels)
