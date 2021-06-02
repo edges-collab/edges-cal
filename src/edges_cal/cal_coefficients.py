@@ -404,7 +404,6 @@ class LoadS11(_S11Base):
     @cached_property
     def corrected_load_s11(self) -> np.ndarray:
         """The measured S11 of the load, corrected for the internal switch."""
-        print(len(self.measured_load_s11_raw), len(self.freq.freq))
         return rc.gamma_de_embed(
             self.internal_switch.s11_model(self.freq.freq),
             self.internal_switch.s12_model(self.freq.freq),
@@ -1026,7 +1025,6 @@ class HotLoadCorrection:
             hot_load_s11.load_name == "hot_load"
         ), "hot_load_s11 must be a hot_load s11"
 
-        print("In hot_load, len(freq)=", len(freq))
         return self.get_power_gain(
             {
                 "s11": self.s11_model(freq),
@@ -1165,7 +1163,6 @@ class Load:
             return self.spectrum.temp_ave
 
         gain = self._correction.power_gain(self.freq.freq, self.reflections)
-        print("len of gain = ", len(gain))
         # temperature
         return gain * self.spectrum.temp_ave + (1 - gain) * self._ambient.temp_ave
 
@@ -1546,15 +1543,6 @@ class CalibrationObservation:
         ):
             return self._injected_source_temps
 
-        print("hot_load: ", self.hot_load.freq.n, len(self.hot_load.temp_ave))
-        print(
-            {
-                k: len(source.temp_ave)
-                if hasattr(source.temp_ave, "__len__")
-                else source.temp_ave
-                for k, source in self._loads.items()
-            }
-        )
         return {k: source.temp_ave for k, source in self._loads.items()}
 
     @cached_property

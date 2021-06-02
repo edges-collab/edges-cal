@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 from abc import abstractmethod
 from cached_property import cached_property
+from copy import deepcopy
 from typing import List, Optional, Sequence, Tuple, Type, Union
 
 from .tools import FrequencyRange
@@ -647,8 +648,10 @@ class ModelFit:
             pars = self._ls(self.model.default_basis, self.ydata)
         else:
             pars = self._wls(self.model.default_basis, self.ydata, w=self.weights)
-        self.model.parameters = pars
-        return self.model
+
+        out_model = deepcopy(self.model)
+        out_model.parameters = pars
+        return out_model
 
     def _wls(self, van, y, w):
         """Ripped straight outta numpy for speed.

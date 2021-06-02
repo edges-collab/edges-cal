@@ -58,9 +58,9 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
 
 def _tuplify(x):
     if not hasattr(x, "__len__"):
-        return (x, x, x)
+        return (int(x), int(x), int(x))
     else:
-        return x
+        return tuple(int(xx) for xx in x)
 
 
 @attr.s
@@ -80,7 +80,7 @@ class InternalSwitch:
             raise TypeError(
                 f"n_terms must be an integer or tuple of three integers (for s11, s12, s22). Got {val}."
             )
-        if any(not isinstance(v, int) for v in val):
+        if any(not isinstance(v, (np.int, int)) for v in val):
             raise TypeError(f"n_terms must be integer, got {val}.")
 
     @cached_property
