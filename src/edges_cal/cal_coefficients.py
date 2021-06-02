@@ -2089,6 +2089,25 @@ class CalibrationObservation:
             fl["lna_s11_real"] = self.lna.s11_model(self.freq.freq).real
             fl["lna_s11_imag"] = self.lna.s11_model(self.freq.freq).imag
 
+            fl["internal_switch_s11_real"] = np.real(
+                self.internal_switch.s11_model(self.freq.freq)
+            )
+            fl["internal_switch_s11_imag"] = np.imag(
+                self.internal_switch.s11_model(self.freq.freq)
+            )
+            fl["internal_switch_s12_real"] = np.real(
+                self.internal_switch.s12_model(self.freq.freq)
+            )
+            fl["internal_switch_s12_imag"] = np.imag(
+                self.internal_switch.s12_model(self.freq.freq)
+            )
+            fl["internal_switch_s22_real"] = np.real(
+                self.internal_switch.s22_model(self.freq.freq)
+            )
+            fl["internal_switch_s22_imag"] = np.imag(
+                self.internal_switch.s22_model(self.freq.freq)
+            )
+
     def to_calfile(self):
         """Directly create a :class:`Calibration` object without writing to file."""
         return Calibration.from_calobs(self)
@@ -2172,21 +2191,28 @@ class Calibration:
             self.Tunc_poly = np.poly1d(fl["Tunc"][...])
 
             self.freq = FrequencyRange(fl["frequencies"][...])
+
             self._lna_s11_rl = Spline(self.freq.freq, fl["lna_s11_real"][...])
             self._lna_s11_im = Spline(self.freq.freq, fl["lna_s11_imag"][...])
 
-            try:
-                self.internal_switch = s11.InternalSwitch(
-                    data=io.SwitchingState(
-                        fl.attrs["switch_path"],
-                        repeat_num=fl.attrs["switch_repeat_num"],
-                    ),
-                    resistance=fl.attrs["switch_resistance"],
-                    model=fl.attrs["switch_model"],
-                    n_terms=fl.attrs["switch_nterms"],
-                )
-            except (ValueError, io.utils.FileStructureError):
-                self.internal_switch = None
+            self._intsw_s11_rl = Spline(
+                self.freq.freq, fl["internal_switch_s11_real"][...]
+            )
+            self._intsw_s11_im = Spline(
+                self.freq.freq, fl["internal_switch_s11_imag"][...]
+            )
+            self._intsw_s12_rl = Spline(
+                self.freq.freq, fl["internal_switch_s12_real"][...]
+            )
+            self._intsw_s12_im = Spline(
+                self.freq.freq, fl["internal_switch_s12_imag"][...]
+            )
+            self._intsw_s22_rl = Spline(
+                self.freq.freq, fl["internal_switch_s22_real"][...]
+            )
+            self._intsw_s22_im = Spline(
+                self.freq.freq, fl["internal_switch_s22_imag"][...]
+            )
 
     @classmethod
     def from_calobs(cls, calobs: CalibrationObservation) -> Calibration:
@@ -2200,6 +2226,24 @@ class Calibration:
         if freq is None:
             freq = self.freq.freq
         return self._lna_s11_rl(freq) + 1j * self._lna_s11_im(freq)
+
+    def internal_switch_s11(self, freq=None):
+        """Get the S11 of the internal switch at given frequencies."""
+        if freq is None:
+            freq = self.freq.freq
+        return self._intsw_s11_rl(freq) + 1j * self._intsw_s11_im(freq)
+
+    def internal_switch_s12(self, freq=None):
+        """Get the S12 of the internal switch at given frequencies."""
+        if freq is None:
+            freq = self.freq.freq
+        return self._intsw_s12_rl(freq) + 1j * self._intsw_s12_im(freq)
+
+    def internal_switch_s22(self, freq=None):
+        """Get the S22 of the internal switch at given frequencies."""
+        if freq is None:
+            freq = self.freq.freq
+        return self._intsw_s22_rl(freq) + 1j * self._intsw_s22_im(freq)
 
     def C1(self, freq=None):
         """Evaluate the Scale polynomial at given frequencies."""
