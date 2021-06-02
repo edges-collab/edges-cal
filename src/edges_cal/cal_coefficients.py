@@ -12,7 +12,7 @@ import numpy as np
 import os
 import tempfile
 import warnings
-from abc import ABCMeta, abstractclassmethod, abstractmethod
+from abc import ABCMeta, abstractmethod
 from astropy.convolution import Gaussian1DKernel, convolve
 from copy import copy, deepcopy
 from edges_io import io
@@ -177,7 +177,7 @@ class _S11Base(metaclass=ABCMeta):
             )
         return res
 
-    @abstractclassmethod
+    @abstractmethod
     @classmethod
     def from_path(cls, **kwargs):
         pass
