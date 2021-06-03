@@ -190,4 +190,15 @@ class EdgesFrequencyRange(FrequencyRange):
         freqs: 1D-array
             full frequency array from 0 to 200 MHz, at raw resolution
         """
-        return np.linspace(0, max_freq, n_channels)
+        df = max_freq / n_channels
+
+        # This is correct. The channel width is the important thing.
+        # The channel width is given by the FFT. We actually take
+        # 32678*2 samples of data at 400 Mega-samples per second.
+        # We only use the first half of the samples (since it's real input).
+        # Regardless, the frequency channel width is thus
+        # 400 MHz / (32678*2) == 200 MHz / 32678 ~ 6.103 kHz
+
+        # The final frequency here will be slightly less than 200 MHz. 200 MHz
+        # corresponds to the centre of the N+1 bin, which doesn't actually exist.
+        return np.arange(0, max_freq, df)
