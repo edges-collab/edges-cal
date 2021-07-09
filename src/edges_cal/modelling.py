@@ -19,9 +19,9 @@ class Model:
 
     def __init__(
         self,
-        parameters: [None, Sequence] = None,
-        n_terms: [int, None] = None,
-        default_x: np.ndarray = None,
+        parameters: Optional[Sequence] = None,
+        n_terms: Optional[int] = None,
+        default_x: Optional[np.ndarray] = None,
     ):
         """
         A base class for a linear model.
@@ -48,7 +48,7 @@ class Model:
             self.n_terms = n_terms
 
         if parameters:
-            self.parameters = list(parameters)
+            self.parameters = np.array(parameters)
             if self.n_terms and len(self.parameters) != self.n_terms:
                 raise ValueError(
                     f"wrong number of parameters! Should be {self.n_terms}."
@@ -153,9 +153,9 @@ class Model:
 
     def __call__(
         self,
-        x: [np.ndarray, None] = None,
-        basis: [np.ndarray, None] = None,
-        parameters: [np.ndarray, list, None] = None,
+        x: Optional[np.ndarray] = None,
+        basis: Optional[np.ndarray] = None,
+        parameters: Union[np.ndarray, list, None] = None,
         indices: Optional[Union[List, np.ndarray]] = None,
     ) -> np.ndarray:
         """Evaluate the model.
