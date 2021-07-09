@@ -48,7 +48,7 @@ class Model:
             self.n_terms = n_terms
 
         if parameters:
-            self.parameters = list(parameters)
+            self.parameters = np.array(parameters)
             if self.n_terms and len(self.parameters) != self.n_terms:
                 raise ValueError(
                     f"wrong number of parameters! Should be {self.n_terms}."

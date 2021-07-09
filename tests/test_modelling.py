@@ -31,8 +31,7 @@ def test_basis(model: Type[mdl.Model]):
     with pytest.raises(ValueError):
         pl2(parameters=[1, 2, 3, 4])
 
-    with pytest.raises(ValueError):
-        pl2(parameters=[1, 2, 3], x=np.linspace(0, 1, 10))
+    assert pl2(parameters=[1, 2, 3], x=np.linspace(0, 1, 10)).shape == (10,)
 
 
 def test_cached_basis():
