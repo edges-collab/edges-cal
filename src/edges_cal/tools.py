@@ -136,6 +136,24 @@ class FrequencyRange:
         """
         return 2 * (f - self.center) / self.range
 
+    def denormalize(self, f):
+        """
+        De-normalise a set of frequencies.
+
+        Normalizes such that -1 aligns with ``min`` and +1 aligns with ``max``.
+
+        Parameters
+        ----------
+        f : array_like
+            Frequencies to de-normalize
+
+        Returns
+        -------
+        array_like, shape [f,]
+            The de-normalized frequencies.
+        """
+        return f * self.range / 2 + self.center
+
 
 class EdgesFrequencyRange(FrequencyRange):
     def __init__(self, n_channels=16384 * 2, max_freq=200.0, **kwargs):
@@ -172,6 +190,15 @@ class EdgesFrequencyRange(FrequencyRange):
         freqs: 1D-array
             full frequency array from 0 to 200 MHz, at raw resolution
         """
-        # Full frequency vector
-        fstep = max_freq / n_channels
-        return np.arange(0, max_freq, fstep)
+        df = max_freq / n_channels
+
+        # This is correct. The channel width is the important thing.
+        # The channel width is given by the FFT. We actually take
+        # 32678*2 samples of data at 400 Mega-samples per second.
+        # We only use the first half of the samples (since it's real input).
+        # Regardless, the frequency channel width is thus
+        # 400 MHz / (32678*2) == 200 MHz / 32678 ~ 6.103 kHz
+
+        # The final frequency here will be slightly less than 200 MHz. 200 MHz
+        # corresponds to the centre of the N+1 bin, which doesn't actually exist.
+        return np.arange(0, max_freq, df)

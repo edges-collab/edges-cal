@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """Functions dealing with correcting S11's."""
 
+import attr
 import numpy as np
+from cached_property import cached_property
 from edges_io import io
 from os import path
-from pathlib import Path
-from typing import Tuple
+from typing import Callable, Tuple, Type, Union
 
 from . import reflection_coefficient as rc
-from .modelling import Model, ModelFit
+from .modelling import Model, Polynomial
 
 
 def _get_parameters_at_temperature(data_path, temp):
@@ -30,79 +31,6 @@ def _get_parameters_at_temperature(data_path, temp):
             models[kind + "_" + mag_or_ang] = np.polyval(par[:, j + 2 * i], f_norm)
 
 
-def high_band_switch_correction(
-    data_path: [str, Path], ant_s11: np.ndarray, sw_temp: float, poly_order: int = 10
-) -> Tuple[np.ndarray, dict]:
-    """Correct for the switch for high-band receiver.
-
-    Parameters
-    ----------
-    data_path : str or Path
-        The path to a folder containing the file "switch_temperatures.txt".
-    ant_s11 : np.ndarray
-        The uncorrected antenna S11 as a function of frequency.
-    sw_temp : float
-        The switch temperature.
-    poly_order : int
-        The order of the polynomial to fit to the corrected S11.
-
-    Returns
-    -------
-    corr_ant_s11 : np.ndarray
-        The corrected antenna S11.
-    switch : dict
-        The reflection coefficients of the switch.
-    """
-    data_path = Path(data_path)
-
-    # frequency
-    f = np.arange(50, 200.1, 0.25)
-    f_norm = f / 150
-
-    # switch temperatures
-    temp_all = np.genfromtxt(data_path / "switch_temperatures.txt")
-    temp15, temp25, temp35 = temp_all
-
-    temps = [15, 25] if sw_temp <= temp25 else [25, 35]
-    temps = np.array(temps)
-
-    models = []
-    for temp in temps:
-        models.append(_get_parameters_at_temperature(data_path, temp))
-
-    # inter (extra) polating switch S-parameters to input temperature
-    switch = {}
-    for ikind, kind in enumerate(["s11", "s12s21", "s22"]):
-        switch[kind] = 0
-        for imag, mag_or_ang in enumerate(["mag", "ang"]):
-            key = kind + "_" + mag_or_ang
-            low_model = models[0][key]
-            high_model = models[1][key]
-
-            # Iterate over frequency.
-            new_model = np.array(
-                [
-                    np.interp(sw_temp, temps, np.array([lm, hm]))
-                    for lm, hm in zip(low_model, high_model)
-                ]
-            )
-            new_poly = np.polyfit(f_norm, new_model, poly_order)
-            new_val = np.polyval(new_poly, f_norm)
-
-            if not imag:  # mag part
-                switch[kind] = new_val
-            else:  # ang part
-                switch[kind] *= np.cos(new_val) + 1j * np.sin(new_val)
-
-    # corrected antenna S11
-    corr_ant_s11 = rc.gamma_de_embed(
-        switch["s11"], switch["s12s21"], switch["s22"], ant_s11
-    )
-
-    # returns corrected antenna measurement
-    return corr_ant_s11, switch
-
-
 def _read_data_and_corrections(switching_state: io.SwitchingState):
 
     # Standards assumed at the switch
@@ -112,9 +40,8 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
         "match": np.zeros_like(switching_state.freq),
     }
     # Correction at the switch
-    corrections = {}
-    for kind in sw:
-        corrections[kind] = rc.de_embed(
+    corrections = {
+        kind: rc.de_embed(
             sw["open"],
             sw["short"],
             sw["match"],
@@ -123,83 +50,111 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
             getattr(switching_state, "match").s11,
             getattr(switching_state, "external%s" % kind).s11,
         )[0]
-
+        for kind in sw
+    }
     return corrections, sw
 
 
-def get_switch_correction(
-    ant_s11: np.ndarray,
-    internal_switch: io.SwitchingState,
-    f_in: np.ndarray = np.zeros([0, 1]),
-    resistance_m: float = 50.166,
-    n_terms: [int, Tuple] = 7,
-    model_type: str = "polynomial",
-) -> Tuple[np.ndarray, dict]:
-    """
-    Compute the switch correction.
+def _tuplify(x):
+    if not hasattr(x, "__len__"):
+        return (int(x), int(x), int(x))
+    else:
+        return tuple(int(xx) for xx in x)
 
-    Parameters
-    ----------
-    ant_s11 : array_like
-        Array of S11 measurements as a function of frequency
-    internal_switch : :class:`io.SwitchingState` instance
-        An internal switching state object.
-    f_in : np.ndarray
-        The input frequencies
-    resistance_m : float
-        The resistance of the switch.
-    n_terms : int or tuple
-        Specifies the order of the fitted polynomial for the S11 measurements.
-        If a tuple, must be length 3, specifying the order for the s11, s12, s22
-        respectively.
-    model_type : str
-        The type of model to fit to the S11.
 
-    Returns
-    -------
-    corr_ant_s11 : np.ndarray
-        The corrected antenna S11.
-    fits : dict
-        Dictionary of fits to the reflection coefficients s11, s12 and s22.
-    """
-    corrections, sw = _read_data_and_corrections(internal_switch)
-
-    flow = f_in.min()
-    fhigh = f_in.max()
-    f_center = (fhigh + flow) / 2
-
-    # Computation of S-parameters to the receiver input
-    oa, sa, la = rc.agilent_85033E(internal_switch.freq * 1e6, resistance_m, 1)
-
-    xx, s11, s12s21, s22 = rc.de_embed(
-        oa,
-        sa,
-        la,
-        corrections["open"],
-        corrections["short"],
-        corrections["match"],
-        corrections["open"],
+@attr.s
+class InternalSwitch:
+    data: io.SwitchingState = attr.ib()
+    resistance: float = attr.ib(default=50.0)
+    model: Union[str, Type[Model]] = attr.ib(
+        default=Polynomial, converter=Model.get_mdl
+    )
+    n_terms: Union[Tuple[int, int, int], int] = attr.ib(
+        default=(7, 7, 7), converter=_tuplify
     )
 
-    # Frequency normalization
-    fn = internal_switch.freq / f_center
+    @n_terms.validator
+    def _n_terms_val(self, att, val):
+        if len(val) != 3:
+            raise TypeError(
+                f"n_terms must be an integer or tuple of three integers "
+                f"(for s11, s12, s22). Got {val}."
+            )
+        if any(not isinstance(v, (np.int, int)) for v in val):
+            raise TypeError(f"n_terms must be integer, got {val}.")
 
-    fn_in = f_in / f_center if len(f_in) > 10 else fn
+    @cached_property
+    def s11_data(self):
+        """The measured S11."""
+        return self._de_embedded_reflections[0]
 
-    n_terms = (n_terms,) * 3 if not hasattr(n_terms, "__len__") else n_terms
-    assert len(n_terms) == 3
+    @cached_property
+    def s12_data(self):
+        """The measured S12."""
+        return self._de_embedded_reflections[1]
 
-    # Polynomial fits
-    fits = {}
-    model = Model._models[model_type.lower()](n_terms=n_terms[0], default_x=fn)
-    for ikind, (kind, val, n) in enumerate(
-        zip(["s11", "s12s21", "s22"], [s11, s12s21, s22], n_terms)
-    ):
-        model.update_nterms(n)
+    @cached_property
+    def s22_data(self):
+        """The measured S22."""
+        return self._de_embedded_reflections[2]
 
-        fits[kind] = ModelFit(model, ydata=np.real(val)).evaluate(
-            fn_in
-        ) + 1j * ModelFit(model, ydata=np.imag(val)).evaluate(fn_in)
+    @cached_property
+    def _s11_model(self):
+        """The input unfit S11 model."""
+        return self.model(default_x=self.data.freq, n_terms=self.n_terms[0])
 
-    # Corrected antenna S11
-    return rc.gamma_de_embed(fits["s11"], fits["s12s21"], fits["s22"], ant_s11), fits
+    @cached_property
+    def _s12_model(self):
+        """The input unfit S12 model."""
+        return self.model(default_x=self.data.freq, n_terms=self.n_terms[1])
+
+    @cached_property
+    def _s22_model(self):
+        """The input unfit S22 model."""
+        return self.model(default_x=self.data.freq, n_terms=self.n_terms[2])
+
+    @cached_property
+    def s11_model(self) -> Callable:
+        """The fitted S11 model."""
+        return self._get_reflection_model("s11")
+
+    @cached_property
+    def s12_model(self) -> Callable:
+        """The fitted S12 model."""
+        return self._get_reflection_model("s12")
+
+    @cached_property
+    def s22_model(self) -> Callable:
+        """The fitted S22 model."""
+        return self._get_reflection_model("s22")
+
+    @cached_property
+    def _de_embedded_reflections(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Get de-embedded reflection parameters for the internal switch."""
+        corrections = _read_data_and_corrections(self.data)[0]
+
+        # Computation of S-parameters to the receiver input
+        oa, sa, la = rc.agilent_85033E(
+            f=self.data.freq * 1e6, resistance_of_match=self.resistance
+        )
+
+        _, s11, s12s21, s22 = rc.de_embed(
+            oa,
+            sa,
+            la,
+            corrections["open"],
+            corrections["short"],
+            corrections["match"],
+            corrections["open"],
+        )
+
+        return s11, s12s21, s22
+
+    def _get_reflection_model(self, kind: str) -> Model:
+        # 'kind' should be 's11', 's12' or 's22'
+        data = getattr(self, f"{kind}_data")
+
+        rl = getattr(self, f"_{kind}_model").fit(np.real(data)).fit
+        im = getattr(self, f"_{kind}_model").fit(np.imag(data)).fit
+
+        return lambda freq: rl(freq) + 1j * im(freq)

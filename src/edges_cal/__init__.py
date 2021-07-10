@@ -16,6 +16,7 @@ from .cal_coefficients import (
     CalibrationObservation,
     EdgesFrequencyRange,
     FrequencyRange,
+    LoadS11,
     LoadSpectrum,
-    SwitchCorrection,
 )
+from .s11_correction import InternalSwitch

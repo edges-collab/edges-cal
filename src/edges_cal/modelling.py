@@ -5,7 +5,10 @@ from __future__ import annotations
 import numpy as np
 from abc import abstractmethod
 from cached_property import cached_property
-from typing import Optional, Sequence, Type, Union
+from copy import deepcopy
+from typing import List, Optional, Sequence, Tuple, Type, Union
+
+from .tools import FrequencyRange
 
 F_CENTER = 75.0
 
@@ -45,7 +48,7 @@ class Model:
             self.n_terms = n_terms
 
         if parameters:
-            self.parameters = list(parameters)
+            self.parameters = np.array(parameters)
             if self.n_terms and len(self.parameters) != self.n_terms:
                 raise ValueError(
                     f"wrong number of parameters! Should be {self.n_terms}."
@@ -153,16 +156,19 @@ class Model:
         x: [np.ndarray, None] = None,
         basis: [np.ndarray, None] = None,
         parameters: [np.ndarray, list, None] = None,
+        indices: Optional[Union[List, np.ndarray]] = None,
     ) -> np.ndarray:
         """Evaluate the model.
 
         Parameters
         ----------
         x : np.ndarray, optional
-            The co-ordinates at which to evaluate the model (by default, use ``default_x``).
+            The co-ordinates at which to evaluate the model (by default, use
+            ``default_x``).
         basis : np.ndarray, optional
-            The basis functions at which to evaluate the model. This is useful if calling
-            the model multiple times, as the basis itself can be cached and re-used.
+            The basis functions at which to evaluate the model. This is useful if
+            calling the model multiple times, as the basis itself can be cached and
+            re-used.
         parameters :
             A list/array of parameters at which to evaluate the model. Will use the
             instance's parameters if available.
@@ -172,11 +178,12 @@ class Model:
         model : np.ndarray
             The model evaluated at the input ``x`` or ``basis``.
         """
-        if parameters is None:
-            parameters = self.parameters
+        parameters = self.parameters if parameters is None else np.array(parameters)
 
         if parameters is None:
             raise ValueError("You must supply parameters to evaluate the model!")
+
+        indices = np.arange(len(parameters)) if indices is None else np.array(indices)
 
         if x is None and basis is None and self.default_basis is None:
             raise ValueError("You need to provide either 'x' or 'basis'.")
@@ -185,13 +192,10 @@ class Model:
         elif x is not None:
             basis = self.get_basis(x)
 
-        if len(parameters) != len(basis):
-            raise ValueError(
-                f"number of parameters ({len(parameters)}) does not match "
-                f"the number of basis terms ({len(basis)})."
-            )
+        if any(idx >= len(basis) for idx in indices):
+            raise ValueError("Cannot use more basis sets than available!")
 
-        return np.dot(parameters, basis)
+        return np.dot(parameters[indices], basis[indices])
 
     @abstractmethod
     def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
@@ -209,9 +213,14 @@ class Model:
         )
 
     @staticmethod
-    def get_mdl(name) -> Type[Model]:
+    def get_mdl(name: Union[str, Type[Model]]) -> Type[Model]:
         """Get a specific linear model from a string name."""
-        return Model._models[name.lower()]
+        if isinstance(name, str):
+            return Model._models[name.lower()]
+        elif np.issubclass_(name, Model):
+            return name
+
+        raise ValueError("Only str or Model instances may be passed.")
 
 
 class Foreground(Model, is_meta=True):
@@ -231,7 +240,8 @@ class Foreground(Model, is_meta=True):
             If provided, a set of parameters at which to evaluate the model.
         f_center : float
             A "center" or "reference" frequency. Typically models will have their
-            co-ordindates divided by this frequency before solving for the co-efficients.
+            co-ordindates divided by this frequency before solving for the
+            co-efficients.
         with_cmb : bool
             Whether to add a simply CMB component to the foreground.
         kwargs
@@ -246,16 +256,19 @@ class Foreground(Model, is_meta=True):
         x: [np.ndarray, None] = None,
         basis: [np.ndarray, None] = None,
         parameters: [np.ndarray, list, None] = None,
+        indices: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """Evaluate the model.
 
         Parameters
         ----------
         x : np.ndarray, optional
-            The co-ordinates at which to evaluate the model (by default, use ``default_x``).
+            The co-ordinates at which to evaluate the model (by default, use
+            ``default_x``).
         basis : np.ndarray, optional
-            The basis functions at which to evaluate the model. This is useful if calling
-            the model multiple times, as the basis itself can be cached and re-used.
+            The basis functions at which to evaluate the model. This is useful if
+            calling the model multiple times, as the basis itself can be cached and
+            re-used.
         parameters :
             A list/array of parameters at which to evaluate the model. Will use the
             instance's parameters if available.
@@ -266,7 +279,9 @@ class Foreground(Model, is_meta=True):
             The model evaluated at the input ``x`` or ``basis``.
         """
         t = 2.725 if self.with_cmb else 0
-        return t + super().__call__(x=x, basis=basis, parameters=parameters)
+        return t + super().__call__(
+            x=x, basis=basis, parameters=parameters, indices=indices
+        )
 
 
 class PhysicalLin(Foreground):
@@ -323,7 +338,7 @@ class Polynomial(Foreground):
 class EdgesPoly(Polynomial):
     def __init__(self, offset: float = -2.5, **kwargs):
         """
-        Polynomial foregrounds with an offset corresponding to approximate galaxy spectral index.
+        Polynomial with an offset corresponding to approximate galaxy spectral index.
 
         Parameters
         ----------
@@ -360,6 +375,207 @@ class Fourier(Model):
             return np.sin((indx + 1) // 2 * x)
 
 
+class NoiseWaves(Model):
+    """A multi-model for fitting noise waves.
+
+    Notes
+    -----
+    The Linear Model is
+
+    .. math:: T_{NS}Q - K_0 T_{ant} = T_{unc} K_1 + T_{cos} K_2 + T_{sin} K_3 - T_L
+
+    where the LHS is non-deterministic (i.e. contains random measured variables Q and
+    T_ANT). Each of the T variables is in fact a polynomial.
+    We *cannot*  estimate T_NS as part of the linear model because it multiples the
+    non-deterministic Q and therefore scales the variance non-uniformly.
+
+    Parameers
+    ---------
+    freq
+        The frequencies at which the lab measurements were taken.
+    gamma_coeffs
+        The linear coefficients that are functions of the S11 for the sources (i.e.
+        the K_X in the above equation). Formulas for these are given in Monsalve et al.
+        (2017) Eq. 7. Each array (there should be three, one for each term) should have
+        shape (n_sources, n_freq).
+    c_terms
+        The number of polynomial terms describing T_L.
+    w_terms
+        The number of polynomial terms describing the noise-wave temperatures,
+        T_unc, T_cos and T_sin.
+    model
+        The kind of model to use for the unknown models (noise-waves and T_load).
+        Typically this is a polynomial, but you can choose another linear model if you
+        choose.
+    """
+
+    def __init__(
+        self,
+        freq: np.ndarray,
+        gamma_coeffs: Tuple[np.ndarray, np.ndarray, np.ndarray],
+        c_terms: int = 6,
+        w_terms: int = 6,
+        fg_terms: int = 0,
+        model: Union[Type[Model], str] = "polynomial",
+        fg_model: Optional[Union[Type[Model], str]] = "linlog",
+        gamma_coeff_fg: Optional[np.ndarray] = None,
+        **kwargs,
+    ):
+        self.freq = FrequencyRange(freq)
+        n_sources = len(gamma_coeffs[0])  # ambient, hot, short, open / other?
+        n_freq = self.freq.n
+
+        assert (
+            len(gamma_coeffs) == 3
+        )  # remember we don't have K_0 here, as it's part of the data vector.
+        assert (kk.shape == (n_sources, n_freq) for kk in gamma_coeffs)
+
+        if fg_terms:
+            # Assume that the LAST source is the actual antenna.
+            self.fg_model = Model.get_mdl(fg_model)(
+                default_x=self.freq.freq, n_terms=fg_terms
+            )
+
+        # Add in the coefficient of unity for T_L
+        self.K = np.array(
+            [
+                -np.ones((n_sources, n_freq)),
+                gamma_coeffs[0],
+                gamma_coeffs[1],
+                gamma_coeffs[2],
+            ]
+        )
+        self.K = self.K.reshape((4, -1))
+        self.gamma_coeff_fg = gamma_coeff_fg
+
+        if gamma_coeff_fg is not None:
+            assert self.gamma_coeff_fg.shape == (n_freq,)
+
+            # Make the K[0] for the foreground term zero everywhere except for the
+            # field data, which is assumed to be the last dimension!
+            self.gamma_coeff_fg = np.concatenate(
+                (np.zeros(n_freq),) * (n_sources - 1) + (self.gamma_coeff_fg,)
+            )
+
+        # TODO might be good to re-centre the frequencies?
+        self.c_terms = c_terms
+        self.w_terms = w_terms
+        self.model = Model.get_mdl(model)(
+            default_x=self.freq.freq_recentred, n_terms=max(self.c_terms, self.w_terms)
+        )
+
+        super().__init__(
+            parameters=kwargs.get("parameters"),
+            n_terms=c_terms + 3 * w_terms + fg_terms,
+            default_x=np.concatenate((self.freq.freq_recentred,) * n_sources),
+        )
+
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        if indx < self.c_terms:
+            return self.K[0] * self.model.get_basis_term(indx, x)
+        elif indx < self.c_terms + self.w_terms:
+            return self.K[1] * self.model.get_basis_term(indx - self.c_terms, x)
+        elif indx < self.c_terms + 2 * self.w_terms:
+            return self.K[2] * self.model.get_basis_term(
+                indx - self.c_terms - self.w_terms, x
+            )
+        elif indx < self.c_terms + 3 * self.w_terms:
+            return self.K[3] * self.model.get_basis_term(
+                indx - self.c_terms - 2 * self.w_terms, x
+            )
+        elif indx < self.c_terms + 3 * self.w_terms + self.fg_model.n_terms:
+            return self.gamma_coeff_fg * self.fg_model.get_basis_term(
+                indx - self.c_terms - 3 * self.w_terms, self.freq.denormalize(x)
+            )
+
+    def _get_normalized_freq(self, freq):
+        if freq is None:
+            return self.freq.freq_recentred
+        else:
+            return self.freq.normalize(freq)
+
+    def t_load(
+        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """Compute T_L for given polynomial parameters and frequencies."""
+        freq = self._get_normalized_freq(freq)
+
+        if parameters is None:
+            parameters = self.parameters
+
+        if len(parameters) == self.c_terms:
+            p = parameters
+        else:
+            p = parameters[: self.c_terms]
+
+        return self.model(parameters=p, indices=np.arange(self.c_terms))
+
+    def t_unc(
+        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """Compute T_unc for given polynomial parameters and frequencies."""
+        freq = self._get_normalized_freq(freq)
+        if parameters is None:
+            parameters = self.parameters
+
+        if len(parameters) == self.w_terms:
+            p = parameters
+        else:
+            p = parameters[self.c_terms : self.c_terms + self.w_terms]
+
+        return self.model(parameters=p, indices=np.arange(self.w_terms))
+
+    def t_cos(
+        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """Compute T_cos for given polynomial parameters and frequencies."""
+        freq = self._get_normalized_freq(freq)
+
+        if parameters is None:
+            parameters = self.parameters
+
+        if len(parameters) == self.w_terms:
+            p = parameters
+        else:
+            p = parameters[
+                self.c_terms + self.w_terms : self.c_terms + 2 * self.w_terms
+            ]
+
+        return self.model(parameters=p, indices=np.arange(self.w_terms))
+
+    def t_sin(
+        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """Compute T_sin for given polynomial parameters and frequencies."""
+        freq = self._get_normalized_freq(freq)
+
+        if parameters is None:
+            parameters = self.parameters
+
+        if len(parameters) == self.w_terms:
+            p = parameters
+        else:
+            p = parameters[
+                self.c_terms + 2 * self.w_terms : self.c_terms + 3 * self.w_terms
+            ]
+
+        return self.model(parameters=p, indices=np.arange(self.w_terms))
+
+    def t_fg(
+        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """Compute foreground temperature for given parameters and frequencies."""
+        if parameters is None:
+            parameters = self.parameters
+
+        if len(parameters) == self.fg_model.n_terms:
+            p = parameters
+        else:
+            p = parameters[self.c_terms + 3 * self.w_terms :]
+
+        return self.fg_model(parameters=p)
+
+
 class ModelFit:
     def __init__(
         self,
@@ -383,9 +599,9 @@ class ModelFit:
             The values of the measured data.
         weights
             The weight of the measured data at each point. This corresponds to the
-            *variance* of the measurement (not the standard deviation). This is appropriate
-            if the weights represent the number of measurements going into each piece
-            of data.
+            *variance* of the measurement (not the standard deviation). This is
+            appropriate if the weights represent the number of measurements going into
+            each piece of data.
         n_terms
             The number of terms to use in the model (useful for models with an
             arbitrary number of terms).
@@ -438,8 +654,10 @@ class ModelFit:
             pars = self._ls(self.model.default_basis, self.ydata)
         else:
             pars = self._wls(self.model.default_basis, self.ydata, w=self.weights)
-        self.model.parameters = pars
-        return self.model
+
+        out_model = deepcopy(self.model)
+        out_model.parameters = pars
+        return out_model
 
     def _wls(self, van, y, w):
         """Ripped straight outta numpy for speed.

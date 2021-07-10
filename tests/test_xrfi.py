@@ -104,8 +104,8 @@ class TestFlaggedFilter:
         assert np.all(in_data == sky_pl_1d)
 
         # Anything close to a flag will not be identical, as the
-        # median of an even number of items is the average of the middle two (and with a flag
-        # the total number of items is reduced by one).
+        # median of an even number of items is the average of the middle two (and with
+        #  a flag the total number of items is reduced by one).
         assert np.all(detrended[flags] == sky_pl_1d[flags])
 
         padded_flags = np.zeros_like(flags)

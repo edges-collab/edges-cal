@@ -126,7 +126,8 @@ def noise_wave_param_fit(
     M = A.T
     ydata = np.reshape(b, (-1, 1))
 
-    # Solving system using 'short' QR decomposition (see R. Butt, Num. Anal. Using MATLAB)
+    # Solving system using 'short' QR decomposition
+    # (see R. Butt, Num. Anal. Using MATLAB)
     Q1, R1 = sp.linalg.qr(M, mode="economic")
     param = sp.linalg.solve(R1, np.dot(Q1.T, ydata)).flatten()
 
@@ -289,9 +290,9 @@ def get_calibration_quantities_iterative(
     temp_amb_internal: float = 300,
 ):
     """
-    Derive calibration parameters using the scheme laid out in Monsalve (2017) [arxiv:1602.08065].
+    Derive calibration parameters using the scheme laid out in Monsalve (2017).
 
-    All equation numbers and symbol names come from M17.
+    All equation numbers and symbol names come from M17 (arxiv:1602.08065).
 
     Parameters
     ----------
@@ -318,7 +319,6 @@ def get_calibration_quantities_iterative(
         The ambient internal temperature, interpreted as T_L.
         Note: this must be the same as the T_L used to generate T*.
 
-
     Returns
     -------
     sca, off, tu, tc, ts : np.poly1d
@@ -340,7 +340,7 @@ def get_calibration_quantities_iterative(
     gamma_ant = {key: value[mask] for key, value in gamma_ant.items()}
     temp_raw = {key: value[mask] for key, value in temp_raw.items()}
     gamma_rec = gamma_rec[mask]
-    temp_ant["hot_load"] = temp_ant["hot_load"][mask]
+    temp_ant_hot = temp_ant["hot_load"][mask]
 
     # Get F and alpha for each load (Eqs. 3 and 4)
     F = {k: get_F(gamma_rec, v) for k, v in gamma_ant.items()}
@@ -390,9 +390,7 @@ def get_calibration_quantities_iterative(
         # Step 2: scale and offset
 
         # Updating scale and offset
-        sca_new = (temp_ant["hot_load"] - temp_ant["ambient"]) / (
-            th_iter[i, :] - ta_iter[i, :]
-        )
+        sca_new = (temp_ant_hot - temp_ant["ambient"]) / (th_iter[i, :] - ta_iter[i, :])
         off_new = ta_iter[i, :] - temp_ant["ambient"]
 
         if i == 0:
