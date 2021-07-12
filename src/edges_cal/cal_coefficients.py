@@ -177,12 +177,12 @@ class _S11Base(metaclass=ABCMeta):
     @classmethod
     @abstractmethod
     def from_path(cls, **kwargs):
-        pass
+        pass  # pragma: no cover
 
     @cached_property
     @abstractmethod
     def measured_load_s11_raw(self):
-        pass
+        pass  # pragma: no cover
 
     @cached_property
     def corrected_load_s11(self) -> np.ndarray:

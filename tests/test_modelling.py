@@ -15,6 +15,11 @@ def test_pass_params():
         mdl.PhysicalLin(parameters=[1, 2, 3], n_terms=4)
 
 
+def test_bad_get_mdl():
+    with pytest.raises(ValueError):
+        mdl.Model.get_mdl(3)
+
+
 @pytest.mark.parametrize(
     "model", [mdl.PhysicalLin, mdl.Polynomial, mdl.EdgesPoly, mdl.Fourier]
 )
@@ -32,6 +37,9 @@ def test_basis(model: Type[mdl.Model]):
         pl2(parameters=[1, 2, 3, 4])
 
     assert pl2(parameters=[1, 2, 3], x=np.linspace(0, 1, 10)).shape == (10,)
+
+    with pytest.raises(ValueError):
+        pl2(parameters=[1, 2, 3, 4, 5], x=np.linspace(0, 1, 10))
 
 
 def test_cached_basis():
@@ -145,3 +153,101 @@ def test_linlog():
 def test_bad_xdata():
     with pytest.raises(ValueError):
         mdl.ModelFit(model_type="linlog", ydata=np.linspace(0, 1, 10))
+
+
+def test_noise_waves():
+    nw = mdl.NoiseWaves(
+        freq=np.linspace(50, 100, 100), gamma_coeffs=(np.ones((4, 100)),) * 3
+    )
+
+    p = [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,  # For T_load
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,  # For T_unc
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,  # For T_cos
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,  # For T_sin
+    ]
+
+    poly = mdl.Polynomial(n_terms=6, default_x=nw.freq.freq)
+
+    np.testing.assert_allclose(nw.t_load(p[:6]), poly(parameters=p[:6]))
+    np.testing.assert_allclose(nw.t_load(p), poly(parameters=p[:6]))
+
+    np.testing.assert_allclose(nw.t_unc(p[6:12]), poly(parameters=p[6:12]))
+    np.testing.assert_allclose(nw.t_unc(p), poly(parameters=p[6:12]))
+
+    np.testing.assert_allclose(nw.t_cos(p[12:18]), poly(parameters=p[12:18]))
+    np.testing.assert_allclose(nw.t_cos(p), poly(parameters=p[12:18]))
+
+    np.testing.assert_allclose(nw.t_sin(p[18:24]), poly(parameters=p[18:24]))
+    np.testing.assert_allclose(nw.t_sin(p), poly(parameters=p[18:24]))
+
+    np.testing.assert_allclose(nw.default_basis[0], -1)
+    assert np.all(nw.default_basis[6] > 0)
+
+
+def test_noise_waves_with_fg():
+    nw = mdl.NoiseWaves(
+        freq=np.linspace(50, 100, 100),
+        gamma_coeffs=(np.ones((5, 100)),) * 3,
+        fg_terms=5,
+    )
+
+    p = [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,  # For T_load
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,  # For T_unc
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,  # For T_cos
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,  # For T_sin
+        1,
+        0,
+        0,
+        0,
+        0,  # For T_fg
+    ]
+
+    np.testing.assert_allclose(
+        nw.t_fg(p[24:]),
+        mdl.LinLog(n_terms=5, default_x=nw.freq.freq)(parameters=p[24:]),
+    )
+    np.testing.assert_allclose(
+        nw.t_fg(p), mdl.LinLog(n_terms=5, default_x=nw.freq.freq)(parameters=p[24:])
+    )
