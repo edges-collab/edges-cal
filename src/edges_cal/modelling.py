@@ -380,6 +380,18 @@ class Fourier(Model):
             return np.sin((indx + 1) // 2 * x)
 
 
+class FourierDay(Model):
+    """A Fourier-basis model with period of 24 (hours)."""
+
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        if indx == 0:
+            return np.ones_like(x)
+        elif indx % 2:
+            return np.cos(2 * np.pi * (indx + 1) // 2 * x / 48)
+        else:
+            return np.sin(2 * np.pi * (indx + 1) // 2 * x / 48)
+
+
 class NoiseWaves(Model):
     """A multi-model for fitting noise waves.
 
