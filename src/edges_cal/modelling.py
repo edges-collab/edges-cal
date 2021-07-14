@@ -62,6 +62,7 @@ class Model:
 
         self.default_x = default_x
         self.__basis_terms = {}
+        self.__default_basis = None
 
     def __init_subclass__(cls, is_meta=False, **kwargs):
         """Initialize a subclass and add it to the registered models."""
@@ -70,18 +71,17 @@ class Model:
             cls._models[cls.__name__.lower()] = cls
 
     @property
-    def default_basis(self) -> [None, np.ndarray]:
+    def default_basis(self) -> Union[None, np.ndarray]:
         """The (cached) basis functions at default_x.
 
         If it exists, a 2D array shape (n_terms, x).
         """
-        try:
-            return self.__default_basis
-        except AttributeError:
+        if self.__default_basis is None:
             self.__default_basis = (
                 self.get_basis(self.default_x) if self.default_x is not None else None
             )
-            return self.__default_basis
+
+        return self.__default_basis
 
     @default_basis.setter
     def default_basis(self, val):
@@ -91,10 +91,10 @@ class Model:
 
     @default_basis.deleter
     def default_basis(self):
-        del self.__default_basis
+        self.__default_basis = None
         self.__basis_terms = {}
 
-    def get_basis(self, x: np.ndarray, indices: [None, list] = None) -> np.ndarray:
+    def get_basis(self, x: np.ndarray, indices: Optional[list] = None) -> np.ndarray:
         """Obtain the basis functions.
 
         Parameters
@@ -222,6 +222,11 @@ class Model:
 
         raise ValueError("Only str or Model instances may be passed.")
 
+    def set_default_x(self, default_x: np.ndarray):
+        """Safely change default_x on the instance."""
+        del self.default_basis
+        self.default_x = default_x
+
 
 class Foreground(Model, is_meta=True):
     def __init__(
@@ -253,9 +258,9 @@ class Foreground(Model, is_meta=True):
 
     def __call__(
         self,
-        x: [np.ndarray, None] = None,
-        basis: [np.ndarray, None] = None,
-        parameters: [np.ndarray, list, None] = None,
+        x: Optional[np.ndarray] = None,
+        basis: Optional[np.ndarray] = None,
+        parameters: Optional[Union[np.ndarray, list]] = None,
         indices: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """Evaluate the model.
@@ -373,6 +378,18 @@ class Fourier(Model):
             return np.cos((indx + 1) // 2 * x)
         else:
             return np.sin((indx + 1) // 2 * x)
+
+
+class FourierDay(Model):
+    """A Fourier-basis model with period of 24 (hours)."""
+
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        if indx == 0:
+            return np.ones_like(x)
+        elif indx % 2:
+            return np.cos(2 * np.pi * (indx + 1) // 2 * x / 48)
+        else:
+            return np.sin(2 * np.pi * (indx + 1) // 2 * x / 48)
 
 
 class NoiseWaves(Model):
@@ -579,11 +596,11 @@ class NoiseWaves(Model):
 class ModelFit:
     def __init__(
         self,
-        model_type: [str, Type[Model], Model],
+        model_type: Union[str, Type[Model], Model],
         *,
         ydata: np.ndarray,
-        xdata: [None, np.ndarray] = None,
-        weights: [None, np.ndarray] = None,
+        xdata: Optional[np.ndarray] = None,
+        weights: Optional[np.ndarray] = None,
         n_terms: int = None,
         **kwargs,
     ):
@@ -613,29 +630,35 @@ class ModelFit:
         ValueError
             If model_type is not str, or a subclass of :class:`Model`.
         """
-        if not isinstance(model_type, Model) and xdata is None:
+        self.xdata = xdata
+        self._basis = None
+        if self.xdata is None:
+            self.xdata = getattr(model_type, "default_x", None)
+            self._basis = getattr(model_type, "default_basis", None)
+
+        if self.xdata is None:
             raise ValueError(
-                "You must pass xdata unless the model_type is an instance."
+                "You must pass xdata unless the model_type is an instance and has "
+                "default_x set"
             )
 
-        if isinstance(model_type, str):
-            self.model = Model._models[model_type.lower()](
+        if isinstance(model_type, str) or np.issubclass_(model_type, Model):
+            self.model = Model.get_mdl(model_type)(
                 default_x=xdata, n_terms=n_terms, **kwargs
             )
-        elif np.issubclass_(model_type, Model):
-            self.model = model_type(default_x=xdata, n_terms=n_terms, **kwargs)
+            self.xdata = np.array(xdata)
         elif isinstance(model_type, Model):
             self.model = model_type
-            if xdata is not None:
-                self.model.default_x = xdata
         else:
             raise ValueError(
                 "model_type must be str, Model subclass or Model instance."
             )
 
-        self.xdata = self.model.default_x
         self.ydata = ydata
         self.weights = weights
+
+        if self._basis is None:
+            self._basis = self.model.get_basis(self.xdata)
 
         if weights is None:
             self.weights = 1
@@ -649,14 +672,17 @@ class ModelFit:
 
     @cached_property
     def fit(self) -> Model:
-        """The model fit."""
+        """A model that has parameters set based on the best fit to this data."""
         if np.isscalar(self.weights):
-            pars = self._ls(self.model.default_basis, self.ydata)
+            pars = self._ls(self._basis, self.ydata)
         else:
-            pars = self._wls(self.model.default_basis, self.ydata, w=self.weights)
+            pars = self._wls(self._basis, self.ydata, w=self.weights)
 
+        # Create a new model with the same parameters but specific parameters and xdata.
         out_model = deepcopy(self.model)
+        out_model.set_default_x(self.xdata)
         out_model.parameters = pars
+
         return out_model
 
     def _wls(self, van, y, w):
@@ -708,7 +734,7 @@ class ModelFit:
         # parent model will change the model_parameters of this fit!
         return self.fit.parameters.copy()
 
-    def evaluate(self, x: [np.ndarray, None] = None) -> np.ndarray:
+    def evaluate(self, x: Optional[np.ndarray] = None) -> np.ndarray:
         """Evaluate the best-fit model.
 
         Parameters
@@ -722,7 +748,7 @@ class ModelFit:
         y : np.ndarray
             The best-fit model evaluated at ``x``.
         """
-        return self.model(x, parameters=self.model_parameters)
+        return self.fit(x)
 
     @cached_property
     def residual(self) -> np.ndarray:
