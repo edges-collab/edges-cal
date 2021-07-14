@@ -21,7 +21,8 @@ def test_bad_get_mdl():
 
 
 @pytest.mark.parametrize(
-    "model", [mdl.PhysicalLin, mdl.Polynomial, mdl.EdgesPoly, mdl.Fourier]
+    "model",
+    [mdl.PhysicalLin, mdl.Polynomial, mdl.EdgesPoly, mdl.Fourier, mdl.FourierDay],
 )
 def test_basis(model: Type[mdl.Model]):
     pl = model(parameters=[1, 2, 3], default_x=np.linspace(0, 1, 10))
