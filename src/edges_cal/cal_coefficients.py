@@ -1994,7 +1994,7 @@ class CalibrationObservation:
             [
                 self.freq.freq,
                 self.C1(),
-                self.C1(),
+                self.C2(),
                 self.Tunc(),
                 self.Tcos(),
                 self.Tsin(),
