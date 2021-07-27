@@ -6,7 +6,7 @@ import numpy as np
 from abc import abstractmethod
 from cached_property import cached_property
 from copy import deepcopy
-from typing import List, Optional, Sequence, Tuple, Type, Union
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 from .tools import FrequencyRange
 
@@ -22,6 +22,7 @@ class Model:
         parameters: [None, Sequence] = None,
         n_terms: [int, None] = None,
         default_x: np.ndarray = None,
+        extra_basis: Callable | None = None,
     ):
         """
         A base class for a linear model.
@@ -35,6 +36,8 @@ class Model:
             number of terms).
         default_x : np.ndarray, optional
             A set of default co-ordinates at which to evaluate the model.
+        extra_basis
+            Any extra function that should be applied to all the terms.
 
         Raises
         ------
@@ -63,6 +66,7 @@ class Model:
         self.default_x = default_x
         self.__basis_terms = {}
         self.__default_basis = None
+        self.extra_basis = extra_basis
 
     def __init_subclass__(cls, is_meta=False, **kwargs):
         """Initialize a subclass and add it to the registered models."""
@@ -144,10 +148,14 @@ class Model:
         """Get a specific basis function term."""
         # If using a new passed-in x, don't cache.
         if x is not None:
-            return self._get_basis_term(indx, x)
+            return self._get_basis_term(indx, x) * (
+                1 if self.extra_basis is None else self.extra_basis(x)
+            )
 
         if indx not in self.__basis_terms:
             self.__basis_terms[indx] = self._get_basis_term(indx, self.default_x)
+            if self.extra_basis is not None:
+                self.__basis_terms[indx] *= self.extra_basis(self.default_x)
 
         return self.__basis_terms[indx]
 
@@ -390,6 +398,53 @@ class FourierDay(Model):
             return np.cos(2 * np.pi * (indx + 1) // 2 * x / 48)
         else:
             return np.sin(2 * np.pi * (indx + 1) // 2 * x / 48)
+
+
+class CompositeModel(Model):
+    def __init__(
+        self, *, models: Dict[str, Model], **kwargs,
+    ):
+        self.models = models
+
+        self.n_terms = sum(m.n_terms for m in self.models.values())
+        self._index_map = {}
+
+        indx = 0
+        for name, model in self.models.items():
+            for i in range(model.n_terms):
+                self._index_map[indx] = (name, i)
+                indx += 1
+
+        super().__init__(**kwargs)
+
+    def __getattr__(self, item):
+        """Get sub-models as if they were top-level attributes."""
+        if item not in self.models:
+            raise AttributeError(f"{item} not one of the models.")
+
+        return self.models[item]
+
+    def get_model(
+        self, model: str, parameters: np.ndarray = None, x: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """Calculate a sub-model."""
+        indx = list(self.models.keys()).index(model)
+        n_before = sum(m.n_terms for m in self.models.values()[:indx])
+        model = self.models[model]
+
+        if parameters is None:
+            parameters = self.parameters
+
+        if len(parameters) == model.n_terms:
+            p = parameters
+        else:
+            p = parameters[n_before : n_before + model.n_terms]
+
+        return model(x=x, parameters=p)
+
+    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        model, indx = self._index_map[indx]
+        return model.get_basis_term(indx, x)
 
 
 class NoiseWaves(Model):
