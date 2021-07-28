@@ -35,7 +35,7 @@ class FixedLinearModel:
     """
 
     model: Model = attr.ib()
-    x: np.ndarray = attr.ib(default=None, converter=np.asarray)
+    x: np.ndarray = attr.ib(converter=np.asarray)
     _init_basis: np.ndarray | None = attr.ib(
         default=None, converter=attr.converters.optional(np.asarray)
     )
@@ -46,11 +46,8 @@ class FixedLinearModel:
 
     @_init_basis.validator
     def _init_basis_vld(self, att, val):
-        if self.x is None and val is not None:
-            raise ValueError("Can only give init_basis if also giving x")
-
         if val is None:
-            return
+            return None
 
         if val.shape[1] != len(self.x):
             raise ValueError("The init_basis values must be the same shape as x.")

@@ -216,3 +216,31 @@ def test_yaml_roundtrip():
     pp = yaml.load(s)
     assert p == pp
     assert "!Model" in s
+
+
+def test_get_mdl_inst():
+    assert isinstance(mdl.get_mdl_inst("polynomial", n_terms=5), mdl.Polynomial)
+    poly = mdl.Polynomial(n_terms=5)
+    assert mdl.get_mdl_inst(poly) == poly
+    assert mdl.get_mdl_inst(poly, n_terms=6).n_terms == 6
+    assert mdl.get_mdl_inst(mdl.Polynomial, n_terms=5).n_terms == 5
+    assert mdl.Model.from_str("polynomial", n_terms=10).n_terms == 10
+
+
+def test_too_many_nterms():
+    with pytest.raises(ValueError):
+        mdl.PhysicalLin(n_terms=10)
+
+
+def test_at_x():
+    x1 = np.linspace(0, 1, 20)
+    first = mdl.Polynomial(n_terms=10).at(x=x1)
+    second = first.at_x(x1 * 2)
+    assert not np.allclose(first.basis, second.basis)
+    assert first.model == second.model
+
+
+def test_init_basis():
+    x = np.linspace(0, 1, 7)
+    with pytest.raises(ValueError):
+        mdl.Polynomial(n_terms=10).at(x=x, init_basis=np.zeros((10, 20)))
