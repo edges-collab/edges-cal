@@ -5,30 +5,10 @@ import attr
 import numpy as np
 from cached_property import cached_property
 from edges_io import io
-from os import path
-from typing import Callable, Tuple, Type, Union
+from typing import Callable, Tuple, Union
 
 from . import reflection_coefficient as rc
 from .modelling import Model, Polynomial
-
-
-def _get_parameters_at_temperature(data_path, temp):
-    assert temp in [15, 25, 35], "temp must be in 15, 25, 35"
-
-    par = np.genfromtxt(
-        path.join(data_path, "parameters_receiver_{}degC.txt".format(temp))
-    )
-
-    # frequency
-    # TODO: this has magic numbers in it!
-    f = np.arange(50, 200.1, 0.25)
-    f_norm = f / 150
-
-    # evaluating S-parameters
-    models = {}
-    for i, kind in enumerate(["s11", "s12s21", "s22"]):
-        for j, mag_or_ang in ["mag", "ang"]:
-            models[kind + "_" + mag_or_ang] = np.polyval(par[:, j + 2 * i], f_norm)
 
 
 def _read_data_and_corrections(switching_state: io.SwitchingState):
@@ -66,12 +46,15 @@ def _tuplify(x):
 class InternalSwitch:
     data: io.SwitchingState = attr.ib()
     resistance: float = attr.ib(default=50.0)
-    model: Union[str, Type[Model]] = attr.ib(
-        default=Polynomial, converter=Model.get_mdl
-    )
+    model: Model = attr.ib(default=Polynomial(n_terms=7))
     n_terms: Union[Tuple[int, int, int], int] = attr.ib(
         default=(7, 7, 7), converter=_tuplify
     )
+
+    @cached_property
+    def fixed_model(self):
+        """The input model fixed to evaluate at the given frequencies."""
+        return self.model.at(x=self.data.freq)
 
     @n_terms.validator
     def _n_terms_val(self, att, val):
@@ -101,17 +84,17 @@ class InternalSwitch:
     @cached_property
     def _s11_model(self):
         """The input unfit S11 model."""
-        return self.model(default_x=self.data.freq, n_terms=self.n_terms[0])
+        return self.fixed_model.with_nterms(n_terms=self.n_terms[0])
 
     @cached_property
     def _s12_model(self):
         """The input unfit S12 model."""
-        return self.model(default_x=self.data.freq, n_terms=self.n_terms[1])
+        return self.fixed_model.with_nterms(n_terms=self.n_terms[1])
 
     @cached_property
     def _s22_model(self):
         """The input unfit S22 model."""
-        return self.model(default_x=self.data.freq, n_terms=self.n_terms[2])
+        return self.fixed_model.with_nterms(n_terms=self.n_terms[2])
 
     @cached_property
     def s11_model(self) -> Callable:
@@ -154,7 +137,7 @@ class InternalSwitch:
         # 'kind' should be 's11', 's12' or 's22'
         data = getattr(self, f"{kind}_data")
 
-        rl = getattr(self, f"_{kind}_model").fit(np.real(data)).fit
-        im = getattr(self, f"_{kind}_model").fit(np.imag(data)).fit
+        rl = getattr(self, f"_{kind}_model").fit(np.real(data))
+        im = getattr(self, f"_{kind}_model").fit(np.imag(data))
 
-        return lambda freq: rl(freq) + 1j * im(freq)
+        return lambda freq: rl.evaluate(freq) + 1j * im.evaluate(freq)
