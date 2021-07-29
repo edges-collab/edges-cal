@@ -7,6 +7,13 @@ from typing import List, Optional
 from .cached_property import cached_property
 
 
+def as_readonly(x: np.ndarray) -> np.ndarray:
+    """Get a read-only view into an array without copying."""
+    result = x.view()
+    result.flags.writeable = False
+    return result
+
+
 def dct_of_list_to_list_of_dct(dct: dict) -> List:
     """Take a dict of key: list pairs and turn it into a list of all combinations of dicts.
 
