@@ -719,7 +719,7 @@ def _flag_a_window(
     n_bootstrap,
     threshold,
     watershed,
-    std_estimator=0,
+    std_estimator=2,
 ):
     # NOTE: line profiling reveals that the fitting takes ~50% of the time of this
     #       function, and taking the std takes ~20%. The next biggest are taking the
