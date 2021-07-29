@@ -770,10 +770,10 @@ def _flag_a_window(
     return new_flags, r_std, fit.model_parameters, counter
 
 
-def xrfi_model(
-    spectrum: np.ndarray,
+def model_filter(
+    x: np.ndarray,
+    data: np.ndarray,
     *,
-    freq: np.ndarray,
     model: Model = mdl.Polynomial(n_terms=3),
     resid_model: Model = mdl.Polynomial(n_terms=5),
     flags: np.ndarray | None = None,
@@ -788,36 +788,32 @@ def xrfi_model(
     min_resid_terms: int = 3,
     decrement_threshold: float = 0,
     min_threshold: float = 5,
-    inplace: bool = False,
     watershed: int = 0,
     flag_if_broken: bool = True,
-    init_flags: np.ndarray | Tuple[float, float] | None = None,
+    init_flags: np.ndarray | None = None,
 ):
     """
-    Flag RFI by subtracting a smooth model and iteratively removing outliers.
+    Flag data by subtracting a smooth model and iteratively removing outliers.
 
     On each iteration, a model is fit to the unflagged data, and another model is fit
     to the absolute residuals. Bins with absolute residuals greater than
-    ``n_abs_resid_threshold`` are flagged, and the process is repeated until no new
+    ``threshold`` are flagged, and the process is repeated until no new
     flags are found.
 
     Parameters
     ----------
-    spectrum : array-like
-        A 1D spectrum. Note that instead of a spectrum, model residuals can be passed.
-        The function does *not* assume the input is positive.
-    freq
-        The frequencies associated with the spectrum.
-    model_type : str or :class:`Model`, optional
-        A model to fit to the data. Any :class:`Model` is accepted.
-    resid_model_type
-        The model to fit to the absolute residuals. Any :class:`Model` is accepted.
+    x
+        The coordinates of the data.
+    data
+        The data (same shape as ``x``).
+    model
+        A model to fit to the data.
+    resid_model
+        The model to fit to the absolute residuals.
     flags : array-like, optional
         The flags associated with the data (same shape as ``spectrum``).
     weights : array-like,, optional
         The weights associated with the data (same shape as ``spectrum``).
-    n_signal : int, optional
-        The number of polynomial terms to use to fit the signal.
     n_resid : int, optional
         The number of polynomial terms to use to fit the residuals.
     threshold : float, optional
@@ -834,21 +830,13 @@ def xrfi_model(
         go below ``min_threshold``.
     min_threshold : float, optional
         The minimum threshold to decrement to.
-    inplace : bool, optional
-        Whether to fill up given flags array with the updated flags.
     watershed
-        How many channels *on each side* of a flagged channel that should be flagged
-        due to channel correlations/bleed.
-
-    Other Parameters
-    ----------------
-    All other parameters passed to construct the ``Model`` instance.
+        How many data points *on each side* of a flagged point that should be flagged.
 
     Returns
     -------
     flags : array-like
-        Boolean array of the same shape as ``spectrum`` indicated which channels/times
-        have flagged RFI.
+        Boolean array of the same shape as ``data``.
     """
     threshold = threshold or (
         min_threshold
@@ -863,17 +851,17 @@ def xrfi_model(
         threshold = min_threshold
 
     assert threshold > 1.5
-    if len(freq) != len(spectrum):
+
+    assert data.ndim == 1
+    assert x.ndim == 1
+    if len(x) != len(data):
         raise ValueError("freq and spectrum must have the same length")
 
-    nf = spectrum.shape[-1]
+    nx = len(x)
 
     # We assume the residuals are smoother than the signal itself
     if not increase_order:
         assert n_resid <= model.n_terms
-
-    if init_flags is not None and len(init_flags) == 2:
-        init_flags = (freq > init_flags[0]) & (freq < init_flags[1])
 
     n_flags_changed = 1
     counter = 0
@@ -885,21 +873,21 @@ def xrfi_model(
     model_std_list = []
     thresholds = []
 
-    model = model.at(x=freq)
+    model = model.at(x=x)
     res_model = resid_model.with_nterms(
         max(min_resid_terms, n_resid if n_resid > 0 else model.n_terms + n_resid)
-    ).at(x=freq)
+    ).at(x=x)
 
     # Initialize some flags, or set them equal to the input
-    orig_flags = flags if flags is not None else np.zeros(nf, dtype=bool)
-    orig_flags |= np.isnan(spectrum) | np.isinf(spectrum)
+    orig_flags = flags if flags is not None else np.zeros(nx, dtype=bool)
+    orig_flags |= np.isnan(data) | np.isinf(data)
 
     flags = orig_flags.copy()
 
     if init_flags is not None:
         flags = flags | init_flags
 
-    orig_weights = np.ones_like(spectrum) if weights is None else weights.copy()
+    orig_weights = np.ones_like(data) if weights is None else weights.copy()
 
     # Iterate until either no flags are changed between iterations, or we get to the
     # requested maximum iterations, or until we have too few unflagged data to fit
@@ -913,7 +901,7 @@ def xrfi_model(
 
         # Get a model fit to the unflagged data.
         # Could be polynomial or fourier (or something else...)
-        mdl = model.fit(ydata=spectrum, weights=weights)
+        mdl = model.fit(ydata=data, weights=weights)
 
         if any(
             len(p) == len(mdl.model_parameters) and np.allclose(mdl.model_parameters, p)
@@ -938,9 +926,10 @@ def xrfi_model(
         # sigma=<any number>
         # \sqrt(exp(mean(log(Normal(0, \sigma, 1000000)^2))))/\sigma
         # it is not dependent on the value of sigma.
-        res_model = res_model.with_nterms(
-            max(min_resid_terms, n_resid if n_resid > 0 else model.n_terms + n_resid)
-        )
+        if n_resid <= 0:
+            res_model = res_model.with_nterms(
+                max(min_resid_terms, model.n_terms + n_resid)
+            )
         res_mdl = res_model.fit(ydata=np.log(absres ** 2), weights=weights)
         model_std = np.sqrt(np.exp(res_mdl.evaluate())) / 0.53
 
@@ -992,9 +981,6 @@ def xrfi_model(
         if flag_if_broken:
             flags[:] = True
 
-    if inplace:
-        orig_flags |= flags
-
     return (
         flags,
         {
@@ -1008,6 +994,58 @@ def xrfi_model(
             "thresholds": thresholds,
         },
     )
+
+
+def xrfi_model(
+    spectrum: np.ndarray,
+    *,
+    freq: np.ndarray,
+    inplace: bool = False,
+    init_flags: np.ndarray | Tuple[float, float] | None = None,
+    flags: np.ndarray | None = None,
+    **kwargs,
+):
+    """
+    Flag RFI by subtracting a smooth model and iteratively removing outliers.
+
+    On each iteration, a model is fit to the unflagged data, and another model is fit
+    to the absolute residuals. Bins with absolute residuals greater than
+    ``n_abs_resid_threshold`` are flagged, and the process is repeated until no new
+    flags are found.
+
+    Parameters
+    ----------
+    spectrum : array-like
+        A 1D spectrum. Note that instead of a spectrum, model residuals can be passed.
+        The function does *not* assume the input is positive.
+    freq
+        The frequencies associated with the spectrum.
+    inplace : bool, optional
+        Whether to fill up given flags array with the updated flags.
+    init_flags
+        Initial flags that are not remembered after the first iteration. These can
+        help with getting the initial model. If a tuple, should be a min and max
+        frequency of a range to flag.
+    **kwargs
+        All other parameters passed to :func:`model_filter`
+
+    Returns
+    -------
+    flags : array-like
+        Boolean array of the same shape as ``spectrum`` indicated which channels/times
+        have flagged RFI.
+    """
+    if init_flags is not None and len(init_flags) == 2:
+        init_flags = (freq > init_flags[0]) & (freq < init_flags[1])
+
+    new_flags, info = model_filter(
+        x=freq, data=spectrum, init_flags=init_flags, flags=flags, **kwargs
+    )
+
+    if inplace and flags is not None:
+        flags |= new_flags
+
+    return new_flags, info
 
 
 xrfi_model.ndim = (1,)
