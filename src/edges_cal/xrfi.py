@@ -12,6 +12,7 @@ from scipy import ndimage
 from typing import Any, Dict, Literal, Tuple
 
 from . import modelling as mdl
+from . import types as tp
 from .modelling import Model, ModelFit
 
 
@@ -784,7 +785,6 @@ def model_filter(
     n_resid: int = -1,
     threshold: float | None = None,
     max_iter: int = 20,
-    accumulate: bool = False,
     increase_order: bool = True,
     min_terms: int = 0,
     max_terms: int = 10,
@@ -842,10 +842,14 @@ def model_filter(
         help with getting the initial model. If a tuple, should be a min and max
         frequency of a range to flag.
     std_estimator
+        The estimator to use to get the standard deviation of each sample.
+    medfilt_width
+        Only used if `std_estimator='medfilt'`. The width (in number of bins) to use
+        for the median filter.
 
     Returns
     -------
-    flags : array-like
+    flags
         Boolean array of the same shape as ``data``.
     """
     threshold = threshold or (
@@ -947,8 +951,8 @@ def model_filter(
             )
         elif std_estimator == "model":
             # Now fit a model to the absolute residuals.
-            # This number is "like" a local standard deviation, since the polynomial does
-            # something like a local average.
+            # This number is "like" a local standard deviation, since the polynomial
+            # does something like a local average.
             # Do it in log-space so the model doesn't ever hit zero.
             # The 0.53 term comes about because the estimate of the std here is not
             # unbiased. You can obtain it by doing
@@ -976,23 +980,16 @@ def model_filter(
 
         std_list.append(model_std)
 
-        if accumulate:
-            # If we are accumulating flags, we just get the *new* flags and add them
-            # to the original flags
-            nflags = np.sum(flags[~flags])
-            flags[~flags] |= absres[~flags] > threshold * model_std[~flags]
-            n_flags_changed = np.sum(flags[~flags]) - nflags
-        else:
-            # If we're not accumulating, we just take these flags (along with the fully
-            # original flags).
-            new_flags = orig_flags | (np.abs(res) > threshold * model_std)
+        # If we're not accumulating, we just take these flags (along with the fully
+        # original flags).
+        new_flags = orig_flags | (np.abs(res) > threshold * model_std)
 
-            # Apply a watershed -- assume surrounding channels will succumb to RFI.
-            if watershed is not None:
-                new_flags |= _apply_watershed(new_flags, watershed)
+        # Apply a watershed -- assume surrounding channels will succumb to RFI.
+        if watershed is not None:
+            new_flags |= _apply_watershed(new_flags, watershed)
 
-            n_flags_changed = np.sum(flags ^ new_flags)
-            flags = new_flags.copy()
+        n_flags_changed = np.sum(flags ^ new_flags)
+        flags = new_flags.copy()
 
         counter += 1
         if increase_order and model.n_terms < max_terms:
@@ -1042,6 +1039,8 @@ def model_filter(
 
 @dataclass
 class ModelFilterInfo:
+    """A simple object representing the information returned by :func:`model_filter`."""
+
     n_flags_changed: list[int]
     total_flags: list[int]
     models: list[Model]
@@ -1054,15 +1053,19 @@ class ModelFilterInfo:
     flags: list[np.ndarray[bool]]
 
     def get_model(self, indx: int = -1):
+        """Get the model values."""
         return self.models[indx](x=self.x)
 
     def get_residual(self, indx: int = -1):
+        """Get the residuals."""
         return self.get_model(indx) - self.data
 
     def get_absres_model(self, indx: int = -1):
+        """Get the *model* of the absolute residuals."""
         return self.res_models[indx](self.x)
 
     def write(self, fname: tp.PathLike, group: str = "/"):
+        """Write the object to a HDF5 file."""
         with h5py.File(fname, "a") as fl:
             grp = fl.require_group(group)
 
@@ -1078,11 +1081,13 @@ class ModelFilterInfo:
                         grp[k] = np.asarray(getattr(self, k))
                     except TypeError as e:
                         raise TypeError(
-                            f"Key {k} with data {np.asarray(getattr(self, k))} failed with msg: {e}"
+                            f"Key {k} with data {np.asarray(getattr(self, k))} "
+                            f"failed with msg: {e}"
                         )
 
     @classmethod
     def from_file(cls, fname: tp.PathLike, group: str = "/"):
+        """Create the object by reading from a HDF5 file."""
         info = {}
         with h5py.File(fname, "r") as fl:
             grp = fl[group]
@@ -1105,31 +1110,44 @@ class ModelFilterInfo:
 
 @dataclass
 class ModelFilterInfoContainer:
+    """A container of :class:`ModelFilterInfo` objects.
+
+    This is almost a perfect drop-in replacement for a singular :class:`ModelFilterInfo`
+    instance, but combines a number of them together seamlessly. This can be useful if
+    several sub-models were fit to one long stream of data.
+    """
+
     models: list[ModelFilterInfo] = field(default_factory=list)
 
     def append(self, model: ModelFilterInfo) -> ModelFilterInfoContainer:
+        """Create a new object by appending a set of info to the existing."""
         assert isinstance(model, ModelFilterInfo)
         models = self.models + [model]
         return ModelFilterInfoContainer(models)
 
     @cached_property
     def x(self):
+        """The data coordinates."""
         return np.concatenate(tuple(model.x for model in self.models))
 
     @cached_property
     def data(self):
+        """The raw data that was filtered."""
         return np.concatenate(tuple(model.data for model in self.models))
 
     @cached_property
     def flags(self):
+        """The returned flags on each iteration."""
         return np.concatenate(tuple(model.flags for model in self.models))
 
     @cached_property
     def n_iters(self):
+        """The number of iterations of the filtering."""
         return max(model.n_iters for model in self.models)
 
     @cached_property
     def n_flags_changed(self):
+        """The number of flags changed on each filtering iteration."""
         return [
             sum(
                 model.n_flags_changed[min(i, model.n_iters - 1)]
@@ -1140,12 +1158,14 @@ class ModelFilterInfoContainer:
 
     @cached_property
     def total_flags(self):
+        """The total number of flags after each iteration."""
         return [
             sum(model.total_flags[min(i, model.n_iters - 1)] for model in self.models)
             for i in range(self.n_iters)
         ]
 
     def get_model(self, indx: int = -1):
+        """Get the model values."""
         assert indx >= -1
         return np.concatenate(
             tuple(
@@ -1154,6 +1174,7 @@ class ModelFilterInfoContainer:
         )
 
     def get_residual(self, indx: int = -1):
+        """Get the residual values."""
         assert indx >= -1
         return np.concatenate(
             tuple(
@@ -1163,6 +1184,7 @@ class ModelFilterInfoContainer:
         )
 
     def get_absres_model(self, indx: int = -1):
+        """Get the *model* of the absolute residuals."""
         assert indx >= -1
         return np.concatenate(
             tuple(
@@ -1173,6 +1195,7 @@ class ModelFilterInfoContainer:
 
     @cached_property
     def thresholds(self):
+        """The threshold at each iteration."""
         for model in self.models:
             if model.n_iters == self.n_iters:
                 break
@@ -1181,6 +1204,7 @@ class ModelFilterInfoContainer:
 
     @cached_property
     def stds(self):
+        """The standard deviations at each datum for each iteration."""
         return [
             np.concatenate(
                 tuple(model.stds[min(indx, model.n_iters - 1)] for model in self.models)
@@ -1190,6 +1214,7 @@ class ModelFilterInfoContainer:
 
     @classmethod
     def from_file(cls, fname: str):
+        """Create an object from a given file."""
         with h5py.File(fname, "r") as fl:
             n_models = fl.attrs["n_models"]
 
@@ -1201,6 +1226,7 @@ class ModelFilterInfoContainer:
         return cls(models)
 
     def write(self, fname: str):
+        """Write the object to a file."""
         with h5py.File(fname, "w") as fl:
             fl.attrs["n_models"] = len(self.models)
 
@@ -1340,14 +1366,12 @@ def visualise_model_info(info: ModelFilterInfo | ModelFilterInfoContainer, n: in
 
     Parameters
     ----------
-    spectrum
-        The input spectrum.
-    flags
-        The output flags from :func:`xrfi_model`
     info
         The output ``info`` from :func:`xrfi_model`.
+    n
+        The number of iterations to plot. Default is to plot them all. Negative numbers
+        will plot the last n, and positive will plot the first n.
     """
-
     fig, ax = plt.subplots(2, 3, figsize=(10, 6))
 
     ax[0, 0].plot(info.data, label="Data", color="k")
