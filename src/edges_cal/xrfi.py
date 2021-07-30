@@ -1,12 +1,15 @@
 """Functions for excising RFI."""
 from __future__ import annotations
 
+import h5py
 import numpy as np
 import warnings
 import yaml
+from dataclasses import dataclass, field
+from functools import cached_property
 from matplotlib import pyplot as plt
 from scipy import ndimage
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Literal, Tuple
 
 from . import modelling as mdl
 from .modelling import Model, ModelFit
@@ -791,6 +794,8 @@ def model_filter(
     watershed: int = 0,
     flag_if_broken: bool = True,
     init_flags: np.ndarray | None = None,
+    std_estimator: Literal["model", "medfilt", "std", "mad"] = "model",
+    medfilt_width: int = 100,
 ):
     """
     Flag data by subtracting a smooth model and iteratively removing outliers.
@@ -832,6 +837,11 @@ def model_filter(
         The minimum threshold to decrement to.
     watershed
         How many data points *on each side* of a flagged point that should be flagged.
+    init_flags
+        Initial flags that are not remembered after the first iteration. These can
+        help with getting the initial model. If a tuple, should be a min and max
+        frequency of a range to flag.
+    std_estimator
 
     Returns
     -------
@@ -843,6 +853,9 @@ def model_filter(
         if not decrement_threshold
         else min_threshold + 5 * decrement_threshold
     )
+    if not decrement_threshold:
+        min_threshold = threshold
+
     if decrement_threshold > 0 and min_threshold > threshold:
         warnings.warn(
             f"You've set a threshold smaller than the min_threshold of {min_threshold}."
@@ -870,13 +883,18 @@ def model_filter(
     n_flags_changed_list = []
     total_flags_list = []
     model_list = []
-    model_std_list = []
+    res_models = []
     thresholds = []
+    std_list = []
+    flag_list = []
 
     model = model.at(x=x)
-    res_model = resid_model.with_nterms(
-        max(min_resid_terms, n_resid if n_resid > 0 else model.n_terms + n_resid)
-    ).at(x=x)
+    if n_resid <= 0:
+        resid_model = resid_model.with_nterms(
+            max(min_resid_terms, model.n_terms + n_resid)
+        )
+
+    res_model = resid_model.at(x=x)
 
     # Initialize some flags, or set them equal to the input
     orig_flags = flags if flags is not None else np.zeros(nx, dtype=bool)
@@ -904,7 +922,8 @@ def model_filter(
         mdl = model.fit(ydata=data, weights=weights)
 
         if any(
-            len(p) == len(mdl.model_parameters) and np.allclose(mdl.model_parameters, p)
+            len(p.parameters) == len(mdl.model_parameters)
+            and np.allclose(mdl.model_parameters, p.parameters)
             for p in model_list
         ):
             # If we're not changing the parameters significantly, just exit. This is
@@ -913,27 +932,49 @@ def model_filter(
             break
 
         res = mdl.residual
-        absres = np.abs(res)
 
-        model_list.append(mdl.model_parameters)
+        model_list.append(mdl.fit.model)
 
-        # Now fit a model to the absolute residuals.
-        # This number is "like" a local standard deviation, since the polynomial does
-        # something like a local average.
-        # Do it in log-space so the model doesn't ever hit zero.
-        # The 0.53 term comes about because the estimate of the std here is not
-        # unbiased. You can obtain it by doing
-        # sigma=<any number>
-        # \sqrt(exp(mean(log(Normal(0, \sigma, 1000000)^2))))/\sigma
-        # it is not dependent on the value of sigma.
-        if n_resid <= 0:
-            res_model = res_model.with_nterms(
-                max(min_resid_terms, model.n_terms + n_resid)
+        if std_estimator == "medfilt":
+            model_std = np.sqrt(
+                flagged_filter(
+                    res ** 2,
+                    size=2 * (medfilt_width // 2) + 1,
+                    kind="median",
+                    flags=flags,
+                )
+                / 0.456
             )
-        res_mdl = res_model.fit(ydata=np.log(absres ** 2), weights=weights)
-        model_std = np.sqrt(np.exp(res_mdl.evaluate())) / 0.53
+        elif std_estimator == "model":
+            # Now fit a model to the absolute residuals.
+            # This number is "like" a local standard deviation, since the polynomial does
+            # something like a local average.
+            # Do it in log-space so the model doesn't ever hit zero.
+            # The 0.53 term comes about because the estimate of the std here is not
+            # unbiased. You can obtain it by doing
+            # sigma=<any number>
+            # \sqrt(exp(mean(log(Normal(0, \sigma, 1000000)^2))))/\sigma
+            # it is not dependent on the value of sigma.
+            absres = np.abs(res)
 
-        model_std_list.append(res_mdl.model_parameters)
+            if n_resid <= 0:
+                res_model = res_model.with_nterms(
+                    max(min_resid_terms, model.n_terms + n_resid)
+                )
+            res_mdl = res_model.fit(ydata=np.log(absres ** 2), weights=weights).fit
+            model_std = np.sqrt(np.exp(res_mdl())) / 0.53
+            res_models.append(res_mdl.model)
+
+        elif std_estimator == "std":
+            model_std = np.std(res[~flags]) * np.ones_like(x)
+        elif std_estimator == "mad":
+            model_std = _get_mad(res[~flags]) * np.ones_like(x)
+        else:
+            raise ValueError(
+                "std_estimator must be one of 'medfilt', 'model','std' or 'mad'."
+            )
+
+        std_list.append(model_std)
 
         if accumulate:
             # If we are accumulating flags, we just get the *new* flags and add them
@@ -965,6 +1006,7 @@ def model_filter(
         # Append info to lists for the user's benefit
         n_flags_changed_list.append(n_flags_changed)
         total_flags_list.append(np.sum(flags))
+        flag_list.append(flags)
 
     if counter == max_iter and max_iter > 1:
         warnings.warn(
@@ -983,17 +1025,187 @@ def model_filter(
 
     return (
         flags,
-        {
-            "n_flags_changed": n_flags_changed_list,
-            "total_flags": total_flags_list,
-            "params": model_list,
-            "res_params": model_std_list,
-            "n_iters": counter,
-            "model": model,
-            "res_model": res_model,
-            "thresholds": thresholds,
-        },
+        ModelFilterInfo(
+            n_flags_changed=n_flags_changed_list,
+            total_flags=total_flags_list,
+            models=model_list,
+            n_iters=counter,
+            res_models=res_models,
+            thresholds=thresholds,
+            stds=std_list,
+            x=x,
+            data=data,
+            flags=flag_list,
+        ),
     )
+
+
+@dataclass
+class ModelFilterInfo:
+    n_flags_changed: list[int]
+    total_flags: list[int]
+    models: list[Model]
+    res_models: list[Model] | None
+    n_iters: int
+    thresholds: list[float]
+    stds: list[np.ndarray[float]]
+    x: np.ndarray
+    data: np.ndarray
+    flags: list[np.ndarray[bool]]
+
+    def get_model(self, indx: int = -1):
+        return self.models[indx](x=self.x)
+
+    def get_residual(self, indx: int = -1):
+        return self.get_model(indx) - self.data
+
+    def get_absres_model(self, indx: int = -1):
+        return self.res_models[indx](self.x)
+
+    def write(self, fname: tp.PathLike, group: str = "/"):
+        with h5py.File(fname, "a") as fl:
+            grp = fl.require_group(group)
+
+            grp.attrs["n_iters"] = self.n_iters
+
+            for i, (model, res_model) in enumerate(zip(self.models, self.res_models)):
+                grp.attrs[f"model_{i}"] = yaml.dump(model)
+                grp.attrs[f"res_model_{i}"] = yaml.dump(res_model)
+
+            for k in self.__dataclass_fields__:
+                if k not in ["n_iters", "models", "res_models"]:
+                    try:
+                        grp[k] = np.asarray(getattr(self, k))
+                    except TypeError as e:
+                        raise TypeError(
+                            f"Key {k} with data {np.asarray(getattr(self, k))} failed with msg: {e}"
+                        )
+
+    @classmethod
+    def from_file(cls, fname: tp.PathLike, group: str = "/"):
+        info = {}
+        with h5py.File(fname, "r") as fl:
+            grp = fl[group]
+
+            info["n_iters"] = grp.attrs["n_iters"]
+
+            info["models"] = [
+                yaml.load(grp.attrs[f"model_{i}"]) for i in range(info["n_iters"])
+            ]
+            info["res_models"] = [
+                yaml.load(grp.attrs[f"res_model_{i}"]) for i in range(info["n_iters"])
+            ]
+
+            print(grp, grp.keys())
+            for k in grp.keys():
+                info[k] = grp[k][...]
+
+        return cls(**info)
+
+
+@dataclass
+class ModelFilterInfoContainer:
+    models: list[ModelFilterInfo] = field(default_factory=list)
+
+    def append(self, model: ModelFilterInfo) -> ModelFilterInfoContainer:
+        assert isinstance(model, ModelFilterInfo)
+        models = self.models + [model]
+        return ModelFilterInfoContainer(models)
+
+    @cached_property
+    def x(self):
+        return np.concatenate(tuple(model.x for model in self.models))
+
+    @cached_property
+    def data(self):
+        return np.concatenate(tuple(model.data for model in self.models))
+
+    @cached_property
+    def flags(self):
+        return np.concatenate(tuple(model.flags for model in self.models))
+
+    @cached_property
+    def n_iters(self):
+        return max(model.n_iters for model in self.models)
+
+    @cached_property
+    def n_flags_changed(self):
+        return [
+            sum(
+                model.n_flags_changed[min(i, model.n_iters - 1)]
+                for model in self.models
+            )
+            for i in range(self.n_iters)
+        ]
+
+    @cached_property
+    def total_flags(self):
+        return [
+            sum(model.total_flags[min(i, model.n_iters - 1)] for model in self.models)
+            for i in range(self.n_iters)
+        ]
+
+    def get_model(self, indx: int = -1):
+        assert indx >= -1
+        return np.concatenate(
+            tuple(
+                model.get_model(min(indx, model.n_iters - 1)) for model in self.models
+            )
+        )
+
+    def get_residual(self, indx: int = -1):
+        assert indx >= -1
+        return np.concatenate(
+            tuple(
+                model.get_residual(min(indx, model.n_iters - 1))
+                for model in self.models
+            )
+        )
+
+    def get_absres_model(self, indx: int = -1):
+        assert indx >= -1
+        return np.concatenate(
+            tuple(
+                model.get_absres_model(min(indx, model.n_iters - 1))
+                for model in self.models
+            )
+        )
+
+    @cached_property
+    def thresholds(self):
+        for model in self.models:
+            if model.n_iters == self.n_iters:
+                break
+
+        return model.thresholds
+
+    @cached_property
+    def stds(self):
+        return [
+            np.concatenate(
+                tuple(model.stds[min(indx, model.n_iters - 1)] for model in self.models)
+            )
+            for indx in self.n_iters
+        ]
+
+    @classmethod
+    def from_file(cls, fname: str):
+        with h5py.File(fname, "r") as fl:
+            n_models = fl.attrs["n_models"]
+
+        models = [
+            ModelFilterInfo.from_file(fname, group=f"model_{i}")
+            for i in range(n_models)
+        ]
+
+        return cls(models)
+
+    def write(self, fname: str):
+        with h5py.File(fname, "w") as fl:
+            fl.attrs["n_models"] = len(self.models)
+
+        for i, model in enumerate(self.models):
+            model.write(fname, group=f"model_{i}")
 
 
 def xrfi_model(
@@ -1122,7 +1334,7 @@ def _apply_watershed(flags, watershed):
     return watershed_flags
 
 
-def visualise_model_info(spectrum: np.ndarray, flags: np.ndarray, info: dict):
+def visualise_model_info(info: ModelFilterInfo | ModelFilterInfoContainer, n: int = 0):
     """
     Make a nice visualisation of the info output from :func:`xrfi_model`.
 
@@ -1135,63 +1347,82 @@ def visualise_model_info(spectrum: np.ndarray, flags: np.ndarray, info: dict):
     info
         The output ``info`` from :func:`xrfi_model`.
     """
-    model = info["model"]
-    res_model = info["res_model"]
 
     fig, ax = plt.subplots(2, 3, figsize=(10, 6))
 
-    ax[0, 0].plot(spectrum, label="Data", color="k")
+    ax[0, 0].plot(info.data, label="Data", color="k")
 
-    for i, (pars, res_pars, nchange, tflags, thr) in enumerate(
+    if not n:
+        n = info.n_iters
+
+    counter = 0
+    for i, (model, res_model, nchange, tflags, thr, flags) in enumerate(
         zip(
-            info["params"],
-            info["res_params"],
-            info["n_flags_changed"],
-            info["total_flags"],
-            info["thresholds"],
+            info.models,
+            info.res_models,
+            info.n_flags_changed,
+            info.total_flags,
+            info.thresholds,
+            info.flags,
         )
     ):
-        model = model.with_params(pars)
-        res_model.with_params(pars)
+        if n < 0 and i < info.n_iters + n:
+            continue
+        elif n > 0 and i >= n:
+            continue
 
-        m = model()
-        res = spectrum - m
+        if np.all(flags):
+            continue
 
-        ax[0, 0].plot(m, label=f"{len(pars)}: {nchange}/{tflags}")
+        m = model(info.x)
+        res = info.data - m
+
+        ax[0, 0].plot(m, label=f"{model.n_terms}: {nchange}/{tflags}")
         ax[0, 0].set_title("Spectrum [K]")
         ax[0, 0].axes.xaxis.set_ticklabels([])
 
-        ax[1, 0].scatter(
-            np.arange(len(flags)),
-            np.where(flags, np.nan, np.abs(res)),
-            alpha=0.1,
-            edgecolor="none",
-            s=5,
-        )
-        ax[1, 0].set_xlabel("Freq Channel")
+        if counter == 0:
+            ax[1, 0].scatter(
+                np.arange(len(flags)),
+                np.where(flags, np.nan, np.abs(res)),
+                alpha=0.1,
+                edgecolor="none",
+                s=5,
+                color="k",
+            )
+            ax[1, 0].set_xlabel("Freq Channel")
 
-        rm = np.sqrt(np.exp(res_model(parameters=res_pars))) / 0.53
-        ax[1, 0].plot(rm)
+            rm = rm0 = np.sqrt(np.exp(res_model(info.x))) / 0.53
+            ax[1, 0].plot(rm0)
+            ax[1, 0].set_title("Abs Model Residuals")
+        else:
+            rm = np.sqrt(np.exp(res_model(info.x))) / 0.53
+            ax[1, 0].plot(rm)
 
-        ax[1, 0].set_title("Abs Model Residuals")
         ax[0, 1].axes.xaxis.set_ticklabels([])
 
-        resres = np.abs(res) - rm
-        med = np.nanmedian(resres)
-        mad = _get_mad(resres[~np.isnan(resres)])
+        if counter == 0:
+            resres = np.abs(res) - rm0
+            med = np.nanmedian(resres)
+            mad = _get_mad(resres[~np.isnan(resres)])
 
-        ax[0, 1].scatter(
-            np.arange(len(flags)),
-            np.where(flags, np.nan, resres),
-            alpha=0.1,
-            edgecolor="none",
-            s=5,
-        )
-        ax[0, 1].set_ylim(med - 7 * mad, med + 7 * mad)
-        ax[0, 1].set_title("Residuals of AbsResids")
+            ax[0, 1].scatter(
+                np.arange(len(flags)),
+                np.where(flags, np.nan, resres),
+                alpha=0.1,
+                edgecolor="none",
+                s=5,
+                color="k",
+            )
+            ax[0, 1].set_ylim(med - 7 * mad, med + 7 * mad)
+            ax[0, 1].set_title("Residuals of AbsResids")
+        else:
+            ax[0, 1].plot(rm - rm0)
 
-        ax[1, 1].plot(res / rm, color=f"C{i}")
-        ax[1, 1].axhline(thr, color=f"C{i}")
+        ax[1, 1].plot(res / rm, color=f"C{counter}")
+        ax[1, 1].axhline(thr, color=f"C{counter}")
+        ax[1, 1].axhline(-thr, color=f"C{counter}")
+
         ax[1, 1].set_ylim(-thr * 3, thr * 3)
         ax[1, 1].set_title("Scaled Residuals and Thresholds")
         ax[1, 1].set_xlabel("Freq Channel")
@@ -1212,6 +1443,7 @@ def visualise_model_info(spectrum: np.ndarray, flags: np.ndarray, info: dict):
         ax[1, 2].set_xlabel("Residual")
 
         ax[0, 2].axis("off")
+        counter += 1
 
     ax[0, 0].legend(title="N: Changed/Tot")
     ax[1, 2].legend()
