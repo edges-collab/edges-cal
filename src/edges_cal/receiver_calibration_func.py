@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """Functions for calibrating the receiver."""
+from __future__ import annotations
+
 import numpy as np
 import scipy as sp
-from typing import Iterable
+from typing import Sequence
 
 
 def temperature_thermistor(
-    resistance: [float, np.ndarray],
-    coeffs: [str, Iterable] = "oven_industries_TR136_170",
+    resistance: float | np.ndarray,
+    coeffs: str | Sequence = "oven_industries_TR136_170",
     kelvin: bool = True,
 ):
     """

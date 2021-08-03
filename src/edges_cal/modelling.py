@@ -2,169 +2,216 @@
 """Functions for generating least-squares model fits for linear models."""
 from __future__ import annotations
 
+import attr
 import numpy as np
-from abc import abstractmethod
+import yaml
+from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
-from copy import deepcopy
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
+from typing import Dict, Optional, Sequence, Type
 
-from .tools import FrequencyRange
+from . import receiver_calibration_func as rcf
+from .tools import as_readonly
 
 F_CENTER = 75.0
+_MODELS = {}
 
 
-class Model:
-    _models = {}
-    n_terms = None
+@attr.s(frozen=True, kw_only=True)
+class FixedLinearModel:
+    """
+    A base class for a linear model fixed at a certain set of co-ordinates.
 
-    def __init__(
-        self,
-        parameters: [None, Sequence] = None,
-        n_terms: [int, None] = None,
-        default_x: np.ndarray = None,
-        extra_basis: Callable | None = None,
-    ):
+    Using this class caches the basis functions at the particular coordinates, and thus
+    speeds up the fitting of multiple sets of data at those co-ordinates.
+
+    Parameters
+    ----------
+    model
+        The linear model to evaluate at the co-ordinates
+    x
+        A set of co-ordinates at which to evaluate the model.
+    init_basis
+        If the basis functions of the model, evaluated at x, are known already, they
+        can be input directly to save computation time.
+    """
+
+    model: Model = attr.ib()
+    x: np.ndarray = attr.ib(converter=np.asarray)
+    _init_basis: np.ndarray | None = attr.ib(
+        default=None, converter=attr.converters.optional(np.asarray)
+    )
+
+    @model.validator
+    def _model_vld(self, att, val):
+        assert isinstance(val, (Model, CompositeModel))
+
+    @_init_basis.validator
+    def _init_basis_vld(self, att, val):
+        if val is None:
+            return None
+
+        if val.shape[1] != len(self.x):
+            raise ValueError("The init_basis values must be the same shape as x.")
+
+    @property
+    def n_terms(self):
+        """The number of terms/parameters in the model."""
+        return self.model.n_terms
+
+    @cached_property
+    def basis(self) -> np.ndarray:
+        """The (cached) basis functions at default_x.
+
+        Shape ``(n_terms, x)``.
         """
-        A base class for a linear model.
+        out = np.zeros((self.model.n_terms, len(self.x)))
+        for indx in range(self.model.n_terms):
+            if self._init_basis is not None and indx < len(self._init_basis):
+                out[indx] = self._init_basis[indx]
+            else:
+                out[indx] = self.model.get_basis_term(indx, self.x)
+
+        return out
+
+    def __call__(
+        self,
+        x: np.ndarray | None = None,
+        parameters: Sequence | None = None,
+        indices: Sequence | None = None,
+    ) -> np.ndarray:
+        """Evaluate the model.
 
         Parameters
         ----------
-        parameters : list of float, optional
-            If provided, a set of parameters at which to evaluate the model.
-        n_terms : int, optional
-            The number of terms the model has (useful for models with an arbitrary
-            number of terms).
-        default_x : np.ndarray, optional
-            A set of default co-ordinates at which to evaluate the model.
-        extra_basis
-            Any extra function that should be applied to all the terms.
+        x
+            The coordinates at which to evaluate the model (by default, use ``self.x``).
+        params
+            A list/array of parameters at which to evaluate the model. Will use the
+            instance's parameters if available. If using a subset of the basis
+            functions, you can pass a subset of parameters.
+        indices
+            Sequence of parameters indices to use (other parameters are set to zero).
 
-        Raises
-        ------
-        ValueError
-            If number of parameters is not consistent with n_terms.
+        Returns
+        -------
+        model
+            The model evaluated at the input ``x``.
         """
-        if n_terms:
-            if self.n_terms and n_terms != self.n_terms:
-                raise ValueError(f"n_terms must be {self.n_terms}")
+        return self.model(
+            basis=self.basis if x is None else None,
+            x=x,
+            parameters=parameters,
+            indices=indices,
+        )
 
-            self.n_terms = n_terms
+    def fit(
+        self,
+        ydata: np.ndarray,
+        weights: np.ndarray | float = 1.0,
+        xdata: np.ndarray | None = None,
+    ):
+        """Create a linear-regression fit object."""
+        thing = self.at_x(xdata) if xdata is not None else self
+        return ModelFit(thing, ydata=ydata, weights=weights,)
 
-        if parameters:
-            self.parameters = np.array(parameters)
-            if self.n_terms and len(self.parameters) != self.n_terms:
-                raise ValueError(
-                    f"wrong number of parameters! Should be {self.n_terms}."
-                )
-            self.n_terms = len(self.parameters)
-        else:
-            self.parameters = None
+    def at_x(self, x: np.ndarray) -> FixedLinearModel:
+        """Return a new :class:`FixedLinearModel` at given co-ordinates."""
+        return attr.evolve(self, x=x, init_basis=None)
 
-        if not self.n_terms:
-            raise ValueError("Need to supply either parameters or n_terms!")
+    def with_nterms(
+        self, n_terms: int, parameters: Sequence | None = None
+    ) -> FixedLinearModel:
+        """Return a new :class:`FixedLinearModel` with given nterms and parameters."""
+        init_basis = as_readonly(self.basis[: min(self.model.n_terms, n_terms)])
+        model = self.model.with_nterms(n_terms=n_terms, parameters=parameters)
+        return attr.evolve(self, model=model, init_basis=init_basis)
 
-        self.default_x = default_x
-        self.__basis_terms = {}
-        self.__default_basis = None
-        self.extra_basis = extra_basis
+    def with_params(self, parameters: Sequence) -> FixedLinearModel:
+        """Return a new :class:`FixedLinearModel` with givne parameters."""
+        assert len(parameters) == self.model.n_terms
+
+        init_basis = as_readonly(self.basis)
+        model = self.model.with_params(parameters=parameters)
+        return attr.evolve(self, model=model, init_basis=init_basis)
+
+
+@attr.s(frozen=True, kw_only=True)
+class Model(metaclass=ABCMeta):
+    """A base class for a linear model."""
+
+    default_n_terms: int | None = None
+    n_terms_min: int = 1
+    n_terms_max: int = 1000000
+
+    parameters: Sequence | None = attr.ib(
+        default=None, converter=attr.converters.optional(np.asarray)
+    )
+    n_terms: int = attr.ib(converter=attr.converters.optional(int))
 
     def __init_subclass__(cls, is_meta=False, **kwargs):
         """Initialize a subclass and add it to the registered models."""
         super().__init_subclass__(**kwargs)
         if not is_meta:
-            cls._models[cls.__name__.lower()] = cls
+            _MODELS[cls.__name__.lower()] = cls
 
-    @property
-    def default_basis(self) -> Union[None, np.ndarray]:
-        """The (cached) basis functions at default_x.
-
-        If it exists, a 2D array shape (n_terms, x).
-        """
-        if self.__default_basis is None:
-            self.__default_basis = (
-                self.get_basis(self.default_x) if self.default_x is not None else None
-            )
-
-        return self.__default_basis
-
-    @default_basis.setter
-    def default_basis(self, val):
-        assert isinstance(val, np.ndarray)
-        assert val.ndim == 2
-        self.__default_basis = val
-
-    @default_basis.deleter
-    def default_basis(self):
-        self.__default_basis = None
-        self.__basis_terms = {}
-
-    def get_basis(self, x: np.ndarray, indices: Optional[list] = None) -> np.ndarray:
-        """Obtain the basis functions.
-
-        Parameters
-        ----------
-        x : np.ndarray
-            Co-ordinates at which to evaluate the basis functions.
-
-        Returns
-        -------
-        basis : np.ndarray
-            A 2D array, shape ``(n_terms, len(x))`` with the computed basis functions
-            for each term.
-        """
-        if indices is None:
-            indices = list(range(self.n_terms))
-
-        if len(indices) > self.n_terms:
-            raise ValueError("Cannot get more indices than n_terms.")
-
-        return np.array([self.get_basis_term(indx, x) for indx in indices])
-
-    def update_nterms(self, n_terms: int):
-        """Update the number of terms in the model.
-
-        This does it more quickly, without too many repeated calculations.
-        """
-        # Important: get the default basis upfront, before changing n_terms.
-        # If it was never created yet, or has been deleted, it will get appended to.
-        # We don't want to append to the wrong thing.
-        db = self.default_basis
-        old_terms = self.n_terms * 1
-        self.n_terms = n_terms
-        self.parameters = None
-
-        if self.default_x is None or n_terms == old_terms:
-            pass
-        elif n_terms < old_terms:
-            self.default_basis = db[:n_terms]
+    @n_terms.default
+    def _n_terms_default(self):
+        if self.parameters is not None:
+            return len(self.parameters)
         else:
-            self.default_basis = np.vstack(
-                (db, self.get_basis(self.default_x, list(range(old_terms, n_terms))),)
+            return self.default_n_terms
+
+    @n_terms.validator
+    def _n_terms_validator(self, att, val):
+        if val is None:
+            raise ValueError("Either n_terms or explicit parameters must be given.")
+
+        if not (self.n_terms_min <= val <= self.n_terms_max):
+            raise ValueError(
+                f"n_terms must be between {self.n_terms_min} and {self.n_terms_max}"
             )
 
-        return
+        if self.parameters is not None and val != len(self.parameters):
+            raise ValueError(f"Wrong number of parameters! Should be {val}.")
 
-    def get_basis_term(self, indx: int, x: Optional[np.ndarray] = None):
-        """Get a specific basis function term."""
-        # If using a new passed-in x, don't cache.
-        if x is not None:
-            return self._get_basis_term(indx, x) * (
-                1 if self.extra_basis is None else self.extra_basis(x)
-            )
+    @abstractmethod
+    def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        """Define the basis terms for the model."""
+        pass
 
-        if indx not in self.__basis_terms:
-            self.__basis_terms[indx] = self._get_basis_term(indx, self.default_x)
-            if self.extra_basis is not None:
-                self.__basis_terms[indx] *= self.extra_basis(self.default_x)
+    def get_basis_terms(self, x: np.ndarray) -> np.ndarray:
+        """Get a 2D array of all basis terms at ``x``."""
+        return np.array([self.get_basis_term(indx, x) for indx in range(self.n_terms)])
 
-        return self.__basis_terms[indx]
+    def with_nterms(
+        self, n_terms: int | None = None, parameters: Sequence | None = None
+    ) -> Model:
+        """Return a new :class:`Model` with given nterms and parameters."""
+        if parameters is not None:
+            n_terms = len(parameters)
+
+        return attr.evolve(self, n_terms=n_terms, parameters=parameters)
+
+    def with_params(self, parameters: Sequence | None):
+        """Get new model with different parameters."""
+        assert len(parameters) == self.n_terms
+        return self.with_nterms(parameters=parameters)
+
+    @staticmethod
+    def from_str(model: str, **kwargs) -> Model:
+        """Obtain a :class:`Model` given a string name."""
+        return get_mdl(model)(**kwargs)
+
+    def at(self, **kwargs) -> FixedLinearModel:
+        """Get an evaluated linear model."""
+        return FixedLinearModel(model=self, **kwargs)
 
     def __call__(
         self,
-        x: [np.ndarray, None] = None,
-        basis: [np.ndarray, None] = None,
-        parameters: [np.ndarray, list, None] = None,
-        indices: Optional[Union[List, np.ndarray]] = None,
+        x: np.ndarray | None = None,
+        basis: np.ndarray | None = None,
+        parameters: Sequence | None = None,
+        indices: Sequence | None = None,
     ) -> np.ndarray:
         """Evaluate the model.
 
@@ -177,9 +224,10 @@ class Model:
             The basis functions at which to evaluate the model. This is useful if
             calling the model multiple times, as the basis itself can be cached and
             re-used.
-        parameters :
+        params
             A list/array of parameters at which to evaluate the model. Will use the
-            instance's parameters if available.
+            instance's parameters if available. If using a subset of the basis
+            functions, you can pass a subset of parameters.
 
         Returns
         -------
@@ -193,114 +241,76 @@ class Model:
 
         indices = np.arange(len(parameters)) if indices is None else np.array(indices)
 
-        if x is None and basis is None and self.default_basis is None:
-            raise ValueError("You need to provide either 'x' or 'basis'.")
-        elif x is None and basis is None:
-            basis = self.default_basis
-        elif x is not None:
-            basis = self.get_basis(x)
+        if x is None and basis is None:
+            raise ValueError("You must supply either x or basis!")
+
+        if basis is None:
+            basis = self.get_basis_terms(x)
 
         if any(idx >= len(basis) for idx in indices):
             raise ValueError("Cannot use more basis sets than available!")
 
-        return np.dot(parameters[indices], basis[indices])
+        if len(parameters) != len(indices):
+            parameters = parameters[indices]
 
-    @abstractmethod
-    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
-        pass
+        return np.dot(parameters, basis[indices])
 
     def fit(
-        self, ydata: np.ndarray, weights: [None, np.ndarray, float] = None, xdata=None
-    ):
+        self, xdata: np.ndarray, ydata: np.ndarray, weights: np.ndarray | float = 1.0,
+    ) -> ModelFit:
         """Create a linear-regression fit object."""
-        return ModelFit(
-            self,
-            ydata=ydata,
-            xdata=xdata if xdata is not None else None,
-            weights=weights,
-        )
-
-    @staticmethod
-    def get_mdl(name: Union[str, Type[Model]]) -> Type[Model]:
-        """Get a specific linear model from a string name."""
-        if isinstance(name, str):
-            return Model._models[name.lower()]
-        elif np.issubclass_(name, Model):
-            return name
-
-        raise ValueError("Only str or Model instances may be passed.")
-
-    def set_default_x(self, default_x: np.ndarray):
-        """Safely change default_x on the instance."""
-        del self.default_basis
-        self.default_x = default_x
+        return self.at(x=xdata).fit(ydata, weights=weights)
 
 
+def get_mdl(model: str | Type[Model]) -> Type[Model]:
+    """Get a linear model class from a string input."""
+    if isinstance(model, str):
+        return _MODELS[model]
+    elif np.issubclass_(model, Model):
+        return model
+    else:
+        raise ValueError("model needs to be a string or Model subclass")
+
+
+def get_mdl_inst(model: str | Model | Type[Model], **kwargs) -> Model:
+    """Get a model instance from given string input."""
+    if isinstance(model, Model):
+        if kwargs:
+            return attr.evolve(model, **kwargs)
+        else:
+            return model
+
+    return get_mdl(model)(**kwargs)
+
+
+@attr.s(frozen=True, kw_only=True)
 class Foreground(Model, is_meta=True):
-    def __init__(
-        self,
-        parameters=None,
-        f_center: float = F_CENTER,
-        with_cmb: bool = False,
-        **kwargs,
-    ):
-        """
-        Base class for Foreground models.
+    """
+    Base class for Foreground models.
 
-        Parameters
-        ----------
-        parameters : list of float, optional
-            If provided, a set of parameters at which to evaluate the model.
-        f_center : float
-            A "center" or "reference" frequency. Typically models will have their
-            co-ordindates divided by this frequency before solving for the
-            co-efficients.
-        with_cmb : bool
-            Whether to add a simply CMB component to the foreground.
-        kwargs
-            All other arguments passed through to :class:`Model`.
-        """
-        super().__init__(parameters, **kwargs)
-        self.f_center = f_center
-        self.with_cmb = with_cmb
+    Parameters
+    ----------
+    f_center : float
+        A "center" or "reference" frequency. Typically models will have their
+        co-ordindates divided by this frequency before solving for the
+        co-efficients.
+    with_cmb : bool
+        Whether to add a simply CMB component to the foreground.
+    """
 
-    def __call__(
-        self,
-        x: Optional[np.ndarray] = None,
-        basis: Optional[np.ndarray] = None,
-        parameters: Optional[Union[np.ndarray, list]] = None,
-        indices: Optional[np.ndarray] = None,
-    ) -> np.ndarray:
-        """Evaluate the model.
-
-        Parameters
-        ----------
-        x : np.ndarray, optional
-            The co-ordinates at which to evaluate the model (by default, use
-            ``default_x``).
-        basis : np.ndarray, optional
-            The basis functions at which to evaluate the model. This is useful if
-            calling the model multiple times, as the basis itself can be cached and
-            re-used.
-        parameters :
-            A list/array of parameters at which to evaluate the model. Will use the
-            instance's parameters if available.
-
-        Returns
-        -------
-        model : np.ndarray
-            The model evaluated at the input ``x`` or ``basis``.
-        """
-        t = 2.725 if self.with_cmb else 0
-        return t + super().__call__(
-            x=x, basis=basis, parameters=parameters, indices=indices
-        )
+    f_center: float = attr.ib(default=F_CENTER, converter=float)
+    with_cmb: bool = attr.ib(default=False, converter=bool)
 
 
+@attr.s(frozen=True, kw_only=True)
 class PhysicalLin(Foreground):
     """Foreground model using a linearized physical model of the foregrounds."""
 
-    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+    n_terms_max: int = 5
+    default_n_terms: int = 5
+
+    def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        """Define the basis functions of the model."""
         y = x / self.f_center
         if indx < 3:
             logy = np.log(y)
@@ -315,32 +325,33 @@ class PhysicalLin(Foreground):
             raise ValueError("too many terms supplied!")
 
 
+@attr.s(frozen=True, kw_only=True)
 class Polynomial(Foreground):
-    def __init__(self, log_x: bool = False, offset: float = 0, **kwargs):
-        r"""A polynomial foreground model.
+    r"""A polynomial foreground model.
 
-        Parameters
-        ----------
-        log_x : bool
-            Whether to fit the poly coefficients with log-space co-ordinates.
-        offset : float
-            An offset to use for each index in the polynomial model.
-        kwargs
-            All other arguments passed through to :class:`Foreground`.
+    Parameters
+    ----------
+    log_x : bool
+        Whether to fit the poly coefficients with log-space co-ordinates.
+    offset : float
+        An offset to use for each index in the polynomial model.
+    kwargs
+        All other arguments passed through to :class:`Foreground`.
 
-        Notes
-        -----
-        The polynomial model can be written
+    Notes
+    -----
+    The polynomial model can be written
 
-        .. math:: \sum_{i=0}^{n} c_i y^{i + offset},
+    .. math:: \sum_{i=0}^{n} c_i y^{i + offset},
 
-        where ``y`` is ``log(x)`` if ``log_x=True`` and simply ``x`` otherwise.
-        """
-        super().__init__(**kwargs)
-        self.log_x = log_x
-        self.offset = offset
+    where ``y`` is ``log(x)`` if ``log_x=True`` and simply ``x`` otherwise.
+    """
 
-    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+    log_x: bool = attr.ib(default=False, converter=bool)
+    offset: float = attr.ib(default=0, converter=float)
+
+    def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        """Define the basis functions of the model."""
         y = x / self.f_center
         if self.log_x:
             y = np.log(y)
@@ -348,74 +359,97 @@ class Polynomial(Foreground):
         return y ** (indx + self.offset)
 
 
+@attr.s(frozen=True, kw_only=True)
 class EdgesPoly(Polynomial):
-    def __init__(self, offset: float = -2.5, **kwargs):
-        """
-        Polynomial with an offset corresponding to approximate galaxy spectral index.
+    """
+    Polynomial with an offset corresponding to approximate galaxy spectral index.
 
-        Parameters
-        ----------
-        offset : float
-            The offset to use. Default is close to the Galactic spectral index.
-        kwargs
-            All other arguments are passed through to :class:`Polynomial`.
-        """
-        super().__init__(offset=offset, **kwargs)
+    Parameters
+    ----------
+    offset : float
+        The offset to use. Default is close to the Galactic spectral index.
+    kwargs
+        All other arguments are passed through to :class:`Polynomial`.
+    """
+
+    offset: float = attr.ib(default=-2.5, converter=float)
 
 
-class LinLog(Polynomial):
-    def __init__(self, beta: float = -2.5, **kwargs):
-        self.beta = beta
-        kwargs["log_x"] = True
-        kwargs["offset"] = 0
+@attr.s(frozen=True, kw_only=True)
+class LinLog(Foreground):
+    beta: float = attr.ib(default=-2.5, converter=float)
 
-        super().__init__(**kwargs)
+    @property
+    def _poly(self):
+        return Polynomial(
+            log_x=True, offset=0, n_terms=self.n_terms, parameters=self.parameters
+        )
 
-    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
-        term = super()._get_basis_term(indx, x)
+    def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        """Define the basis functions of the model."""
+        term = self._poly.get_basis_term(indx, x)
         return term * (x / self.f_center) ** self.beta
 
 
+@attr.s(frozen=True, kw_only=True)
 class Fourier(Model):
     """A Fourier-basis model."""
 
-    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+    period: float = attr.ib(default=2 * np.pi, converter=float)
+
+    @cached_property
+    def _period_fac(self):
+        return 2 * np.pi / self.period
+
+    def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        """Define the basis functions of the model."""
         if indx == 0:
             return np.ones_like(x)
         elif indx % 2:
-            return np.cos((indx + 1) // 2 * x)
+            return np.cos(self._period_fac * ((indx + 1) // 2) * x)
         else:
-            return np.sin((indx + 1) // 2 * x)
+            return np.sin(self._period_fac * ((indx + 1) // 2) * x)
 
 
+@attr.s(frozen=True, kw_only=True)
 class FourierDay(Model):
     """A Fourier-basis model with period of 24 (hours)."""
 
-    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
-        if indx == 0:
-            return np.ones_like(x)
-        elif indx % 2:
-            return np.cos(2 * np.pi * (indx + 1) // 2 * x / 48)
-        else:
-            return np.sin(2 * np.pi * (indx + 1) // 2 * x / 48)
+    @property
+    def _fourier(self):
+        return Fourier(period=48.0, n_terms=self.n_terms, parameters=self.parameters)
+
+    def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        """Define the basis functions of the model."""
+        return self._fourier.get_basis_term(indx, x)
 
 
-class CompositeModel(Model):
-    def __init__(
-        self, *, models: Dict[str, Model], **kwargs,
-    ):
-        self.models = models
+@attr.s(frozen=True, kw_only=True)
+class CompositeModel:
+    models: Dict[str, Model] = attr.ib()
+    extra_basis: Dict[str, np.ndarray] = attr.ib(factory=dict)
 
-        self.n_terms = sum(m.n_terms for m in self.models.values())
-        self._index_map = {}
+    @cached_property
+    def n_terms(self) -> int:
+        """The number of terms in the full composite model."""
+        return sum(m.n_terms for m in self.models.values())
+
+    @cached_property
+    def parameters(self) -> np.ndarray:
+        """The read-only list of parameters of all sub-models."""
+        return np.concatenate(tuple(m.parameters for m in self.models.values()))
+
+    @cached_property
+    def _index_map(self):
+        _index_map = {}
 
         indx = 0
         for name, model in self.models.items():
             for i in range(model.n_terms):
-                self._index_map[indx] = (name, i)
+                _index_map[indx] = (name, i)
                 indx += 1
 
-        super().__init__(**kwargs)
+        return _index_map
 
     def __getattr__(self, item):
         """Get sub-models as if they were top-level attributes."""
@@ -424,321 +458,198 @@ class CompositeModel(Model):
 
         return self.models[item]
 
-    def get_model(
-        self, model: str, parameters: np.ndarray = None, x: Optional[np.ndarray] = None
-    ) -> np.ndarray:
-        """Calculate a sub-model."""
+    def _get_model_param_indx(self, model: str):
         indx = list(self.models.keys()).index(model)
-        n_before = sum(m.n_terms for m in self.models.values()[:indx])
+        n_before = sum(m.n_terms for m in list(self.models.values())[:indx])
+        model = self.models[model]
+        return slice(n_before, n_before + model.n_terms, 1)
+
+    def get_extra_basis(self, model: str, x: np.ndarray | None = None):
+        """Get the extra model-dependent basis function for a given model."""
+        extra = self.extra_basis.get(model, 1)
+        if callable(extra):
+            extra = extra(x)
+        return extra
+
+    def get_model(
+        self,
+        model: str,
+        parameters: np.ndarray = None,
+        x: Optional[np.ndarray] = None,
+        with_extra: bool = False,
+    ):
+        """Calculate a sub-model."""
+        indx = self._get_model_param_indx(model)
+
+        extra = self.get_extra_basis(model, x) if with_extra else 1
         model = self.models[model]
 
         if parameters is None:
             parameters = self.parameters
 
-        if len(parameters) == model.n_terms:
-            p = parameters
-        else:
-            p = parameters[n_before : n_before + model.n_terms]
+        p = parameters if len(parameters) == model.n_terms else parameters[indx]
+        return model(x=x, parameters=p) * extra
 
-        return model(x=x, parameters=p)
-
-    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+    def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        """Define the basis terms for the model."""
         model, indx = self._index_map[indx]
-        return model.get_basis_term(indx, x)
+        extra = self.get_extra_basis(model, x)
 
+        return getattr(self, model).get_basis_term(indx, x) * extra
 
-class NoiseWaves(Model):
-    """A multi-model for fitting noise waves.
+    def get_basis_terms(self, x: np.ndarray) -> np.ndarray:
+        """Get a 2D array of all basis terms at ``x``."""
+        return np.array([self.get_basis_term(indx, x) for indx in range(self.n_terms)])
 
-    Notes
-    -----
-    The Linear Model is
+    def with_nterms(
+        self, model: str, n_terms: int | None = None, parameters: Sequence | None = None
+    ) -> Model:
+        """Return a new :class:`Model` with given nterms and parameters."""
+        model_ = self[model]
 
-    .. math:: T_{NS}Q - K_0 T_{ant} = T_{unc} K_1 + T_{cos} K_2 + T_{sin} K_3 - T_L
+        if parameters is not None:
+            n_terms = len(parameters)
 
-    where the LHS is non-deterministic (i.e. contains random measured variables Q and
-    T_ANT). Each of the T variables is in fact a polynomial.
-    We *cannot*  estimate T_NS as part of the linear model because it multiples the
-    non-deterministic Q and therefore scales the variance non-uniformly.
+        model_ = model_.with_nterms(n_terms=n_terms, parameters=parameters)
 
-    Parameers
-    ---------
-    freq
-        The frequencies at which the lab measurements were taken.
-    gamma_coeffs
-        The linear coefficients that are functions of the S11 for the sources (i.e.
-        the K_X in the above equation). Formulas for these are given in Monsalve et al.
-        (2017) Eq. 7. Each array (there should be three, one for each term) should have
-        shape (n_sources, n_freq).
-    c_terms
-        The number of polynomial terms describing T_L.
-    w_terms
-        The number of polynomial terms describing the noise-wave temperatures,
-        T_unc, T_cos and T_sin.
-    model
-        The kind of model to use for the unknown models (noise-waves and T_load).
-        Typically this is a polynomial, but you can choose another linear model if you
-        choose.
-    """
+        return attr.evolve(self, models={**self.models, **{model: model_}})
 
-    def __init__(
+    def with_params(self, parameters: Sequence):
+        """Get a new model with specified parameters."""
+        assert len(parameters) == self.n_terms
+        models = {
+            name: model.with_params(
+                parameters=parameters[self._get_model_param_indx(name)]
+            )
+            for name, model in self.models.items()
+        }
+        return attr.evolve(self, models=models)
+
+    def at(self, **kwargs) -> FixedLinearModel:
+        """Get an evaluated linear model."""
+        return FixedLinearModel(model=self, **kwargs)
+
+    def __call__(
         self,
-        freq: np.ndarray,
-        gamma_coeffs: Tuple[np.ndarray, np.ndarray, np.ndarray],
-        c_terms: int = 6,
-        w_terms: int = 6,
-        fg_terms: int = 0,
-        model: Union[Type[Model], str] = "polynomial",
-        fg_model: Optional[Union[Type[Model], str]] = "linlog",
-        gamma_coeff_fg: Optional[np.ndarray] = None,
-        **kwargs,
-    ):
-        self.freq = FrequencyRange(freq)
-        n_sources = len(gamma_coeffs[0])  # ambient, hot, short, open / other?
-        n_freq = self.freq.n
-
-        assert (
-            len(gamma_coeffs) == 3
-        )  # remember we don't have K_0 here, as it's part of the data vector.
-        assert (kk.shape == (n_sources, n_freq) for kk in gamma_coeffs)
-
-        if fg_terms:
-            # Assume that the LAST source is the actual antenna.
-            self.fg_model = Model.get_mdl(fg_model)(
-                default_x=self.freq.freq, n_terms=fg_terms
-            )
-
-        # Add in the coefficient of unity for T_L
-        self.K = np.array(
-            [
-                -np.ones((n_sources, n_freq)),
-                gamma_coeffs[0],
-                gamma_coeffs[1],
-                gamma_coeffs[2],
-            ]
-        )
-        self.K = self.K.reshape((4, -1))
-        self.gamma_coeff_fg = gamma_coeff_fg
-
-        if gamma_coeff_fg is not None:
-            assert self.gamma_coeff_fg.shape == (n_freq,)
-
-            # Make the K[0] for the foreground term zero everywhere except for the
-            # field data, which is assumed to be the last dimension!
-            self.gamma_coeff_fg = np.concatenate(
-                (np.zeros(n_freq),) * (n_sources - 1) + (self.gamma_coeff_fg,)
-            )
-
-        # TODO might be good to re-centre the frequencies?
-        self.c_terms = c_terms
-        self.w_terms = w_terms
-        self.model = Model.get_mdl(model)(
-            default_x=self.freq.freq_recentred, n_terms=max(self.c_terms, self.w_terms)
-        )
-
-        super().__init__(
-            parameters=kwargs.get("parameters"),
-            n_terms=c_terms + 3 * w_terms + fg_terms,
-            default_x=np.concatenate((self.freq.freq_recentred,) * n_sources),
-        )
-
-    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
-        if indx < self.c_terms:
-            return self.K[0] * self.model.get_basis_term(indx, x)
-        elif indx < self.c_terms + self.w_terms:
-            return self.K[1] * self.model.get_basis_term(indx - self.c_terms, x)
-        elif indx < self.c_terms + 2 * self.w_terms:
-            return self.K[2] * self.model.get_basis_term(
-                indx - self.c_terms - self.w_terms, x
-            )
-        elif indx < self.c_terms + 3 * self.w_terms:
-            return self.K[3] * self.model.get_basis_term(
-                indx - self.c_terms - 2 * self.w_terms, x
-            )
-        elif indx < self.c_terms + 3 * self.w_terms + self.fg_model.n_terms:
-            return self.gamma_coeff_fg * self.fg_model.get_basis_term(
-                indx - self.c_terms - 3 * self.w_terms, self.freq.denormalize(x)
-            )
-
-    def _get_normalized_freq(self, freq):
-        if freq is None:
-            return self.freq.freq_recentred
-        else:
-            return self.freq.normalize(freq)
-
-    def t_load(
-        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
+        x: np.ndarray | None = None,
+        basis: np.ndarray | None = None,
+        parameters: Sequence | None = None,
+        indices: Sequence | None = None,
     ) -> np.ndarray:
-        """Compute T_L for given polynomial parameters and frequencies."""
-        freq = self._get_normalized_freq(freq)
-
-        if parameters is None:
-            parameters = self.parameters
-
-        if len(parameters) == self.c_terms:
-            p = parameters
-        else:
-            p = parameters[: self.c_terms]
-
-        return self.model(parameters=p, indices=np.arange(self.c_terms))
-
-    def t_unc(
-        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
-    ) -> np.ndarray:
-        """Compute T_unc for given polynomial parameters and frequencies."""
-        freq = self._get_normalized_freq(freq)
-        if parameters is None:
-            parameters = self.parameters
-
-        if len(parameters) == self.w_terms:
-            p = parameters
-        else:
-            p = parameters[self.c_terms : self.c_terms + self.w_terms]
-
-        return self.model(parameters=p, indices=np.arange(self.w_terms))
-
-    def t_cos(
-        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
-    ) -> np.ndarray:
-        """Compute T_cos for given polynomial parameters and frequencies."""
-        freq = self._get_normalized_freq(freq)
-
-        if parameters is None:
-            parameters = self.parameters
-
-        if len(parameters) == self.w_terms:
-            p = parameters
-        else:
-            p = parameters[
-                self.c_terms + self.w_terms : self.c_terms + 2 * self.w_terms
-            ]
-
-        return self.model(parameters=p, indices=np.arange(self.w_terms))
-
-    def t_sin(
-        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
-    ) -> np.ndarray:
-        """Compute T_sin for given polynomial parameters and frequencies."""
-        freq = self._get_normalized_freq(freq)
-
-        if parameters is None:
-            parameters = self.parameters
-
-        if len(parameters) == self.w_terms:
-            p = parameters
-        else:
-            p = parameters[
-                self.c_terms + 2 * self.w_terms : self.c_terms + 3 * self.w_terms
-            ]
-
-        return self.model(parameters=p, indices=np.arange(self.w_terms))
-
-    def t_fg(
-        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
-    ) -> np.ndarray:
-        """Compute foreground temperature for given parameters and frequencies."""
-        if parameters is None:
-            parameters = self.parameters
-
-        if len(parameters) == self.fg_model.n_terms:
-            p = parameters
-        else:
-            p = parameters[self.c_terms + 3 * self.w_terms :]
-
-        return self.fg_model(parameters=p)
-
-
-class ModelFit:
-    def __init__(
-        self,
-        model_type: Union[str, Type[Model], Model],
-        *,
-        ydata: np.ndarray,
-        xdata: Optional[np.ndarray] = None,
-        weights: Optional[np.ndarray] = None,
-        n_terms: int = None,
-        **kwargs,
-    ):
-        """A class representing a fit of model to data.
+        """Evaluate the model.
 
         Parameters
         ----------
-        model_type
-            The type of model to fit to the data.
-        xdata
-            The co-ordinates of the measured data.
-        ydata
-            The values of the measured data.
-        weights
-            The weight of the measured data at each point. This corresponds to the
-            *variance* of the measurement (not the standard deviation). This is
-            appropriate if the weights represent the number of measurements going into
-            each piece of data.
-        n_terms
-            The number of terms to use in the model (useful for models with an
-            arbitrary number of terms).
-        kwargs
-            All other arguments are passed to the chosen model.
+        x : np.ndarray, optional
+            The co-ordinates at which to evaluate the model (by default, use
+            ``default_x``).
+        basis : np.ndarray, optional
+            The basis functions at which to evaluate the model. This is useful if
+            calling the model multiple times, as the basis itself can be cached and
+            re-used.
+        params
+            A list/array of parameters at which to evaluate the model. Will use the
+            instance's parameters if available. If using a subset of the basis
+            functions, you can pass a subset of parameters.
 
-        Raises
-        ------
-        ValueError
-            If model_type is not str, or a subclass of :class:`Model`.
+        Returns
+        -------
+        model : np.ndarray
+            The model evaluated at the input ``x`` or ``basis``.
         """
-        self.xdata = xdata
-        self._basis = None
-        if self.xdata is None:
-            self.xdata = getattr(model_type, "default_x", None)
-            self._basis = getattr(model_type, "default_basis", None)
+        return Model.__call__(
+            self, x=x, basis=basis, parameters=parameters, indices=indices
+        )
 
-        if self.xdata is None:
-            raise ValueError(
-                "You must pass xdata unless the model_type is an instance and has "
-                "default_x set"
-            )
+    def fit(
+        self, xdata: np.ndarray, ydata: np.ndarray, weights: np.ndarray | float = 1.0,
+    ) -> ModelFit:
+        """Create a linear-regression fit object."""
+        return self.at(x=xdata).fit(ydata, weights=weights)
 
-        if isinstance(model_type, str) or np.issubclass_(model_type, Model):
-            self.model = Model.get_mdl(model_type)(
-                default_x=xdata, n_terms=n_terms, **kwargs
-            )
-            self.xdata = np.array(xdata)
-        elif isinstance(model_type, Model):
-            self.model = model_type
-        else:
-            raise ValueError(
-                "model_type must be str, Model subclass or Model instance."
-            )
 
-        self.ydata = ydata
-        self.weights = weights
+def get_noise_wave_model(
+    freq: np.ndarray,
+    s11_source: np.ndarray,
+    s11_inst: np.ndarray,
+    c_terms=5,
+    w_terms=6,
+):
+    """Get a :class:`CompositeModel` representing noise-waves."""
+    assert s11_source.ndim == 2
+    assert s11_source.shape[0] < s11_source.shape[1]
+    assert s11_source.shape[1] == len(freq)
+    assert s11_inst.shape == freq.shape
 
-        if self._basis is None:
-            self._basis = self.model.get_basis(self.xdata)
+    # K should be a an array of shape (Nsrc Nnu x Nnoisewaveterms)
+    K = np.hstack(tuple(rcf.get_K(s11src, s11_inst) for s11src in s11_source))
 
-        if weights is None:
-            self.weights = 1
-        else:
-            # if a vector is given
-            assert weights.shape == self.xdata.shape
-            self.weights = weights
+    # x is the frequencies repeated for every input source
+    x = np.concatenate((freq,) * len(s11_source))
 
-        self.n_terms = self.model.n_terms
-        self.degrees_of_freedom = self.xdata.size - self.n_terms - 1
+    return CompositeModel(
+        models={
+            "tunc": Polynomial(n_terms=w_terms),
+            "tcos": Polynomial(n_terms=w_terms),
+            "tsin": Polynomial(n_terms=w_terms),
+            "tload": Polynomial(n_terms=c_terms),
+        },
+        extra_basis={"tunc": K[1], "tcos": K[2], "tsin": K[3], "tload": -1},
+    ).at(x=x)
+
+
+@attr.s(frozen=True)
+class ModelFit:
+    """A class representing a fit of model to data.
+
+    Parameters
+    ----------
+    model
+        The evaluatable model to fit to the data.
+    ydata
+        The values of the measured data.
+    weights
+        The weight of the measured data at each point. This corresponds to the
+        *variance* of the measurement (not the standard deviation). This is
+        appropriate if the weights represent the number of measurements going into
+        each piece of data.
+
+    Raises
+    ------
+    ValueError
+        If model_type is not str, or a subclass of :class:`Model`.
+    """
+
+    model: FixedLinearModel = attr.ib()
+    ydata: np.ndarray = attr.ib()
+    weights: np.ndarray | float = attr.ib(
+        default=1.0, validator=attr.validators.instance_of((np.ndarray, float))
+    )
+
+    @ydata.validator
+    def _ydata_vld(self, att, val):
+        assert val.shape == self.model.x.shape
+
+    @weights.validator
+    def _weights_vld(self, att, val):
+        if isinstance(val, np.ndarray):
+            assert val.shape == self.model.x.shape
 
     @cached_property
-    def fit(self) -> Model:
+    def degrees_of_freedom(self) -> int:
+        """The number of degrees of freedom of the fit."""
+        return self.model.x.size - self.model.model.n_terms - 1
+
+    @cached_property
+    def fit(self) -> FixedLinearModel:
         """A model that has parameters set based on the best fit to this data."""
         if np.isscalar(self.weights):
-            pars = self._ls(self._basis, self.ydata)
+            pars = self._ls(self.model.basis, self.ydata)
         else:
-            pars = self._wls(self._basis, self.ydata, w=self.weights)
+            pars = self._wls(self.model.basis, self.ydata, w=self.weights)
 
         # Create a new model with the same parameters but specific parameters and xdata.
-        out_model = deepcopy(self.model)
-        out_model.set_default_x(self.xdata)
-        out_model.parameters = pars
-
-        return out_model
+        return self.model.with_params(parameters=pars)
 
     def _wls(self, van, y, w):
         """Ripped straight outta numpy for speed.
@@ -787,7 +698,7 @@ class ModelFit:
         """The best-fit model parameters."""
         # Parameters need to be copied into this object, otherwise a new fit on the
         # parent model will change the model_parameters of this fit!
-        return self.fit.parameters.copy()
+        return as_readonly(self.fit.model.parameters)
 
     def evaluate(self, x: Optional[np.ndarray] = None) -> np.ndarray:
         """Evaluate the best-fit model.
@@ -803,7 +714,7 @@ class ModelFit:
         y : np.ndarray
             The best-fit model evaluated at ``x``.
         """
-        return self.fit(x)
+        return self.fit(x=x)
 
     @cached_property
     def residual(self) -> np.ndarray:
@@ -823,13 +734,27 @@ class ModelFit:
         """The weighted root-mean-square of the residuals."""
         return np.sqrt(self.weighted_chi2) / np.sum(self.weights)
 
-    def get_covariance(self) -> np.ndarray:
-        """The covariance of the parameter estimates at the solution."""
-        return self.fit.normalized_cov_params
 
-    def reset(self):
-        """Resets the fit."""
-        del self.residual
-        del self.weighted_chi2
-        del self.model_parameters
-        del self.fit
+def _model_yaml_constructor(
+    loader: yaml.SafeLoader, node: yaml.nodes.MappingNode
+) -> Model:
+    mapping = loader.construct_mapping(node, deep=True)
+    model = get_mdl(mapping.pop("model"))
+    return model(**mapping)
+
+
+def _model_yaml_representer(
+    dumper: yaml.SafeDumper, model: Model
+) -> yaml.nodes.MappingNode:
+    model_dct = attr.asdict(model)
+    model_dct.update(model=model.__class__.__name__.lower())
+    if model_dct["parameters"] is not None:
+        model_dct["parameters"] = model_dct["parameters"].tolist()
+
+    return dumper.represent_mapping("!Model", model_dct)
+
+
+yaml.FullLoader.add_constructor("!Model", _model_yaml_constructor)
+
+# for mdl in _MODELS.values():
+yaml.add_multi_representer(Model, _model_yaml_representer)

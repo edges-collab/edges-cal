@@ -1,13 +1,16 @@
 """Functions for working with reflection coefficients."""
+from __future__ import annotations
+
 import numpy as np
 from edges_io import io
-from pathlib import Path
 from typing import List, Tuple, Union
+
+from . import types as tp
 
 
 def impedance2gamma(
-    z: [float, np.ndarray], z0: [float, np.ndarray]
-) -> [float, np.ndarray]:
+    z: float | np.ndarray, z0: float | np.ndarray,
+) -> float | np.ndarray:
     """Convert impedance to reflection coefficient.
 
     Parameters
@@ -26,8 +29,8 @@ def impedance2gamma(
 
 
 def gamma2impedance(
-    gamma: [float, np.ndarray], z0: [float, np.ndarray]
-) -> [float, np.ndarray]:
+    gamma: float | np.ndarray, z0: float | np.ndarray,
+) -> float | np.ndarray:
     """Convert reflection coeffiency to impedance.
 
     Parameters
@@ -54,7 +57,7 @@ def gamma_shifted(s11, s12s21, s22, r):  # noqa
 
 
 def s2p_read(
-    path: [str, Path]
+    path: tp.PathLike,
 ) -> Union[
     Tuple[np.ndarray, np.ndarray],
     Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],

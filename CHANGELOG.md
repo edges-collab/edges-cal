@@ -1,5 +1,16 @@
 # Changelog
 
+## dev
+
+### Changed
+
+- `modelling` module got an overhaul. It now consists of smaller, self-consistent
+  classes that are based on `attrs` and are read-only (but clonable). There is an
+  explicit split between a `Model` and a `FixedLinearModel` which is defined at some
+  coordinates `x`, allowing the latter to provide speedups for fitting lots of data at
+  the same coordinates. They are also YAML-read/writable.
+
+
 ## 0.7.0
 
 ### Added
