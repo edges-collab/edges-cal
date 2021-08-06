@@ -7,7 +7,7 @@ import numpy as np
 import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
-from typing import Dict, Optional, Sequence, Type
+from typing import Dict, List, Optional, Sequence, Type
 
 from . import receiver_calibration_func as rcf
 from .tools import as_readonly
@@ -568,34 +568,147 @@ class CompositeModel:
         return self.at(x=xdata).fit(ydata, weights=weights)
 
 
-def get_noise_wave_model(
-    freq: np.ndarray,
-    s11_source: np.ndarray,
-    s11_inst: np.ndarray,
-    c_terms=5,
-    w_terms=6,
-):
-    """Get a :class:`CompositeModel` representing noise-waves."""
-    assert s11_source.ndim == 2
-    assert s11_source.shape[0] < s11_source.shape[1]
-    assert s11_source.shape[1] == len(freq)
-    assert s11_inst.shape == freq.shape
+@attr.s(frozen=True, kw_only=True)
+class NoiseWaves:
+    freq: np.ndarray = attr.ib()
+    gamma_src: Dict[str, np.ndarray] = attr.ib()
+    gamma_rec: np.ndarray = attr.ib()
+    c_terms: int = attr.ib(default=5)
+    w_terms: int = attr.ib(default=6)
+    parameters: Sequence | None = attr.ib(default=None)
 
-    # K should be a an array of shape (Nsrc Nnu x Nnoisewaveterms)
-    K = np.hstack(tuple(rcf.get_K(s11src, s11_inst) for s11src in s11_source))
+    @cached_property
+    def src_names(self) -> List[str]:
+        """List of names of inputs sources (eg. ambient, hot_load, open, short)."""
+        return list(self.gamma_src.keys())
 
-    # x is the frequencies repeated for every input source
-    x = np.concatenate((freq,) * len(s11_source))
+    @cached_property
+    def linear_model(self) -> CompositeModel:
+        """The actual composite linear model object associated with the noise waves."""
+        # K should be a an array of shape (Nsrc Nnu x Nnoisewaveterms)
+        K = np.hstack(
+            tuple(
+                rcf.get_K(gamma_rec=self.gamma_rec, gamma_ant=s11src)
+                for s11src in self.gamma_src.values()
+            )
+        )
 
-    return CompositeModel(
-        models={
-            "tunc": Polynomial(n_terms=w_terms),
-            "tcos": Polynomial(n_terms=w_terms),
-            "tsin": Polynomial(n_terms=w_terms),
-            "tload": Polynomial(n_terms=c_terms),
-        },
-        extra_basis={"tunc": K[1], "tcos": K[2], "tsin": K[3], "tload": -1},
-    ).at(x=x)
+        # x is the frequencies repeated for every input source
+        x = np.concatenate((np.linspace(-1, 1, len(self.freq)),) * len(self.gamma_src))
+
+        return CompositeModel(
+            models={
+                "tunc": Polynomial(
+                    n_terms=self.w_terms,
+                    parameters=self.parameters[: self.w_terms]
+                    if self.parameters is not None
+                    else None,
+                    f_center=1,
+                ),
+                "tcos": Polynomial(
+                    n_terms=self.w_terms,
+                    parameters=self.parameters[self.w_terms : 2 * self.w_terms]
+                    if self.parameters is not None
+                    else None,
+                    f_center=1,
+                ),
+                "tsin": Polynomial(
+                    n_terms=self.w_terms,
+                    parameters=self.parameters[2 * self.w_terms : 3 * self.w_terms]
+                    if self.parameters is not None
+                    else None,
+                    f_center=1,
+                ),
+                "tload": Polynomial(
+                    n_terms=self.c_terms,
+                    parameters=self.parameters[3 * self.w_terms :]
+                    if self.parameters is not None
+                    else None,
+                    f_center=1,
+                ),
+            },
+            extra_basis={"tunc": K[1], "tcos": K[2], "tsin": K[3], "tload": -1},
+        ).at(x=x)
+
+    def get_noise_wave(
+        self,
+        noise_wave: str,
+        parameters: Sequence | None = None,
+        src: str | None = None,
+    ) -> np.ndarray:
+        """Get the model for a particular noise-wave term."""
+        out = self.linear_model.model.get_model(
+            noise_wave,
+            parameters=parameters,
+            x=self.linear_model.x,
+            with_extra=bool(src),
+        )
+        if src:
+            indx = self.src_names.index(src)
+            return out[indx * len(self.freq) : (indx + 1) * len(self.freq)]
+        else:
+            return out[: len(self.freq)]
+
+    def get_full_model(
+        self, src: str, parameters: Sequence | None = None
+    ) -> np.ndarray:
+        """Get the full model (all noise-waves) for a particular input source."""
+        out = self.linear_model(parameters=parameters)
+        indx = self.src_names.index(src)
+        return out[indx * len(self.freq) : (indx + 1) * len(self.freq)]
+
+    def get_fitted(
+        self, data: np.ndarray, weights: np.ndarray | None = None
+    ) -> NoiseWaves:
+        """Get a new noise wave model with fitted parameters."""
+        fit = self.linear_model.fit(ydata=data, weights=weights)
+        return attr.evolve(self, parameters=fit.model_parameters)
+
+    def with_params_from_calobs(self, calobs) -> NoiseWaves:
+        """Get a new noise wave model with parameters fitted using standard methods."""
+        c2 = (-calobs.C2_poly.coefficients[::-1]).tolist()
+        c2[0] += calobs.open.spectrum.t_load
+
+        params = (
+            calobs.Tunc_poly.coefficients[::-1].tolist()
+            + calobs.Tcos_poly.coefficients[::-1].tolist()
+            + calobs.Tsin_poly.coefficients[::-1].tolist()
+            + c2
+        )
+
+        return attr.evolve(self, parameters=params)
+
+    def get_data_from_calobs(self, calobs, tns: Model | None = None) -> np.ndarray:
+        """Generate input data to fit from a calibration observation."""
+        data = []
+        for src in self.src_names:
+            load = calobs._loads[src]
+            if tns is None:
+                _tns = calobs.C1() * load.spectrum.t_load_ns
+            else:
+                _tns = tns(x=calobs.freq.freq)
+
+            q = load.spectrum.averaged_Q
+
+            c = calobs.get_K()[src][0]
+            data.append(_tns * q - c * load.temp_ave)
+        return np.concatenate(tuple(data))
+
+    @classmethod
+    def from_calobs(cls, calobs) -> NoiseWaves:
+        """Initialize a noise wave model from a calibration observation."""
+        nw_model = cls(
+            freq=calobs.freq.freq,
+            gamma_src=calobs.s11_correction_models,
+            gamma_rec=calobs.lna.s11_model(calobs.freq.freq),
+            c_terms=calobs.cterms,
+            w_terms=calobs.wterms,
+        )
+        return nw_model.with_params_from_calobs(calobs)
+
+    def __call__(self, **kwargs) -> np.ndarray:
+        """Call the underlying linear model."""
+        return self.linear_model(**kwargs)
 
 
 @attr.s(frozen=True)
@@ -688,7 +801,7 @@ class ModelFit:
         rcond = y.size * np.finfo(y.dtype).eps
 
         # Determine the norms of the design matrix columns.
-        scl = np.sqrt(np.square(van).sum(1))
+        scl = np.sqrt(np.square(van).sum())
 
         # Solve the least squares problem.
         return np.linalg.lstsq((van.T / scl), y.T, rcond)[0] / scl
