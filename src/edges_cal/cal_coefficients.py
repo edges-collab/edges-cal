@@ -701,6 +701,11 @@ class LoadSpectrum:
         """Variance of the load plus noise-source, averaged over time."""
         return self._ave_and_var_spec[1]["p2"]
 
+    @property
+    def n_integrations(self) -> int:
+        """The number of integrations recorded for the spectrum (after ignoring)."""
+        return self._ave_and_var_spec[2]
+
     def _get_integrated_filename(self):
         """Determine a unique filename for the reduced data of this instance."""
         params = (
@@ -720,7 +725,7 @@ class LoadSpectrum:
         return self.cache_dir / f"{self.load_name}_{hsh}.h5"
 
     @cached_property
-    def _ave_and_var_spec(self):
+    def _ave_and_var_spec(self) -> Tuple[Dict, Dict, int]:
         """Get the mean and variance of the spectra."""
         fname = self._get_integrated_filename()
 
@@ -735,19 +740,22 @@ class LoadSpectrum:
                 for kind in kinds:
                     means[kind] = fl[kind + "_mean"][...]
                     variances[kind] = fl[kind + "_var"][...]
-            return means, variances
+                    n_integrations = fl.attrs["n_integrations"]
+            return means, variances, n_integrations
 
         logger.info(f"Reducing {self.load_name} spectra...")
         spectra = self.get_spectra()
 
         means = {}
         variances = {}
+
         for key, spec in spectra.items():
             # Weird thing where there are zeros in the spectra.
             spec[spec == 0] = np.nan
 
             mean = np.nanmean(spec, axis=1)
             var = np.nanvar(spec, axis=1)
+            n_intg = spec.shape[1]
 
             if self.rfi_removal == "1D2D":
                 nsample = np.sum(~np.isnan(spec), axis=1)
@@ -777,8 +785,9 @@ class LoadSpectrum:
             for kind in kinds:
                 fl[kind + "_mean"] = means[kind]
                 fl[kind + "_var"] = variances[kind]
+            fl.attrs["n_integrations"] = n_intg
 
-        return means, variances
+        return means, variances, n_intg
 
     def get_spectra(self) -> dict:
         """Read all spectra and remove RFI.
@@ -2277,7 +2286,7 @@ class Calibration:
             self.Tunc(freq),
             self.Tcos(freq),
             self.Tsin(freq),
-            300,
+            self.t_load,
         )
 
     def calibrate_temp(self, freq: np.ndarray, temp: np.ndarray, ant_s11: np.ndarray):
