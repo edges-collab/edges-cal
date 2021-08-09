@@ -144,7 +144,9 @@ class Model(metaclass=ABCMeta):
     n_terms_max: int = 1000000
 
     parameters: Sequence | None = attr.ib(
-        default=None, converter=attr.converters.optional(np.asarray)
+        default=None,
+        converter=attr.converters.optional(np.asarray),
+        eq=attr.cmp_using(eq=np.array_equal),
     )
     n_terms: int = attr.ib(converter=attr.converters.optional(int))
 

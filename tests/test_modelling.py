@@ -244,3 +244,24 @@ def test_init_basis():
     x = np.linspace(0, 1, 7)
     with pytest.raises(ValueError):
         mdl.Polynomial(n_terms=10).at(x=x, init_basis=np.zeros((10, 20)))
+
+
+def test_composite_model():
+    poly = mdl.Polynomial(n_terms=5, parameters=[1, 2, 3, 4, 5])
+    four = mdl.Fourier(n_terms=10, parameters=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    m = mdl.CompositeModel(models={"poly": poly, "fourier": four})
+    x = np.linspace(-1, 1, 10)
+    assert np.allclose(m.poly.parameters, poly.parameters)
+    assert np.allclose(m.fourier.parameters, four.parameters)
+    assert m.n_terms == 15
+    assert m._index_map[0] == ("poly", 0)
+    assert m._index_map[5] == ("fourier", 0)
+    assert np.allclose(m.get_model("poly", x=x), poly(x=x))
+
+    mx = m.at(x=x)
+    assert np.allclose(mx(), m(x=x))
+    assert m == m.with_params([1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    assert np.allclose(
+        m.fit(xdata=x, ydata=np.sin(x)).model_parameters,
+        mx.fit(np.sin(x)).model_parameters,
+    )
