@@ -7,9 +7,10 @@ import numpy as np
 import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
-from typing import Optional, Sequence, Tuple, Type, Union
+from typing import Dict, List, Optional, Sequence, Type
 
-from .tools import FrequencyRange, as_readonly
+from . import receiver_calibration_func as rcf
+from .tools import as_readonly
 
 F_CENTER = 75.0
 _MODELS = {}
@@ -42,7 +43,7 @@ class FixedLinearModel:
 
     @model.validator
     def _model_vld(self, att, val):
-        assert isinstance(val, Model)
+        assert isinstance(val, (Model, CompositeModel))
 
     @_init_basis.validator
     def _init_basis_vld(self, att, val):
@@ -127,8 +128,11 @@ class FixedLinearModel:
 
     def with_params(self, parameters: Sequence) -> FixedLinearModel:
         """Return a new :class:`FixedLinearModel` with givne parameters."""
-        n_terms = len(parameters)
-        return self.with_nterms(n_terms=n_terms, parameters=parameters)
+        assert len(parameters) == self.model.n_terms
+
+        init_basis = as_readonly(self.basis)
+        model = self.model.with_params(parameters=parameters)
+        return attr.evolve(self, model=model, init_basis=init_basis)
 
 
 @attr.s(frozen=True, kw_only=True)
@@ -140,7 +144,9 @@ class Model(metaclass=ABCMeta):
     n_terms_max: int = 1000000
 
     parameters: Sequence | None = attr.ib(
-        default=None, converter=attr.converters.optional(np.asarray)
+        default=None,
+        converter=attr.converters.optional(np.asarray),
+        eq=attr.cmp_using(eq=np.array_equal),
     )
     n_terms: int = attr.ib(converter=attr.converters.optional(int))
 
@@ -187,6 +193,11 @@ class Model(metaclass=ABCMeta):
             n_terms = len(parameters)
 
         return attr.evolve(self, n_terms=n_terms, parameters=parameters)
+
+    def with_params(self, parameters: Sequence | None):
+        """Get new model with different parameters."""
+        assert len(parameters) == self.n_terms
+        return self.with_nterms(parameters=parameters)
 
     @staticmethod
     def from_str(model: str, **kwargs) -> Model:
@@ -415,205 +426,291 @@ class FourierDay(Model):
         return self._fourier.get_basis_term(indx, x)
 
 
-class NoiseWaves(Model):
-    """A multi-model for fitting noise waves.
+@attr.s(frozen=True, kw_only=True)
+class CompositeModel:
+    models: Dict[str, Model] = attr.ib()
+    extra_basis: Dict[str, np.ndarray] = attr.ib(factory=dict)
 
-    Notes
-    -----
-    The Linear Model is
+    @cached_property
+    def n_terms(self) -> int:
+        """The number of terms in the full composite model."""
+        return sum(m.n_terms for m in self.models.values())
 
-    .. math:: T_{NS}Q - K_0 T_{ant} = T_{unc} K_1 + T_{cos} K_2 + T_{sin} K_3 - T_L
+    @cached_property
+    def parameters(self) -> np.ndarray:
+        """The read-only list of parameters of all sub-models."""
+        return np.concatenate(tuple(m.parameters for m in self.models.values()))
 
-    where the LHS is non-deterministic (i.e. contains random measured variables Q and
-    T_ANT). Each of the T variables is in fact a polynomial.
-    We *cannot*  estimate T_NS as part of the linear model because it multiples the
-    non-deterministic Q and therefore scales the variance non-uniformly.
+    @cached_property
+    def _index_map(self):
+        _index_map = {}
 
-    Parameers
-    ---------
-    freq
-        The frequencies at which the lab measurements were taken.
-    gamma_coeffs
-        The linear coefficients that are functions of the S11 for the sources (i.e.
-        the K_X in the above equation). Formulas for these are given in Monsalve et al.
-        (2017) Eq. 7. Each array (there should be three, one for each term) should have
-        shape (n_sources, n_freq).
-    c_terms
-        The number of polynomial terms describing T_L.
-    w_terms
-        The number of polynomial terms describing the noise-wave temperatures,
-        T_unc, T_cos and T_sin.
-    model
-        The kind of model to use for the unknown models (noise-waves and T_load).
-        Typically this is a polynomial, but you can choose another linear model if you
-        choose.
-    """
+        indx = 0
+        for name, model in self.models.items():
+            for i in range(model.n_terms):
+                _index_map[indx] = (name, i)
+                indx += 1
 
-    def __init__(
+        return _index_map
+
+    def __getattr__(self, item):
+        """Get sub-models as if they were top-level attributes."""
+        if item not in self.models:
+            raise AttributeError(f"{item} not one of the models.")
+
+        return self.models[item]
+
+    def _get_model_param_indx(self, model: str):
+        indx = list(self.models.keys()).index(model)
+        n_before = sum(m.n_terms for m in list(self.models.values())[:indx])
+        model = self.models[model]
+        return slice(n_before, n_before + model.n_terms, 1)
+
+    def get_extra_basis(self, model: str, x: np.ndarray | None = None):
+        """Get the extra model-dependent basis function for a given model."""
+        extra = self.extra_basis.get(model, 1)
+        if callable(extra):
+            extra = extra(x)
+        return extra
+
+    def get_model(
         self,
-        freq: np.ndarray,
-        gamma_coeffs: Tuple[np.ndarray, np.ndarray, np.ndarray],
-        c_terms: int = 6,
-        w_terms: int = 6,
-        fg_terms: int = 0,
-        model: Union[Type[Model], str] = "polynomial",
-        fg_model: Optional[Union[Type[Model], str]] = "linlog",
-        gamma_coeff_fg: Optional[np.ndarray] = None,
-        **kwargs,
+        model: str,
+        parameters: np.ndarray = None,
+        x: Optional[np.ndarray] = None,
+        with_extra: bool = False,
     ):
-        self.freq = FrequencyRange(freq)
-        n_sources = len(gamma_coeffs[0])  # ambient, hot, short, open / other?
-        n_freq = self.freq.n
+        """Calculate a sub-model."""
+        indx = self._get_model_param_indx(model)
 
-        assert (
-            len(gamma_coeffs) == 3
-        )  # remember we don't have K_0 here, as it's part of the data vector.
-        assert (kk.shape == (n_sources, n_freq) for kk in gamma_coeffs)
+        extra = self.get_extra_basis(model, x) if with_extra else 1
+        model = self.models[model]
 
-        if fg_terms:
-            # Assume that the LAST source is the actual antenna.
-            self.fg_model = Model.get_mdl(fg_model)(
-                default_x=self.freq.freq, n_terms=fg_terms
+        if parameters is None:
+            parameters = self.parameters
+
+        p = parameters if len(parameters) == model.n_terms else parameters[indx]
+        return model(x=x, parameters=p) * extra
+
+    def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        """Define the basis terms for the model."""
+        model, indx = self._index_map[indx]
+        extra = self.get_extra_basis(model, x)
+
+        return getattr(self, model).get_basis_term(indx, x) * extra
+
+    def get_basis_terms(self, x: np.ndarray) -> np.ndarray:
+        """Get a 2D array of all basis terms at ``x``."""
+        return np.array([self.get_basis_term(indx, x) for indx in range(self.n_terms)])
+
+    def with_nterms(
+        self, model: str, n_terms: int | None = None, parameters: Sequence | None = None
+    ) -> Model:
+        """Return a new :class:`Model` with given nterms and parameters."""
+        model_ = self[model]
+
+        if parameters is not None:
+            n_terms = len(parameters)
+
+        model_ = model_.with_nterms(n_terms=n_terms, parameters=parameters)
+
+        return attr.evolve(self, models={**self.models, **{model: model_}})
+
+    def with_params(self, parameters: Sequence):
+        """Get a new model with specified parameters."""
+        assert len(parameters) == self.n_terms
+        models = {
+            name: model.with_params(
+                parameters=parameters[self._get_model_param_indx(name)]
             )
+            for name, model in self.models.items()
+        }
+        return attr.evolve(self, models=models)
 
-        # Add in the coefficient of unity for T_L
-        self.K = np.array(
-            [
-                -np.ones((n_sources, n_freq)),
-                gamma_coeffs[0],
-                gamma_coeffs[1],
-                gamma_coeffs[2],
-            ]
+    def at(self, **kwargs) -> FixedLinearModel:
+        """Get an evaluated linear model."""
+        return FixedLinearModel(model=self, **kwargs)
+
+    def __call__(
+        self,
+        x: np.ndarray | None = None,
+        basis: np.ndarray | None = None,
+        parameters: Sequence | None = None,
+        indices: Sequence | None = None,
+    ) -> np.ndarray:
+        """Evaluate the model.
+
+        Parameters
+        ----------
+        x : np.ndarray, optional
+            The co-ordinates at which to evaluate the model (by default, use
+            ``default_x``).
+        basis : np.ndarray, optional
+            The basis functions at which to evaluate the model. This is useful if
+            calling the model multiple times, as the basis itself can be cached and
+            re-used.
+        params
+            A list/array of parameters at which to evaluate the model. Will use the
+            instance's parameters if available. If using a subset of the basis
+            functions, you can pass a subset of parameters.
+
+        Returns
+        -------
+        model : np.ndarray
+            The model evaluated at the input ``x`` or ``basis``.
+        """
+        return Model.__call__(
+            self, x=x, basis=basis, parameters=parameters, indices=indices
         )
-        self.K = self.K.reshape((4, -1))
-        self.gamma_coeff_fg = gamma_coeff_fg
 
-        if gamma_coeff_fg is not None:
-            assert self.gamma_coeff_fg.shape == (n_freq,)
+    def fit(
+        self, xdata: np.ndarray, ydata: np.ndarray, weights: np.ndarray | float = 1.0,
+    ) -> ModelFit:
+        """Create a linear-regression fit object."""
+        return self.at(x=xdata).fit(ydata, weights=weights)
 
-            # Make the K[0] for the foreground term zero everywhere except for the
-            # field data, which is assumed to be the last dimension!
-            self.gamma_coeff_fg = np.concatenate(
-                (np.zeros(n_freq),) * (n_sources - 1) + (self.gamma_coeff_fg,)
+
+@attr.s(frozen=True, kw_only=True)
+class NoiseWaves:
+    freq: np.ndarray = attr.ib()
+    gamma_src: Dict[str, np.ndarray] = attr.ib()
+    gamma_rec: np.ndarray = attr.ib()
+    c_terms: int = attr.ib(default=5)
+    w_terms: int = attr.ib(default=6)
+    parameters: Sequence | None = attr.ib(default=None)
+
+    @cached_property
+    def src_names(self) -> List[str]:
+        """List of names of inputs sources (eg. ambient, hot_load, open, short)."""
+        return list(self.gamma_src.keys())
+
+    @cached_property
+    def linear_model(self) -> CompositeModel:
+        """The actual composite linear model object associated with the noise waves."""
+        # K should be a an array of shape (Nsrc Nnu x Nnoisewaveterms)
+        K = np.hstack(
+            tuple(
+                rcf.get_K(gamma_rec=self.gamma_rec, gamma_ant=s11src)
+                for s11src in self.gamma_src.values()
             )
-
-        # TODO might be good to re-centre the frequencies?
-        self.c_terms = c_terms
-        self.w_terms = w_terms
-        self.model = Model.get_mdl(model)(
-            default_x=self.freq.freq_recentred, n_terms=max(self.c_terms, self.w_terms)
         )
 
-        super().__init__(
-            parameters=kwargs.get("parameters"),
-            n_terms=c_terms + 3 * w_terms + fg_terms,
-            default_x=np.concatenate((self.freq.freq_recentred,) * n_sources),
+        # x is the frequencies repeated for every input source
+        x = np.concatenate((np.linspace(-1, 1, len(self.freq)),) * len(self.gamma_src))
+
+        return CompositeModel(
+            models={
+                "tunc": Polynomial(
+                    n_terms=self.w_terms,
+                    parameters=self.parameters[: self.w_terms]
+                    if self.parameters is not None
+                    else None,
+                    f_center=1,
+                ),
+                "tcos": Polynomial(
+                    n_terms=self.w_terms,
+                    parameters=self.parameters[self.w_terms : 2 * self.w_terms]
+                    if self.parameters is not None
+                    else None,
+                    f_center=1,
+                ),
+                "tsin": Polynomial(
+                    n_terms=self.w_terms,
+                    parameters=self.parameters[2 * self.w_terms : 3 * self.w_terms]
+                    if self.parameters is not None
+                    else None,
+                    f_center=1,
+                ),
+                "tload": Polynomial(
+                    n_terms=self.c_terms,
+                    parameters=self.parameters[3 * self.w_terms :]
+                    if self.parameters is not None
+                    else None,
+                    f_center=1,
+                ),
+            },
+            extra_basis={"tunc": K[1], "tcos": K[2], "tsin": K[3], "tload": -1},
+        ).at(x=x)
+
+    def get_noise_wave(
+        self,
+        noise_wave: str,
+        parameters: Sequence | None = None,
+        src: str | None = None,
+    ) -> np.ndarray:
+        """Get the model for a particular noise-wave term."""
+        out = self.linear_model.model.get_model(
+            noise_wave,
+            parameters=parameters,
+            x=self.linear_model.x,
+            with_extra=bool(src),
+        )
+        if src:
+            indx = self.src_names.index(src)
+            return out[indx * len(self.freq) : (indx + 1) * len(self.freq)]
+        else:
+            return out[: len(self.freq)]
+
+    def get_full_model(
+        self, src: str, parameters: Sequence | None = None
+    ) -> np.ndarray:
+        """Get the full model (all noise-waves) for a particular input source."""
+        out = self.linear_model(parameters=parameters)
+        indx = self.src_names.index(src)
+        return out[indx * len(self.freq) : (indx + 1) * len(self.freq)]
+
+    def get_fitted(
+        self, data: np.ndarray, weights: np.ndarray | None = None
+    ) -> NoiseWaves:
+        """Get a new noise wave model with fitted parameters."""
+        fit = self.linear_model.fit(ydata=data, weights=weights)
+        return attr.evolve(self, parameters=fit.model_parameters)
+
+    def with_params_from_calobs(self, calobs) -> NoiseWaves:
+        """Get a new noise wave model with parameters fitted using standard methods."""
+        c2 = (-calobs.C2_poly.coefficients[::-1]).tolist()
+        c2[0] += calobs.open.spectrum.t_load
+
+        params = (
+            calobs.Tunc_poly.coefficients[::-1].tolist()
+            + calobs.Tcos_poly.coefficients[::-1].tolist()
+            + calobs.Tsin_poly.coefficients[::-1].tolist()
+            + c2
         )
 
-    def _get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
-        if indx < self.c_terms:
-            return self.K[0] * self.model.get_basis_term(indx, x)
-        elif indx < self.c_terms + self.w_terms:
-            return self.K[1] * self.model.get_basis_term(indx - self.c_terms, x)
-        elif indx < self.c_terms + 2 * self.w_terms:
-            return self.K[2] * self.model.get_basis_term(
-                indx - self.c_terms - self.w_terms, x
-            )
-        elif indx < self.c_terms + 3 * self.w_terms:
-            return self.K[3] * self.model.get_basis_term(
-                indx - self.c_terms - 2 * self.w_terms, x
-            )
-        elif indx < self.c_terms + 3 * self.w_terms + self.fg_model.n_terms:
-            return self.gamma_coeff_fg * self.fg_model.get_basis_term(
-                indx - self.c_terms - 3 * self.w_terms, self.freq.denormalize(x)
-            )
+        return attr.evolve(self, parameters=params)
 
-    def _get_normalized_freq(self, freq):
-        if freq is None:
-            return self.freq.freq_recentred
-        else:
-            return self.freq.normalize(freq)
+    def get_data_from_calobs(self, calobs, tns: Model | None = None) -> np.ndarray:
+        """Generate input data to fit from a calibration observation."""
+        data = []
+        for src in self.src_names:
+            load = calobs._loads[src]
+            if tns is None:
+                _tns = calobs.C1() * load.spectrum.t_load_ns
+            else:
+                _tns = tns(x=calobs.freq.freq)
 
-    def t_load(
-        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
-    ) -> np.ndarray:
-        """Compute T_L for given polynomial parameters and frequencies."""
-        freq = self._get_normalized_freq(freq)
+            q = load.spectrum.averaged_Q
 
-        if parameters is None:
-            parameters = self.parameters
+            c = calobs.get_K()[src][0]
+            data.append(_tns * q - c * load.temp_ave)
+        return np.concatenate(tuple(data))
 
-        if len(parameters) == self.c_terms:
-            p = parameters
-        else:
-            p = parameters[: self.c_terms]
+    @classmethod
+    def from_calobs(cls, calobs) -> NoiseWaves:
+        """Initialize a noise wave model from a calibration observation."""
+        nw_model = cls(
+            freq=calobs.freq.freq,
+            gamma_src=calobs.s11_correction_models,
+            gamma_rec=calobs.lna.s11_model(calobs.freq.freq),
+            c_terms=calobs.cterms,
+            w_terms=calobs.wterms,
+        )
+        return nw_model.with_params_from_calobs(calobs)
 
-        return self.model(parameters=p, indices=np.arange(self.c_terms))
-
-    def t_unc(
-        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
-    ) -> np.ndarray:
-        """Compute T_unc for given polynomial parameters and frequencies."""
-        freq = self._get_normalized_freq(freq)
-        if parameters is None:
-            parameters = self.parameters
-
-        if len(parameters) == self.w_terms:
-            p = parameters
-        else:
-            p = parameters[self.c_terms : self.c_terms + self.w_terms]
-
-        return self.model(parameters=p, indices=np.arange(self.w_terms))
-
-    def t_cos(
-        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
-    ) -> np.ndarray:
-        """Compute T_cos for given polynomial parameters and frequencies."""
-        freq = self._get_normalized_freq(freq)
-
-        if parameters is None:
-            parameters = self.parameters
-
-        if len(parameters) == self.w_terms:
-            p = parameters
-        else:
-            p = parameters[
-                self.c_terms + self.w_terms : self.c_terms + 2 * self.w_terms
-            ]
-
-        return self.model(parameters=p, indices=np.arange(self.w_terms))
-
-    def t_sin(
-        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
-    ) -> np.ndarray:
-        """Compute T_sin for given polynomial parameters and frequencies."""
-        freq = self._get_normalized_freq(freq)
-
-        if parameters is None:
-            parameters = self.parameters
-
-        if len(parameters) == self.w_terms:
-            p = parameters
-        else:
-            p = parameters[
-                self.c_terms + 2 * self.w_terms : self.c_terms + 3 * self.w_terms
-            ]
-
-        return self.model(parameters=p, indices=np.arange(self.w_terms))
-
-    def t_fg(
-        self, parameters: np.ndarray = None, freq: Optional[np.ndarray] = None
-    ) -> np.ndarray:
-        """Compute foreground temperature for given parameters and frequencies."""
-        if parameters is None:
-            parameters = self.parameters
-
-        if len(parameters) == self.fg_model.n_terms:
-            p = parameters
-        else:
-            p = parameters[self.c_terms + 3 * self.w_terms :]
-
-        return self.fg_model(parameters=p)
+    def __call__(self, **kwargs) -> np.ndarray:
+        """Call the underlying linear model."""
+        return self.linear_model(**kwargs)
 
 
 @attr.s(frozen=True)
@@ -706,7 +803,7 @@ class ModelFit:
         rcond = y.size * np.finfo(y.dtype).eps
 
         # Determine the norms of the design matrix columns.
-        scl = np.sqrt(np.square(van).sum(1))
+        scl = np.sqrt(np.square(van).sum())
 
         # Solve the least squares problem.
         return np.linalg.lstsq((van.T / scl), y.T, rcond)[0] / scl
