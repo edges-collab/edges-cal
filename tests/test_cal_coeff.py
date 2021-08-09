@@ -281,3 +281,8 @@ def test_term_sweep(cal_data: Path, tmpdir: Path):
     )
 
     assert isinstance(calobs_opt, cc.CalibrationObservation)
+
+
+def test_2017_semi_rigid():
+    hlc = cc.HotLoadCorrection(path=":semi_rigid_s_parameters_2017.txt")
+    assert hlc.s12_model(hlc.freq.freq).dtype == complex

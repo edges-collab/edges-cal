@@ -6,7 +6,7 @@ import numpy as np
 import yaml
 from pathlib import Path
 from pytest_cases import fixture_ref as fxref
-from pytest_cases import parametrize_plus
+from pytest_cases import parametrize
 
 from edges_cal import xrfi
 
@@ -131,10 +131,10 @@ class TestFlaggedFilter:
 
 
 class TestMedfilt:
-    @parametrize_plus(
+    @parametrize(
         "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
     )
-    @parametrize_plus(
+    @parametrize(
         "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
     )
     @pytest.mark.parametrize(
@@ -159,10 +159,10 @@ class TestMedfilt:
 
 
 class TestXRFIModel:
-    @parametrize_plus(
+    @parametrize(
         "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
     )
-    @parametrize_plus(
+    @parametrize(
         "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
     )
     @pytest.mark.parametrize("scale", [1000, 100])
@@ -178,10 +178,10 @@ class TestXRFIModel:
 
         assert len(wrong) == 0
 
-    @parametrize_plus(
+    @parametrize(
         "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
     )
-    @parametrize_plus("rfi_model", [fxref(rfi_regular_leaky)])
+    @parametrize("rfi_model", [fxref(rfi_regular_leaky)])
     @pytest.mark.parametrize("scale", [1000, 100])
     def test_poly_watershed_strict(self, sky_model, rfi_model, scale, freq):
         sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=200)
@@ -197,10 +197,10 @@ class TestXRFIModel:
 
         assert len(wrong) == 0
 
-    @parametrize_plus(
+    @parametrize(
         "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
     )
-    @parametrize_plus("rfi_model", [fxref(rfi_regular_leaky)])
+    @parametrize("rfi_model", [fxref(rfi_regular_leaky)])
     @pytest.mark.parametrize("scale", [1000, 100])
     def test_poly_watershed_relaxed(self, sky_model, rfi_model, scale, freq):
         sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=500)
@@ -245,10 +245,10 @@ class TestWatershed:
 
 
 class TestModelSweep:
-    @parametrize_plus(
+    @parametrize(
         "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
     )
-    @parametrize_plus(
+    @parametrize(
         "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
     )
     @pytest.mark.parametrize("scale", [1000, 100])
@@ -266,10 +266,10 @@ class TestModelSweep:
         print_wrongness(wrong, std, info, noise, true_flags, sky, rfi)
         assert len(wrong) == 0
 
-    @parametrize_plus(
+    @parametrize(
         "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
     )
-    @parametrize_plus(
+    @parametrize(
         "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
     )
     @pytest.mark.parametrize("scale", [1000, 100])
@@ -287,10 +287,10 @@ class TestModelSweep:
         print_wrongness(wrong, std, info, noise, true_flags, sky, rfi)
         assert len(wrong) == 0
 
-    @parametrize_plus(
+    @parametrize(
         "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
     )
-    @parametrize_plus(
+    @parametrize(
         "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
     )
     @pytest.mark.parametrize("scale", [1000, 100])
@@ -355,7 +355,7 @@ class TestModelSweep:
         flags, info = xrfi.xrfi_model_sweep(spec)
         assert flags.shape == (500,)
 
-    @parametrize_plus(
+    @parametrize(
         "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
     )
     @pytest.mark.parametrize("scale", [1000, 100])
