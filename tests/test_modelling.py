@@ -4,6 +4,7 @@ import numpy as np
 import yaml
 from typing import Type
 
+from edges_cal import cal_coefficients as cc
 from edges_cal import modelling as mdl
 
 
@@ -110,106 +111,6 @@ def test_linlog():
     assert m.basis.shape == (3, 3)
 
 
-@pytest.mark.xfail(reason="Hasn't been updated to new API.")
-def test_noise_waves():
-    nw = mdl.NoiseWaves(
-        freq=np.linspace(50, 100, 100), gamma_coeffs=(np.ones((4, 100)),) * 3
-    )
-
-    p = [
-        1,
-        0,
-        0,
-        0,
-        0,
-        0,  # For T_load
-        1,
-        0,
-        0,
-        0,
-        0,
-        0,  # For T_unc
-        1,
-        0,
-        0,
-        0,
-        0,
-        0,  # For T_cos
-        1,
-        0,
-        0,
-        0,
-        0,
-        0,  # For T_sin
-    ]
-
-    poly = mdl.Polynomial(n_terms=6, default_x=nw.freq.freq)
-
-    np.testing.assert_allclose(nw.t_load(p[:6]), poly(parameters=p[:6]))
-    np.testing.assert_allclose(nw.t_load(p), poly(parameters=p[:6]))
-
-    np.testing.assert_allclose(nw.t_unc(p[6:12]), poly(parameters=p[6:12]))
-    np.testing.assert_allclose(nw.t_unc(p), poly(parameters=p[6:12]))
-
-    np.testing.assert_allclose(nw.t_cos(p[12:18]), poly(parameters=p[12:18]))
-    np.testing.assert_allclose(nw.t_cos(p), poly(parameters=p[12:18]))
-
-    np.testing.assert_allclose(nw.t_sin(p[18:24]), poly(parameters=p[18:24]))
-    np.testing.assert_allclose(nw.t_sin(p), poly(parameters=p[18:24]))
-
-    np.testing.assert_allclose(nw.default_basis[0], -1)
-    assert np.all(nw.default_basis[6] > 0)
-
-
-@pytest.mark.xfail(reason="Hasn't been updated to new API.")
-def test_noise_waves_with_fg():
-    nw = mdl.NoiseWaves(
-        freq=np.linspace(50, 100, 100),
-        gamma_coeffs=(np.ones((5, 100)),) * 3,
-        fg_terms=5,
-    )
-
-    p = [
-        1,
-        0,
-        0,
-        0,
-        0,
-        0,  # For T_load
-        1,
-        0,
-        0,
-        0,
-        0,
-        0,  # For T_unc
-        1,
-        0,
-        0,
-        0,
-        0,
-        0,  # For T_cos
-        1,
-        0,
-        0,
-        0,
-        0,
-        0,  # For T_sin
-        1,
-        0,
-        0,
-        0,
-        0,  # For T_fg
-    ]
-
-    np.testing.assert_allclose(
-        nw.t_fg(p[24:]),
-        mdl.LinLog(n_terms=5, default_x=nw.freq.freq)(parameters=p[24:]),
-    )
-    np.testing.assert_allclose(
-        nw.t_fg(p), mdl.LinLog(n_terms=5, default_x=nw.freq.freq)(parameters=p[24:])
-    )
-
-
 def test_yaml_roundtrip():
     p = mdl.Polynomial(n_terms=5)
     s = yaml.dump(p)
@@ -265,3 +166,24 @@ def test_composite_model():
         m.fit(xdata=x, ydata=np.sin(x)).model_parameters,
         mx.fit(np.sin(x)).model_parameters,
     )
+
+
+def test_noise_waves(cal_data, tmpdir):
+    cache = tmpdir / "cal-coeff-cache"
+    calobs = cc.CalibrationObservation(
+        cal_data,
+        load_kwargs={"cache_dir": cache},
+        cterms=5,
+        wterms=5,
+        compile_from_def=False,
+    )
+    nw = mdl.NoiseWaves.from_calobs(calobs)
+
+    assert isinstance(nw.linear_model, mdl.FixedLinearModel)
+    assert isinstance(nw.linear_model.model, mdl.CompositeModel)
+
+    assert "ambient" in nw.src_names
+    assert len(nw.get_noise_wave("tunc", src="ambient")) == calobs.freq.n
+    assert len(nw.get_full_model("hot_load")) == calobs.freq.n
+    assert nw.with_params_from_calobs(calobs) == nw
+    assert len(nw.get_data_from_calobs(calobs)) == 4 * calobs.freq.n
