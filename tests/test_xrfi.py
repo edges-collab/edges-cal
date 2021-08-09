@@ -89,7 +89,7 @@ def print_wrongness(wrong, std, info, noise, true_flags, sky, rfi):
         print("Std dev of RFI away from model at wrong flags: ")
         print(rfi[wrong] / std[wrong])
         print("Measured Std Dev: ")
-        print(min(info.get("std", [0])), max(info.get("std", [0])))
+        print(min(info.stds[-1]), max(info.stds[-1]))
         print("Actual Std Dev (for uniform):", np.std(noise))
 
 
@@ -183,7 +183,7 @@ class TestXRFIModel:
     )
     @parametrize("rfi_model", [fxref(rfi_regular_leaky)])
     @pytest.mark.parametrize("scale", [1000, 100])
-    def test_poly_watershed_strict(self, sky_model, rfi_model, scale, freq):
+    def test_watershed_strict(self, sky_model, rfi_model, scale, freq):
         sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=200)
 
         true_flags = rfi_model > 0
@@ -202,7 +202,7 @@ class TestXRFIModel:
     )
     @parametrize("rfi_model", [fxref(rfi_regular_leaky)])
     @pytest.mark.parametrize("scale", [1000, 100])
-    def test_poly_watershed_relaxed(self, sky_model, rfi_model, scale, freq):
+    def test_watershed_relaxed(self, sky_model, rfi_model, scale, freq):
         sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale, rfi_amp=500)
 
         true_flags = rfi_model > 0
@@ -219,6 +219,20 @@ class TestXRFIModel:
         # ensure init flags don't propagate through
         flags, info = xrfi.xrfi_model(sky_pl_1d, freq=freq, init_flags=(90, 100))
         assert not np.any(flags)
+
+    @parametrize("rfi_model", [fxref(rfi_random_1d), fxref(rfi_regular_1d)])
+    @pytest.mark.parametrize("std_estimator", ["medfilt", "std", "mad"])
+    def test_std_estimator(self, sky_flat_1d, rfi_model, std_estimator, freq):
+        sky, std, noise, rfi = make_sky(sky_flat_1d, rfi_model, scale=1000)
+
+        true_flags = rfi_model > 0
+        flags, info = xrfi.xrfi_model(sky, freq=freq, std_estimator=std_estimator)
+
+        wrong = np.where(true_flags != flags)[0]
+
+        print_wrongness(wrong, std, info, noise, true_flags, sky, rfi)
+
+        assert len(wrong) == 0
 
 
 class TestWatershed:
@@ -434,7 +448,40 @@ class TestXRFIExplicit:
         assert flags[350]
 
 
-def test_visualisation(sky_pl_1d, rfi_random_1d, freq):
-    sky, std, noise, rfi = make_sky(sky_pl_1d)
+@pytest.fixture(scope="module")
+def model_info(sky_pl_1d, rfi_random_1d, freq):
+    sky, std, noise, rfi = make_sky(sky_pl_1d, rfi_random_1d)
     flags, info = xrfi.xrfi_model(sky, freq=freq, max_iter=3)
-    xrfi.visualise_model_info(sky, flags, info)
+    return info
+
+
+def test_visualisation(model_info: xrfi.ModelFilterInfo):
+    xrfi.visualise_model_info(model_info)
+
+
+def test_model_info_io(model_info: xrfi.ModelFilterInfo, tmpdir: Path):
+    model_info.write(tmpdir / "model_info.h5")
+    info2 = xrfi.ModelFilterInfo.from_file(tmpdir / "model_info.h5")
+    assert all(
+        model_info.n_flags_changed[i] == info2.n_flags_changed[i]
+        for i in range(model_info.n_iters)
+    )
+
+
+def test_model_info_container(model_info: xrfi.ModelFilterInfo, tmpdir: Path):
+    container = xrfi.ModelFilterInfoContainer([model_info])
+    assert np.allclose(container.x, model_info.x)
+    assert np.allclose(container.data, model_info.data)
+    assert np.all(container.flags == model_info.flags)
+    assert container.n_iters == model_info.n_iters
+    assert np.all(container.total_flags == model_info.total_flags)
+    assert np.allclose(container.get_model(), model_info.get_model())
+    assert np.allclose(container.get_residual(), model_info.get_residual())
+    assert np.allclose(container.get_absres_model(), model_info.get_absres_model())
+    assert np.allclose(container.thresholds, model_info.thresholds)
+
+    container.write(tmpdir / "model_info_container.h5")
+    container2 = xrfi.ModelFilterInfoContainer.from_file(
+        tmpdir / "model_info_container.h5"
+    )
+    assert np.all(container.total_flags == container2.total_flags)

@@ -6,6 +6,7 @@ ignore =
   A003    # Class attribute shadows a python builtin -- not much chance of that causing a problem
   D401    # First line should be in imperative mood -- cached_properties don't fit this bill.
   D101    # Missing docstring in public class -- my docstrings are in the __init__ which seems to fail this ?
+  RST210  # Otherwise it flags down **kwargs in docstrings.
 max-line-length = 88
 max-complexity = 20
 inline-quotes = double

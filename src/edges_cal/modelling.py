@@ -185,6 +185,7 @@ class Model(metaclass=ABCMeta):
         """Return a new :class:`Model` with given nterms and parameters."""
         if parameters is not None:
             n_terms = len(parameters)
+
         return attr.evolve(self, n_terms=n_terms, parameters=parameters)
 
     @staticmethod
@@ -198,8 +199,8 @@ class Model(metaclass=ABCMeta):
 
     def __call__(
         self,
-        x: np.ndarray | None,
-        basis: np.ndarray | None,
+        x: np.ndarray | None = None,
+        basis: np.ndarray | None = None,
         parameters: Sequence | None = None,
         indices: Sequence | None = None,
     ) -> np.ndarray:
@@ -369,7 +370,7 @@ class EdgesPoly(Polynomial):
 class LinLog(Foreground):
     beta: float = attr.ib(default=-2.5, converter=float)
 
-    @cached_property
+    @property
     def _poly(self):
         return Polynomial(
             log_x=True, offset=0, n_terms=self.n_terms, parameters=self.parameters
@@ -396,16 +397,16 @@ class Fourier(Model):
         if indx == 0:
             return np.ones_like(x)
         elif indx % 2:
-            return np.cos(self._period_fac * (indx + 1) // 2 * x)
+            return np.cos(self._period_fac * ((indx + 1) // 2) * x)
         else:
-            return np.sin(self._period_fac * (indx + 1) // 2 * x)
+            return np.sin(self._period_fac * ((indx + 1) // 2) * x)
 
 
 @attr.s(frozen=True, kw_only=True)
 class FourierDay(Model):
     """A Fourier-basis model with period of 24 (hours)."""
 
-    @cached_property
+    @property
     def _fourier(self):
         return Fourier(period=48.0, n_terms=self.n_terms, parameters=self.parameters)
 
@@ -755,7 +756,7 @@ class ModelFit:
 def _model_yaml_constructor(
     loader: yaml.SafeLoader, node: yaml.nodes.MappingNode
 ) -> Model:
-    mapping = loader.construct_mapping(node)
+    mapping = loader.construct_mapping(node, deep=True)
     model = get_mdl(mapping.pop("model"))
     return model(**mapping)
 
@@ -765,6 +766,9 @@ def _model_yaml_representer(
 ) -> yaml.nodes.MappingNode:
     model_dct = attr.asdict(model)
     model_dct.update(model=model.__class__.__name__.lower())
+    if model_dct["parameters"] is not None:
+        model_dct["parameters"] = model_dct["parameters"].tolist()
+
     return dumper.represent_mapping("!Model", model_dct)
 
 
