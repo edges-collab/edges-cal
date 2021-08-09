@@ -5,8 +5,8 @@ import h5py
 import numpy as np
 import warnings
 import yaml
+from cached_property import cached_property
 from dataclasses import dataclass, field
-from functools import cached_property
 from matplotlib import pyplot as plt
 from scipy import ndimage
 from typing import Any, Dict, Literal, Tuple

@@ -23,6 +23,7 @@ from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from . import DATA_PATH
 from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
@@ -438,7 +439,7 @@ class LNA(_S11Base):
     @classmethod
     def from_path(
         cls,
-        path: [str, Path],
+        path: Union[str, Path],
         repeat_num: Optional[int] = None,
         run_num: int = 1,
         **kwargs,
@@ -594,7 +595,7 @@ class LoadSpectrum:
     def from_load_name(
         cls,
         load_name: str,
-        direc: [str, Path],
+        direc: Union[str, Path],
         run_num: Optional[int] = None,
         filetype: Optional[str] = None,
         **kwargs,
@@ -940,9 +941,9 @@ class HotLoadCorrection:
 
     def __init__(
         self,
-        path: [str, Path] = None,
-        f_low: [float, None] = None,
-        f_high: [float, None] = None,
+        path: Union[str, Path] = ":semi_rigid_s_parameters_WITH_HEADER.txt",
+        f_low: Optional[float] = None,
+        f_high: Optional[float] = None,
     ):
         """
         Corrections for the hot load.
@@ -954,21 +955,33 @@ class HotLoadCorrection:
         ----------
         path : str or Path, optional
             Path to a file containing measurements of the semi-rigid cable reflection
-            parameters (historically, `semi_rigid_s_parameters_WITH_HEADER.txt`)
+            parameters. A preceding colon (:) indicates to prefix with DATA_PATH.
+            The default file was measured in 2015, but there is also a file included
+            that can be used from 2017: ":semi_rigid_s_parameters_2017.txt".
         f_low, f_high : float
             Lowest/highest frequency to retain from measurements.
         """
-        self.path = (
-            Path(path)
-            if path
-            else Path(__file__).parent / "data/semi_rigid_s_parameters_WITH_HEADER.txt"
-        )
-
+        # Get the path to the S11 file.
+        if not isinstance(path, Path):
+            path = DATA_PATH / path[1:] if path[0] == ":" else Path(path)
+        self.path = path
         data = np.genfromtxt(self.path)
 
         f = data[:, 0]
         self.freq = FrequencyRange(f, f_low, f_high)
-        self.data = data[self.freq.mask, 1::2] + 1j * data[self.freq.mask, 2::2]
+
+        if data.shape[1] == 7:  # Original file from 2015
+            self.data = data[self.freq.mask, 1::2] + 1j * data[self.freq.mask, 2::2]
+        elif data.shape[1] == 6:  # File from 2017
+            self.data = np.array(
+                [
+                    data[self.freq.mask, 1] + 1j * data[self.freq.mask, 2],
+                    data[self.freq.mask, 3],
+                    data[self.freq.mask, 4] + 1j * data[self.freq.mask, 5],
+                ]
+            ).T
+        else:
+            raise IOError("Semi-Rigid Cable file has wrong data format.")
 
     def _get_model_part(self, kind: str, mag: bool = True):
         """
@@ -1094,8 +1107,8 @@ class Load:
         self,
         spectrum: LoadSpectrum,
         reflections: LoadS11,
-        hot_load_correction: [HotLoadCorrection, None] = None,
-        ambient: [LoadSpectrum, None] = None,
+        hot_load_correction: Optional[HotLoadCorrection] = None,
+        ambient: Optional[LoadSpectrum] = None,
     ):
         """Wrapper class containing all relevant information for a given load.
 
@@ -1127,12 +1140,12 @@ class Load:
     @classmethod
     def from_path(
         cls,
-        path: [str, Path],
+        path: Union[str, Path],
         load_name: str,
-        f_low: [float, None] = None,
-        f_high: [float, None] = None,
-        reflection_kwargs: [dict, None] = None,
-        spec_kwargs: [dict, None] = None,
+        f_low: Optional[float] = None,
+        f_high: Optional[float] = None,
+        reflection_kwargs: Optional[dict] = None,
+        spec_kwargs: Optional[dict] = None,
     ):
         """
         Define a full :class:`Load` from a path and name.
@@ -1206,19 +1219,19 @@ class CalibrationObservation:
 
     def __init__(
         self,
-        path: [str, Path],
-        semi_rigid_path: [None, str, Path] = None,
-        f_low: [None, float] = 40,
-        f_high: [None, float] = None,
-        run_num: [None, int, dict] = None,
-        repeat_num: [None, int, dict] = None,
-        resistance_f: [None, float] = None,
+        path: Union[str, Path],
+        semi_rigid_path: Union[str, Path] = ":semi_rigid_s_parameters_WITH_HEADER.txt",
+        f_low: Optional[float] = 40,
+        f_high: Optional[float] = None,
+        run_num: Union[None, int, dict] = None,
+        repeat_num: Union[None, int, dict] = None,
+        resistance_f: Optional[float] = None,
         cterms: int = 5,
         wterms: int = 7,
-        load_kwargs: [None, dict] = None,
-        s11_kwargs: [None, dict] = None,
-        load_spectra: [None, dict] = None,
-        load_s11s: [None, dict] = None,
+        load_kwargs: Optional[dict] = None,
+        s11_kwargs: Optional[dict] = None,
+        load_spectra: Optional[dict] = None,
+        load_s11s: Optional[dict] = None,
         compile_from_def: bool = True,
         include_previous: bool = False,
         internal_switch_kwargs: Optional[Dict[str, Any]] = None,
@@ -1732,7 +1745,7 @@ class CalibrationObservation:
         else:
             return self.lna.s11_model(self.freq.freq)
 
-    def get_linear_coefficients(self, load: [Load, str]):
+    def get_linear_coefficients(self, load: Union[Load, str]):
         """
         Calibration coefficients a,b such that T = aT* + b (derived from Eq. 7).
 
@@ -1759,7 +1772,7 @@ class CalibrationObservation:
             t_load=self.t_load,
         )
 
-    def calibrate(self, load: [Load, str]):
+    def calibrate(self, load: Union[Load, str]):
         """
         Calibrate the temperature of a given load.
 
@@ -1776,7 +1789,7 @@ class CalibrationObservation:
         a, b = self.get_linear_coefficients(load)
         return a * load.averaged_spectrum + b
 
-    def _load_str_to_load(self, load: [Load, str]):
+    def _load_str_to_load(self, load: Union[Load, str]):
         if isinstance(load, str):
             try:
                 load = self._loads[load]
@@ -1791,7 +1804,9 @@ class CalibrationObservation:
             ), "load must be a Load instance, got the {} {}".format(load, type(Load))
         return load
 
-    def decalibrate(self, temp: np.ndarray, load: [Load, str], freq: np.ndarray = None):
+    def decalibrate(
+        self, temp: np.ndarray, load: Union[Load, str], freq: np.ndarray = None
+    ):
         """
         Decalibrate a temperature spectrum, yielding uncalibrated T*.
 
@@ -1835,7 +1850,7 @@ class CalibrationObservation:
 
     def plot_calibrated_temp(
         self,
-        load: [Load, str],
+        load: Union[Load, str],
         bins: int = 2,
         fig=None,
         ax=None,
@@ -1972,7 +1987,7 @@ class CalibrationObservation:
         fig.suptitle("Calibrated Temperatures for Calibration Sources", fontsize=15)
         return fig
 
-    def write_coefficients(self, path: [str, None] = None):
+    def write_coefficients(self, path: Optional[str] = None):
         """
         Save a text file with the derived calibration co-efficients.
 
@@ -2060,7 +2075,7 @@ class CalibrationObservation:
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-    def write(self, filename: [str, Path]):
+    def write(self, filename: Union[str, Path]):
         """
         Write all information required to calibrate a new spectrum to file.
 
