@@ -9,8 +9,11 @@ except DistributionNotFound:  # pragma: nocover
 finally:
     del get_distribution, DistributionNotFound
 
+from pathlib import Path
 
-from .cal_coefficients import (
+DATA_PATH = Path(__file__).parent / "data"
+
+from .cal_coefficients import (  # noqa: E402
     S1P,
     Calibration,
     CalibrationObservation,
@@ -19,4 +22,4 @@ from .cal_coefficients import (
     LoadS11,
     LoadSpectrum,
 )
-from .s11_correction import InternalSwitch
+from .s11_correction import InternalSwitch  # noqa: E402
