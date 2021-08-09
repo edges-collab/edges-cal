@@ -28,7 +28,9 @@ from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
 from . import s11_correction as s11
-from . import tools, xrfi
+from . import tools
+from . import types as tp
+from . import xrfi
 from .cached_property import cached_property
 from .tools import EdgesFrequencyRange, FrequencyRange
 
@@ -36,10 +38,10 @@ from .tools import EdgesFrequencyRange, FrequencyRange
 class S1P:
     def __init__(
         self,
-        s1p: Union[str, Path, io.S1P],
-        f_low=None,
-        f_high=None,
-        switchval: Optional[int] = None,
+        s1p: tp.PathLike | io.S1P,
+        f_low: float | None = None,
+        f_high: float | None = None,
+        switchval: int | None = None,
     ):
         """
         An object representing the measurements of a VNA.
@@ -109,7 +111,7 @@ class _S11Base(metaclass=ABCMeta):
         f_low: Optional[float] = None,
         f_high: Optional[float] = None,
         n_terms: Optional[int] = None,
-        model_type: str = "fourier",
+        model_type: tp.Modelable = "fourier",
     ):
         """
         A class representing relevant switch corrections for a load.
@@ -191,7 +193,7 @@ class _S11Base(metaclass=ABCMeta):
 
     @lru_cache()
     def get_corrected_s11_model(
-        self, n_terms: Union[int, None] = None, model_type: Union[None, str] = None,
+        self, n_terms: int | None = None, model_type: tp.Modelable | None = None,
     ):
         """Generate a callable model for the S11 correction.
 
@@ -215,13 +217,9 @@ class _S11Base(metaclass=ABCMeta):
             If n_terms is not an integer, or not odd.
         """
         n_terms = n_terms or self.n_terms
-        model_type = model_type or self.model_type
-
-        if not (isinstance(n_terms, int) and n_terms % 2):
-            raise ValueError(
-                f"n_terms must be odd for S11 models. For {self.load_name} got "
-                f"n_terms={n_terms}."
-            )
+        model_type = mdl.get_mdl(model_type or self.model_type)
+        model = model_type(n_terms=n_terms)
+        emodel = model.at(x=self.freq.freq_recentred)
 
         s11_correction = self.corrected_load_s11
 
@@ -231,10 +229,8 @@ class _S11Base(metaclass=ABCMeta):
 
             d = np.abs(s11_correction) if mag else np.unwrap(np.angle(s11_correction))
 
-            fit = mdl.ModelFit(
-                model_type, xdata=self.freq.freq_recentred, ydata=d, n_terms=n_terms
-            )
-            return lambda x: fit.evaluate(x)
+            fit = emodel.fit(ydata=d)
+            return fit.evaluate
 
         mag = get_model(True)
         ang = get_model(False)
@@ -345,14 +341,13 @@ class LoadS11(_S11Base):
     def from_path(
         cls,
         load_name: str,
-        path: Union[str, Path],
+        path: tp.PathLike,
         run_num_load: int = 1,
         run_num_switch: int = 1,
         repeat_num_load: int = None,
         repeat_num_switch: int = None,
         resistance: float = 50.166,
-        model_type_internal_switch: Union[str, mdl.Model] = "polynomial",
-        n_terms_internal_switch: int = 7,
+        model_internal_switch: mdl.Model = mdl.Polynomial(n_terms=7),
         **kwargs,
     ):
         """
@@ -393,8 +388,7 @@ class LoadS11(_S11Base):
                 repeat_num=repeat_num_switch,
             ),
             resistance=resistance,
-            model=model_type_internal_switch,
-            n_terms=n_terms_internal_switch,
+            model=model_internal_switch,
         )
         return cls(load_s11=s11_load_dir, internal_switch=internal_switch, **kwargs)
 
@@ -997,9 +991,8 @@ class HotLoadCorrection:
         """
         d = self.data[:, self._kinds[kind]]
         d = np.abs(d) if mag else np.unwrap(np.angle(d))
-        mag = mdl.ModelFit(
-            "polynomial", xdata=self.freq.freq_recentred, ydata=d, n_terms=21
-        )
+        model = mdl.Polynomial(n_terms=21)
+        mag = model.fit(xdata=self.freq.freq_recentred, ydata=d)
 
         def out(f):
             ff = self.freq.normalize(f)
@@ -2091,7 +2084,7 @@ class CalibrationObservation:
             fl.attrs["switch_repeat_num"] = self.internal_switch.data.repeat_num
             fl.attrs["switch_resistance"] = self.internal_switch.resistance
             fl.attrs["switch_nterms"] = self.internal_switch.n_terms[0]
-            fl.attrs["switch_model"] = self.internal_switch.model.__name__.lower()
+            fl.attrs["switch_model"] = str(self.internal_switch.model)
             fl.attrs["t_load"] = self.open.spectrum.t_load
             fl.attrs["t_load_ns"] = self.open.spectrum.t_load_ns
 

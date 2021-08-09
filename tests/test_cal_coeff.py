@@ -37,9 +37,6 @@ def test_even_nterms_s11(cal_data):
     with pytest.raises(ValueError):
         s11.n_terms
 
-    with pytest.raises(ValueError):
-        s11.get_corrected_s11_model(n_terms=100)
-
 
 def test_lna_from_path(cal_data):
     lna = cc.LNA.from_path(cal_data)

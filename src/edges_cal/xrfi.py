@@ -1,11 +1,14 @@
 """Functions for excising RFI."""
+from __future__ import annotations
+
 import numpy as np
 import warnings
 import yaml
 from matplotlib import pyplot as plt
 from scipy import ndimage
-from typing import Optional, Tuple
+from typing import Any, Dict, Tuple
 
+from . import modelling as mdl
 from .modelling import Model, ModelFit
 
 
@@ -13,7 +16,7 @@ class NoDataError(Exception):
     pass
 
 
-def _check_convolve_dims(data, half_size: [None, Tuple[int, None]] = None):
+def _check_convolve_dims(data, half_size: Tuple[int] | None = None):
     """Check the kernel sizes to be used in various convolution-like operations.
 
     If the kernel sizes are too big, replace them with the largest allowable size
@@ -96,11 +99,11 @@ def robust_divide(num, den):
 
 def flagged_filter(
     data: np.ndarray,
-    size: [int, Tuple[int]],
+    size: int | Tuple[int],
     kind: str = "median",
-    flags: [None, np.ndarray] = None,
-    mode: [None, str] = None,
-    interp_flagged=True,
+    flags: np.ndarray | None = None,
+    mode: str | None = None,
+    interp_flagged: bool = True,
     **kwargs,
 ):
     """
@@ -191,8 +194,8 @@ def flagged_filter(
 
 def detrend_medfilt(
     data: np.ndarray,
-    flags: [None, np.ndarray] = None,
-    half_size: [None, Tuple[int, None]] = None,
+    flags: np.ndarray | None = None,
+    half_size: Tuple[int | None] | None = None,
 ):
     """Detrend array using a median filter.
 
@@ -260,8 +263,8 @@ def detrend_medfilt(
 
 def detrend_meanfilt(
     data: np.ndarray,
-    flags: [None, np.ndarray] = None,
-    half_size: [None, Tuple[int, None]] = None,
+    flags: np.ndarray | None = None,
+    half_size: Tuple[int | None] | None = None,
 ):
     """Detrend array using a mean filter.
 
@@ -308,15 +311,15 @@ def detrend_meanfilt(
 def xrfi_medfilt(
     spectrum: np.ndarray,
     threshold: float = 6,
-    flags: [None, np.ndarray] = None,
-    kf: [int, None] = 8,
-    kt: [int, None] = 8,
+    flags: np.ndarray | None = None,
+    kf: int = 8,
+    kt: int = 8,
     inplace: bool = True,
     max_iter: int = 1,
-    poly_order=0,
-    accumulate=False,
-    use_meanfilt=True,
-):
+    poly_order: int = 0,
+    accumulate: bool = False,
+    use_meanfilt: bool = True,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Generate RFI flags for a given spectrum using a median filter.
 
     Parameters
@@ -422,10 +425,8 @@ def xrfi_medfilt(
             resid[~new_flags] = (
                 spectrum[~new_flags]
                 - ModelFit(
-                    "polynomial",
-                    f[~new_flags],
+                    mdl.Polynomial(n_terms=poly_order).at(f[~new_flags]),
                     spectrum[~new_flags],
-                    n_terms=poly_order,
                 ).evaluate()
             )
             resid_list.append(resid)
@@ -464,13 +465,13 @@ def xrfi_medfilt(
 
 
 def xrfi_explicit(
-    spectrum: [None, np.ndarray] = None,
+    spectrum: np.ndarray | None = None,
     *,
     freq: np.ndarray,
-    flags: [None, np.ndarray] = None,
+    flags: np.ndarray | None = None,
     rfi_file=None,
     extra_rfi=None,
-):
+) -> np.ndarray[bool]:
     """
     Excise RFI from given data using an explicitly set list of flag ranges.
 
@@ -529,19 +530,17 @@ def _get_mad(x):
 def xrfi_model_sweep(
     spectrum: np.ndarray,
     *,
-    freq: Optional[np.ndarray] = None,
-    flags: [None, np.ndarray] = None,
-    weights: [None, np.ndarray] = None,
-    model_type: [str, Model] = "polynomial",
+    freq: np.ndarray | None = None,
+    flags: np.ndarray | None = None,
+    weights: np.ndarray | None = None,
+    model: Model = mdl.Polynomial(n_terms=3),
     window_width: int = 100,
     use_median: bool = True,
     n_bootstrap: int = 20,
-    n_terms: int = 3,
-    threshold: [None, float] = 3,
+    threshold: float | None = 3.0,
     which_bin: str = "last",
     watershed: int = 0,
-    max_iter=1,
-    **model_kwargs,
+    max_iter: int = 1,
 ) -> Tuple[np.ndarray, dict]:
     """
     Flag RFI by using a moving window and a low-order polynomial to detrend.
@@ -628,11 +627,7 @@ def xrfi_model_sweep(
     nf = len(spectrum)
     f = np.linspace(-1, 1, window_width)
 
-    # Create the model that will fit the spectrum/residuals
-    if isinstance(model_type, str):
-        model_type = Model._models[model_type.lower()](
-            default_x=f, n_terms=n_terms, **model_kwargs
-        )
+    model = model.at(x=f)
 
     # Initialize some flags, or set them equal to the input
     orig_flags = flags if flags is not None else np.zeros(nf, dtype=bool)
@@ -661,7 +656,7 @@ def xrfi_model_sweep(
     # Get the first window that has enough unflagged data.
     window = np.arange(window_width, dtype=int)
 
-    while np.sum(weights[window] > 0) <= model_type.n_terms and window[-1] < (nf - 1):
+    while np.sum(weights[window] > 0) <= model.n_terms and window[-1] < (nf - 1):
         window += 1
 
     if window[-1] == nf - 1:
@@ -673,7 +668,7 @@ def xrfi_model_sweep(
         spectrum,
         max_iter,
         weights,
-        model_type,
+        model,
         n_bootstrap,
         threshold,
         watershed,
@@ -694,7 +689,7 @@ def xrfi_model_sweep(
                 spectrum,
                 max_iter,
                 weights,
-                model_type,
+                model,
                 n_bootstrap,
                 threshold,
                 watershed,
@@ -708,7 +703,7 @@ def xrfi_model_sweep(
 
         window += 1
 
-    return flags, {"std": std, "params": params, "iters": iters, "model": model_type}
+    return flags, {"std": std, "params": params, "iters": iters, "model": model.model}
 
 
 xrfi_model_sweep.ndim = (1,)
@@ -720,11 +715,11 @@ def _flag_a_window(
     spectrum,
     max_iter,
     weights,
-    model_type,
+    model,
     n_bootstrap,
     threshold,
     watershed,
-    std_estimator=0,
+    std_estimator=2,
 ):
     # NOTE: line profiling reveals that the fitting takes ~50% of the time of this
     #       function, and taking the std takes ~20%. The next biggest are taking the
@@ -739,8 +734,8 @@ def _flag_a_window(
 
         mask = ~new_flags
 
-        if np.sum(mask) > model_type.n_terms:
-            fit = model_type.fit(ydata=d, weights=w)
+        if np.sum(mask) > model.n_terms:
+            fit = model.fit(ydata=d, weights=w)
         else:
             raise NoDataError
 
@@ -779,13 +774,12 @@ def xrfi_model(
     spectrum: np.ndarray,
     *,
     freq: np.ndarray,
-    model_type: [str, Model] = "polynomial",
-    resid_model_type: [str, Model] = "polynomial",
-    flags: [None, np.ndarray] = None,
-    weights: [None, np.ndarray] = None,
-    n_signal: int = 3,
+    model: Model = mdl.Polynomial(n_terms=3),
+    resid_model: Model = mdl.Polynomial(n_terms=5),
+    flags: np.ndarray | None = None,
+    weights: np.ndarray | None = None,
     n_resid: int = -1,
-    threshold: [None, float] = None,
+    threshold: float | None = None,
     max_iter: int = 20,
     accumulate: bool = False,
     increase_order: bool = True,
@@ -797,8 +791,7 @@ def xrfi_model(
     inplace: bool = False,
     watershed: int = 0,
     flag_if_broken: bool = True,
-    init_flags: [np.ndarray, Tuple[float, float], None] = None,
-    **model_kwargs,
+    init_flags: np.ndarray | Tuple[float, float] | None = None,
 ):
     """
     Flag RFI by subtracting a smooth model and iteratively removing outliers.
@@ -877,7 +870,7 @@ def xrfi_model(
 
     # We assume the residuals are smoother than the signal itself
     if not increase_order:
-        assert n_resid <= n_signal
+        assert n_resid <= model.n_terms
 
     if init_flags is not None and len(init_flags) == 2:
         init_flags = (freq > init_flags[0]) & (freq < init_flags[1])
@@ -892,17 +885,10 @@ def xrfi_model(
     model_std_list = []
     thresholds = []
 
-    # Create the model that will fit the spectrum/residuals
-    if isinstance(model_type, str):
-        model_type = Model.get_mdl(model_type)
-    if isinstance(resid_model_type, str):
-        resid_model_type = Model.get_mdl(resid_model_type)
-
-    model = model_type(default_x=freq, n_terms=n_signal, **model_kwargs)
-    res_model = resid_model_type(
-        default_x=freq,
-        n_terms=max(min_resid_terms, n_resid if n_resid > 0 else n_signal + n_resid),
-    )
+    model = model.at(x=freq)
+    res_model = resid_model.with_nterms(
+        max(min_resid_terms, n_resid if n_resid > 0 else model.n_terms + n_resid)
+    ).at(x=freq)
 
     # Initialize some flags, or set them equal to the input
     orig_flags = flags if flags is not None else np.zeros(nf, dtype=bool)
@@ -919,10 +905,10 @@ def xrfi_model(
     # requested maximum iterations, or until we have too few unflagged data to fit
     # appropriately. keep iterating
     while counter < max_iter and (
-        n_signal <= min_terms or (n_flags_changed > 0 and np.sum(~flags) > n_signal * 2)
+        model.n_terms <= min_terms
+        or (n_flags_changed > 0 and np.sum(~flags) > model.n_terms * 2)
     ):
 
-        model.update_nterms(n_signal)
         weights = np.where(flags, 0, orig_weights)
 
         # Get a model fit to the unflagged data.
@@ -952,8 +938,8 @@ def xrfi_model(
         # sigma=<any number>
         # \sqrt(exp(mean(log(Normal(0, \sigma, 1000000)^2))))/\sigma
         # it is not dependent on the value of sigma.
-        res_model.update_nterms(
-            max(min_resid_terms, n_resid if n_resid > 0 else n_signal + n_resid)
+        res_model = res_model.with_nterms(
+            max(min_resid_terms, n_resid if n_resid > 0 else model.n_terms + n_resid)
         )
         res_mdl = res_model.fit(ydata=np.log(absres ** 2), weights=weights)
         model_std = np.sqrt(np.exp(res_mdl.evaluate())) / 0.53
@@ -979,8 +965,8 @@ def xrfi_model(
             flags = new_flags.copy()
 
         counter += 1
-        if increase_order and n_signal < max_terms:
-            n_signal += 1
+        if increase_order and model.n_terms < max_terms:
+            model = model.with_nterms(model.n_terms + 1)
 
         thresholds.append(threshold)
 
@@ -998,7 +984,7 @@ def xrfi_model(
         if flag_if_broken:
             flags[:] = True
 
-    if np.sum(~flags) <= n_signal * 2:
+    if np.sum(~flags) <= model.n_terms * 2:
         warnings.warn(
             "Termination of iterative loop due to too many flags. Reduce n_signal or "
             "check data."
@@ -1028,12 +1014,12 @@ xrfi_model.ndim = (1,)
 
 
 def xrfi_watershed(
-    spectrum: [None, np.ndarray] = None,
+    spectrum: np.ndarray | None = None,
     *,
-    freq: [np.ndarray, None] = None,
-    flags: [None, np.ndarray] = None,
-    weights: [None, np.ndarray] = None,
-    tol: [float, Tuple[float]] = 0.5,
+    freq: np.ndarray | None = None,
+    flags: np.ndarray | None = None,
+    weights: np.ndarray | None = None,
+    tol: float | Tuple[float] = 0.5,
     inplace=False,
 ):
     """Apply a watershed over frequencies and times for flags.
@@ -1127,10 +1113,10 @@ def visualise_model_info(spectrum: np.ndarray, flags: np.ndarray, info: dict):
             info["thresholds"],
         )
     ):
-        model.update_nterms(len(pars))
-        res_model.update_nterms(len(res_pars))
+        model = model.with_params(pars)
+        res_model.with_params(pars)
 
-        m = model(parameters=pars)
+        m = model()
         res = spectrum - m
 
         ax[0, 0].plot(m, label=f"{len(pars)}: {nchange}/{tflags}")
