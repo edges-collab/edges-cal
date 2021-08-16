@@ -741,7 +741,7 @@ class LoadSpectrum:
                 for kind in kinds:
                     means[kind] = fl[kind + "_mean"][...]
                     variances[kind] = fl[kind + "_var"][...]
-                    n_integrations = fl.attrs["n_integrations"]
+                    n_integrations = fl.attrs.get("n_integrations", 0)
             return means, variances, n_integrations
 
         logger.info(f"Reducing {self.load_name} spectra...")
