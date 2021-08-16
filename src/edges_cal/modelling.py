@@ -7,6 +7,7 @@ import numpy as np
 import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
+from edges_io.h5 import register_h5type
 from typing import Dict, List, Optional, Sequence, Type
 
 from . import receiver_calibration_func as rcf
@@ -135,6 +136,7 @@ class FixedLinearModel:
         return attr.evolve(self, model=model, init_basis=init_basis)
 
 
+@register_h5type
 @attr.s(frozen=True, kw_only=True)
 class Model(metaclass=ABCMeta):
     """A base class for a linear model."""
@@ -496,8 +498,15 @@ class CompositeModel:
         """Define the basis terms for the model."""
         model, indx = self._index_map[indx]
         extra = self.get_extra_basis(model, x)
+        try:
+            mask = extra.astype(bool)
+            extra = extra[mask]
+        except AttributeError:
+            mask = np.ones(len(x), dtype=bool)
 
-        return getattr(self, model).get_basis_term(indx, x) * extra
+        out = np.zeros_like(x)
+        out[mask] = getattr(self, model).get_basis_term(indx, x[mask]) * extra
+        return out
 
     def get_basis_terms(self, x: np.ndarray) -> np.ndarray:
         """Get a 2D array of all basis terms at ``x``."""
