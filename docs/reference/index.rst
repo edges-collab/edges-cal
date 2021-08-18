@@ -28,5 +28,5 @@ Package Config
     :toctree: _autosummary
     :template: module.rst
 
-    edges_analysis.types
-    edges_analysis.cached_property
+    edges_cal.types
+    edges_cal.cached_property
