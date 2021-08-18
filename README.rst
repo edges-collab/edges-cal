@@ -1,7 +1,7 @@
 edges\_cal
 ==========
 
-|Build Status| |codecov| |Code style: black|
+|Build Status| |codecov| |Code style: black| |RTD|
 
 **Calculate calibration coefficients for EDGES Calibration
 Observations**
@@ -140,3 +140,6 @@ i.e. you can pass in field observations, or an antenna simulator.
    :target: https://codecov.io/gh/edges-collab/edges-cal
 .. |Code style: black| image:: https://img.shields.io/badge/code%20style-black-000000.svg
    :target: https://github.com/psf/black
+.. |RTD| image:: https://readthedocs.org/projects/edges-cal/badge/?version=latest
+   :target: https://edges-cal.readthedocs.io/en/latest/?badge=latest
+   :alt: Documentation Status
