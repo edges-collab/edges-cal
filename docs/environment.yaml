@@ -19,15 +19,9 @@ dependencies:
     - matplotlib
     - cached_property
     - astropy
-    - edges-io
-    - edges-cal
-    - healpy
-    - h5py
-    - rich>=9.0
-    - requests
-    - tqdm
-    - methodtools
-    - p_tqdm
+    - edges-io>=2.3.3<3.0
+    - toml
+    - pyyaml
+    - click
+    - statsmodels
     - rich
-    - attrs
-    - questionary
