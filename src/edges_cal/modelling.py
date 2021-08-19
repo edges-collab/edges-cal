@@ -11,6 +11,7 @@ from edges_io.h5 import register_h5type
 from typing import Dict, List, Optional, Sequence, Type
 
 from . import receiver_calibration_func as rcf
+from .simulate import simulate_q_from_calobs
 from .tools import as_readonly
 
 F_CENTER = 75.0
@@ -689,7 +690,9 @@ class NoiseWaves:
 
         return attr.evolve(self, parameters=params)
 
-    def get_data_from_calobs(self, calobs, tns: Model | None = None) -> np.ndarray:
+    def get_data_from_calobs(
+        self, calobs, tns: Model | None = None, sim: bool = False
+    ) -> np.ndarray:
         """Generate input data to fit from a calibration observation."""
         data = []
         for src in self.src_names:
@@ -699,8 +702,11 @@ class NoiseWaves:
             else:
                 _tns = tns(x=calobs.freq.freq)
 
-            q = load.spectrum.averaged_Q
-
+            q = (
+                simulate_q_from_calobs(calobs, load=src)
+                if sim
+                else load.spectrum.averaged_Q
+            )
             c = calobs.get_K()[src][0]
             data.append(_tns * q - c * load.temp_ave)
         return np.concatenate(tuple(data))
