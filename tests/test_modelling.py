@@ -96,7 +96,7 @@ def test_model_fit_intrinsic():
 
 
 def test_physical_lin():
-    m = mdl.PhysicalLin(f_center=1, n_terms=5).at(x=np.array([1 / np.e, 1, np.e]))
+    m = mdl.PhysicalLin(n_terms=5).at(x=np.array([1 / np.e, 1, np.e]))
 
     basis = m.basis
     assert np.allclose(basis[0], [np.e ** 2.5, 1, np.e ** -2.5])
@@ -107,7 +107,7 @@ def test_physical_lin():
 
 
 def test_linlog():
-    m = mdl.LinLog(f_center=1, n_terms=3).at(x=np.array([0.5, 1, 2]))
+    m = mdl.LinLog(n_terms=3).at(x=np.array([0.5, 1, 2]))
     assert m.basis.shape == (3, 3)
 
 
