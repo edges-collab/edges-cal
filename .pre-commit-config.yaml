@@ -52,3 +52,9 @@ repos:
   rev: v1.5.1
   hooks:
     - id: rst-backticks
+
+- repo: https://github.com/commitizen-tools/commitizen
+  rev: v2.18.0
+  hooks:
+    - id: commitizen
+      stages: [commit-msg]
