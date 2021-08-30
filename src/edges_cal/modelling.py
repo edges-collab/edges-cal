@@ -137,14 +137,29 @@ class FixedLinearModel:
         return attr.evolve(self, model=model, init_basis=init_basis)
 
 
+def _transform_yaml_constructor(
+    loader: yaml.SafeLoader, node: yaml.nodes.MappingNode
+) -> Model:
+    mapping = loader.construct_mapping(node, deep=True)
+    return ModelTransform.get(node.tag[1:])(**mapping)
+
+
+def _transform_yaml_representer(
+    dumper: yaml.SafeDumper, tr: ModelTransform
+) -> yaml.nodes.MappingNode:
+    dct = attr.asdict(tr, recurse=False)
+    return dumper.represent_mapping(f"!{tr.__class__.__name__}", dct)
+
+
 @attr.s(frozen=True, kw_only=True)
-class ModelTransform(yaml.YAMLObject):
+class ModelTransform(metaclass=ABCMeta):
     _models = {}
 
     def __init_subclass__(cls, is_meta=False, **kwargs):
         """Initialize a subclass and add it to the registered models."""
-        cls.yaml_tag = f"!{cls.__name__}"
         super().__init_subclass__(**kwargs)
+
+        yaml.add_constructor(f"!{cls.__name__}", _transform_yaml_constructor)
 
         if not is_meta:
             cls._models[cls.__name__.lower()] = cls
@@ -157,7 +172,7 @@ class ModelTransform(yaml.YAMLObject):
     @classmethod
     def get(cls, model: str) -> Type[ModelTransform]:
         """Get a ModelTransform class."""
-        return cls._models[model]
+        return cls._models[model.lower()]
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
@@ -953,7 +968,8 @@ def _model_yaml_constructor(
 def _model_yaml_representer(
     dumper: yaml.SafeDumper, model: Model
 ) -> yaml.nodes.MappingNode:
-    model_dct = attr.asdict(model)
+
+    model_dct = attr.asdict(model, recurse=False)
     model_dct.update(model=model.__class__.__name__.lower())
     if model_dct["parameters"] is not None:
         model_dct["parameters"] = model_dct["parameters"].tolist()
@@ -963,5 +979,5 @@ def _model_yaml_representer(
 
 yaml.FullLoader.add_constructor("!Model", _model_yaml_constructor)
 
-# for mdl in _MODELS.values():
 yaml.add_multi_representer(Model, _model_yaml_representer)
+yaml.add_multi_representer(ModelTransform, _transform_yaml_representer)
