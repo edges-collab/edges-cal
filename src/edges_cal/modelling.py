@@ -193,7 +193,7 @@ class CentreTransform(ModelTransform):
 class UnitTransform(ModelTransform):
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
-        return np.linspace(-1, 1, len(x))
+        return 2 * CentreTransform(centre=0.0).transform(x) / (x.max() - x.min())
 
 
 @attr.s(frozen=True, kw_only=True)
@@ -580,7 +580,7 @@ class CompositeModel:
 
     def get_basis_term_transformed(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Get the basis function term after coordinate tranformation."""
-        model, indx = self._index_map[indx]
+        model = self._index_map[indx][0]
         return self.get_basis_term(indx, x=getattr(self, model).transform(x))
 
     def get_basis_terms(self, x: np.ndarray) -> np.ndarray:

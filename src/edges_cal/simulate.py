@@ -65,7 +65,7 @@ def simulate_q(
     return (uncal_temp - t_load) / t_load_ns
 
 
-def simulate_q_from_calobs(calobs, load: str) -> np.ndarray:
+def simulate_q_from_calobs(calobs, load: str, scale_model=None) -> np.ndarray:
     """Simulate the observed 3-position switch ratio, Q, from noise-wave solutions.
 
     Parameters
@@ -80,11 +80,13 @@ def simulate_q_from_calobs(calobs, load: str) -> np.ndarray:
     np.ndarray
         The 3-position switch values.
     """
+    C1 = scale_model(calobs.freq.freq) if scale_model is not None else calobs.C1()
+
     return simulate_q(
         load_s11=calobs.s11_correction_models[load],
         lna_s11=calobs.lna_s11,
         load_temp=calobs._loads[load].temp_ave,
-        scale=calobs.C1(),
+        scale=C1,
         offset=calobs.C2(),
         t_unc=calobs.Tunc(),
         t_cos=calobs.Tcos(),
@@ -95,7 +97,7 @@ def simulate_q_from_calobs(calobs, load: str) -> np.ndarray:
 
 
 def simulate_qant_from_calobs(
-    calobs, ant_s11: np.ndarray, ant_temp: np.ndarray
+    calobs, ant_s11: np.ndarray, ant_temp: np.ndarray, scale_model=None
 ) -> np.ndarray:
     """Simulate antenna Q from a calibration observation.
 
@@ -113,11 +115,13 @@ def simulate_qant_from_calobs(
     np.ndarray
         The simulated 3-position switch ratio, Q.
     """
+    scale = scale_model(calobs.freq.freq) if scale_model is not None else calobs.C1()
+
     return simulate_q(
         load_s11=ant_s11,
         lna_s11=calobs.lna_s11,
         load_temp=ant_temp,
-        scale=calobs.C1(),
+        scale=scale,
         offset=calobs.C2(),
         t_unc=calobs.Tunc(),
         t_cos=calobs.Tcos(),

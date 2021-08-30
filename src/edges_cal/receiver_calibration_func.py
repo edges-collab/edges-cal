@@ -486,7 +486,6 @@ def get_linear_coefficients_from_K(  # noqa: N802
     """
     # Noise wave contribution
     noise_wave_terms = t_unc * k[1] + t_cos * k[2] + t_sin * k[3]
-
     return sca / k[0], (t_load - off - noise_wave_terms - t_load * sca) / k[0]
 
 
