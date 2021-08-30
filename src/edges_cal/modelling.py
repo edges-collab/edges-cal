@@ -11,6 +11,7 @@ from edges_io.h5 import register_h5type
 from typing import Dict, List, Optional, Sequence, Type
 
 from . import receiver_calibration_func as rcf
+from .simulate import simulate_q_from_calobs
 from .tools import as_readonly
 
 F_CENTER = 75.0
@@ -70,7 +71,7 @@ class FixedLinearModel:
             if self._init_basis is not None and indx < len(self._init_basis):
                 out[indx] = self._init_basis[indx]
             else:
-                out[indx] = self.model.get_basis_term(indx, self.x)
+                out[indx] = self.model.get_basis_term_transformed(indx, self.x)
 
         return out
 
@@ -136,6 +137,87 @@ class FixedLinearModel:
         return attr.evolve(self, model=model, init_basis=init_basis)
 
 
+def _transform_yaml_constructor(
+    loader: yaml.SafeLoader, node: yaml.nodes.MappingNode
+) -> Model:
+    mapping = loader.construct_mapping(node, deep=True)
+    return ModelTransform.get(node.tag[1:])(**mapping)
+
+
+def _transform_yaml_representer(
+    dumper: yaml.SafeDumper, tr: ModelTransform
+) -> yaml.nodes.MappingNode:
+    dct = attr.asdict(tr, recurse=False)
+    return dumper.represent_mapping(f"!{tr.__class__.__name__}", dct)
+
+
+@attr.s(frozen=True, kw_only=True)
+class ModelTransform(metaclass=ABCMeta):
+    _models = {}
+
+    def __init_subclass__(cls, is_meta=False, **kwargs):
+        """Initialize a subclass and add it to the registered models."""
+        super().__init_subclass__(**kwargs)
+
+        yaml.add_constructor(f"!{cls.__name__}", _transform_yaml_constructor)
+
+        if not is_meta:
+            cls._models[cls.__name__.lower()] = cls
+
+    @abstractmethod
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        pass
+
+    @classmethod
+    def get(cls, model: str) -> Type[ModelTransform]:
+        """Get a ModelTransform class."""
+        return cls._models[model.lower()]
+
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        return self.transform(x)
+
+
+@attr.s(frozen=True, kw_only=True)
+class IdentityTransform(ModelTransform):
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        return x
+
+
+@attr.s(frozen=True, kw_only=True)
+class ScaleTransform(ModelTransform):
+    scale: float = attr.ib(converter=float)
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        return x / self.scale
+
+
+@attr.s(frozen=True, kw_only=True)
+class CentreTransform(ModelTransform):
+    centre: float = attr.ib(converter=float)
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        return x - x.min() - (x.max() - x.min()) / 2 + self.centre
+
+
+@attr.s(frozen=True, kw_only=True)
+class UnitTransform(ModelTransform):
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        return 2 * CentreTransform(centre=0.0).transform(x) / (x.max() - x.min())
+
+
+@attr.s(frozen=True, kw_only=True)
+class LogTransform(ModelTransform):
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        return np.log(x)
+
+
 @register_h5type
 @attr.s(frozen=True, kw_only=True)
 class Model(metaclass=ABCMeta):
@@ -151,6 +233,7 @@ class Model(metaclass=ABCMeta):
         eq=attr.cmp_using(eq=np.array_equal),
     )
     n_terms: int = attr.ib(converter=attr.converters.optional(int))
+    transform: ModelTransform = attr.ib(default=IdentityTransform())
 
     def __init_subclass__(cls, is_meta=False, **kwargs):
         """Initialize a subclass and add it to the registered models."""
@@ -183,8 +266,13 @@ class Model(metaclass=ABCMeta):
         """Define the basis terms for the model."""
         pass
 
+    def get_basis_term_transformed(self, indx: int, x: np.ndarray) -> np.ndarray:
+        """Get the basis term after coordinate transformation."""
+        return self.get_basis_term(indx=indx, x=self.transform(x))
+
     def get_basis_terms(self, x: np.ndarray) -> np.ndarray:
         """Get a 2D array of all basis terms at ``x``."""
+        x = self.transform(x)
         return np.array([self.get_basis_term(indx, x) for indx in range(self.n_terms)])
 
     def with_nterms(
@@ -299,10 +387,10 @@ class Foreground(Model, is_meta=True):
         co-ordindates divided by this frequency before solving for the
         co-efficients.
     with_cmb : bool
-        Whether to add a simply CMB component to the foreground.
+        Whether to add a simple CMB component to the foreground.
     """
 
-    f_center: float = attr.ib(default=F_CENTER, converter=float)
+    transform: ModelTransform = attr.ib(default=ScaleTransform(scale=F_CENTER))
     with_cmb: bool = attr.ib(default=False, converter=bool)
 
 
@@ -315,22 +403,21 @@ class PhysicalLin(Foreground):
 
     def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Define the basis functions of the model."""
-        y = x / self.f_center
         if indx < 3:
-            logy = np.log(y)
-            y25 = y ** -2.5
+            logy = np.log(x)
+            y25 = x ** -2.5
             return y25 * logy ** indx
 
         elif indx == 3:
-            return y ** -4.5
+            return x ** -4.5
         elif indx == 4:
-            return 1 / (y * y)
+            return 1 / (x * x)
         else:
             raise ValueError("too many terms supplied!")
 
 
 @attr.s(frozen=True, kw_only=True)
-class Polynomial(Foreground):
+class Polynomial(Model):
     r"""A polynomial foreground model.
 
     Parameters
@@ -351,16 +438,11 @@ class Polynomial(Foreground):
     where ``y`` is ``log(x)`` if ``log_x=True`` and simply ``x`` otherwise.
     """
 
-    log_x: bool = attr.ib(default=False, converter=bool)
     offset: float = attr.ib(default=0, converter=float)
 
     def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Define the basis functions of the model."""
-        y = x / self.f_center
-        if self.log_x:
-            y = np.log(y)
-
-        return y ** (indx + self.offset)
+        return x ** (indx + self.offset)
 
 
 @attr.s(frozen=True, kw_only=True)
@@ -386,13 +468,16 @@ class LinLog(Foreground):
     @property
     def _poly(self):
         return Polynomial(
-            log_x=True, offset=0, n_terms=self.n_terms, parameters=self.parameters
+            transform=LogTransform(),
+            offset=0,
+            n_terms=self.n_terms,
+            parameters=self.parameters,
         )
 
     def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Define the basis functions of the model."""
-        term = self._poly.get_basis_term(indx, x)
-        return term * (x / self.f_center) ** self.beta
+        term = self._poly.get_basis_term_transformed(indx, x)
+        return term * x ** self.beta
 
 
 @attr.s(frozen=True, kw_only=True)
@@ -508,9 +593,16 @@ class CompositeModel:
         out[mask] = getattr(self, model).get_basis_term(indx, x[mask]) * extra
         return out
 
+    def get_basis_term_transformed(self, indx: int, x: np.ndarray) -> np.ndarray:
+        """Get the basis function term after coordinate tranformation."""
+        model = self._index_map[indx][0]
+        return self.get_basis_term(indx, x=getattr(self, model).transform(x))
+
     def get_basis_terms(self, x: np.ndarray) -> np.ndarray:
         """Get a 2D array of all basis terms at ``x``."""
-        return np.array([self.get_basis_term(indx, x) for indx in range(self.n_terms)])
+        return np.array(
+            [self.get_basis_term_transformed(indx, x) for indx in range(self.n_terms)]
+        )
 
     def with_nterms(
         self, model: str, n_terms: int | None = None, parameters: Sequence | None = None
@@ -605,7 +697,8 @@ class NoiseWaves:
         )
 
         # x is the frequencies repeated for every input source
-        x = np.concatenate((np.linspace(-1, 1, len(self.freq)),) * len(self.gamma_src))
+        x = np.tile(self.freq, len(self.gamma_src))
+        tr = UnitTransform()
 
         return CompositeModel(
             models={
@@ -614,28 +707,28 @@ class NoiseWaves:
                     parameters=self.parameters[: self.w_terms]
                     if self.parameters is not None
                     else None,
-                    f_center=1,
+                    transform=tr,
                 ),
                 "tcos": Polynomial(
                     n_terms=self.w_terms,
                     parameters=self.parameters[self.w_terms : 2 * self.w_terms]
                     if self.parameters is not None
                     else None,
-                    f_center=1,
+                    transform=tr,
                 ),
                 "tsin": Polynomial(
                     n_terms=self.w_terms,
                     parameters=self.parameters[2 * self.w_terms : 3 * self.w_terms]
                     if self.parameters is not None
                     else None,
-                    f_center=1,
+                    transform=tr,
                 ),
                 "tload": Polynomial(
                     n_terms=self.c_terms,
                     parameters=self.parameters[3 * self.w_terms :]
                     if self.parameters is not None
                     else None,
-                    f_center=1,
+                    transform=tr,
                 ),
             },
             extra_basis={"tunc": K[1], "tcos": K[2], "tsin": K[3], "tload": -1},
@@ -689,7 +782,9 @@ class NoiseWaves:
 
         return attr.evolve(self, parameters=params)
 
-    def get_data_from_calobs(self, calobs, tns: Model | None = None) -> np.ndarray:
+    def get_data_from_calobs(
+        self, calobs, tns: Model | None = None, sim: bool = False
+    ) -> np.ndarray:
         """Generate input data to fit from a calibration observation."""
         data = []
         for src in self.src_names:
@@ -699,8 +794,11 @@ class NoiseWaves:
             else:
                 _tns = tns(x=calobs.freq.freq)
 
-            q = load.spectrum.averaged_Q
-
+            q = (
+                simulate_q_from_calobs(calobs, load=src)
+                if sim
+                else load.spectrum.averaged_Q
+            )
             c = calobs.get_K()[src][0]
             data.append(_tns * q - c * load.temp_ave)
         return np.concatenate(tuple(data))
@@ -870,7 +968,8 @@ def _model_yaml_constructor(
 def _model_yaml_representer(
     dumper: yaml.SafeDumper, model: Model
 ) -> yaml.nodes.MappingNode:
-    model_dct = attr.asdict(model)
+
+    model_dct = attr.asdict(model, recurse=False)
     model_dct.update(model=model.__class__.__name__.lower())
     if model_dct["parameters"] is not None:
         model_dct["parameters"] = model_dct["parameters"].tolist()
@@ -880,5 +979,5 @@ def _model_yaml_representer(
 
 yaml.FullLoader.add_constructor("!Model", _model_yaml_constructor)
 
-# for mdl in _MODELS.values():
 yaml.add_multi_representer(Model, _model_yaml_representer)
+yaml.add_multi_representer(ModelTransform, _transform_yaml_representer)
