@@ -1,0 +1,27 @@
+channels:
+  - conda-forge
+  - nodefaults
+
+
+dependencies:
+  - pip
+  - python>=3.8
+  - h5py
+  - sphinx
+  - nbsphinx
+  - numpydoc
+  - sphinx_rtd_theme
+  - ipython
+  - pip:
+    - sphinx_click
+    - numpy
+    - scipy
+    - matplotlib
+    - cached_property
+    - astropy
+    - edges-io>=2.3.3<3.0
+    - toml
+    - pyyaml
+    - click
+    - statsmodels
+    - rich
