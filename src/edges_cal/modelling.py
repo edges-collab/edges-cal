@@ -390,8 +390,13 @@ class Foreground(Model, is_meta=True):
         Whether to add a simple CMB component to the foreground.
     """
 
-    transform: ModelTransform = attr.ib(default=ScaleTransform(scale=F_CENTER))
     with_cmb: bool = attr.ib(default=False, converter=bool)
+    f_center: float = attr.ib(F_CENTER, converter=float)
+    transform: ModelTransform = attr.ib()
+
+    @transform.default
+    def _tr_default(self):
+        return ScaleTransform(scale=self.f_center)
 
 
 @attr.s(frozen=True, kw_only=True)
