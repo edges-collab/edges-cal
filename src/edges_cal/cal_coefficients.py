@@ -11,6 +11,7 @@ import h5py
 import numpy as np
 import tempfile
 import warnings
+import yaml
 from abc import ABCMeta, abstractmethod
 from astropy.convolution import Gaussian1DKernel, convolve
 from copy import copy
@@ -218,28 +219,14 @@ class _S11Base(metaclass=ABCMeta):
         """
         n_terms = n_terms or self.n_terms
         model_type = mdl.get_mdl(model_type or self.model_type)
-        model = model_type(n_terms=n_terms)
+        model = model_type(n_terms=n_terms, transform=mdl.UnitTransform())
         emodel = model.at(x=self.freq.freq_recentred)
+
+        cmodel = mdl.ComplexMagPhaseModel(mag=emodel, phs=emodel)
 
         s11_correction = self.corrected_load_s11
 
-        def get_model(mag):
-            # Returns a callable function that will evaluate a model onto a set of
-            # un-normalised frequencies.
-
-            d = np.abs(s11_correction) if mag else np.unwrap(np.angle(s11_correction))
-
-            fit = emodel.fit(ydata=d)
-            return fit.evaluate
-
-        mag = get_model(True)
-        ang = get_model(False)
-
-        def model(f):
-            ff = self.freq.normalize(f)
-            return mag(ff) * (np.cos(ang(ff)) + 1j * np.sin(ang(ff)))
-
-        return model
+        return cmodel.fit(ydata=s11_correction)
 
     @cached_property
     def s11_model(self) -> callable:
@@ -282,8 +269,7 @@ class _S11Base(metaclass=ABCMeta):
         ax[-1].set_xlabel("Frequency [MHz]")
 
         corr = self.corrected_load_s11
-        model = self.s11_model
-        model = model(self.freq.freq)
+        model = self.s11_model(self.freq.freq)
 
         ax[0].plot(
             self.freq.freq, 20 * np.log10(np.abs(model)), color=color_abs, label=label
@@ -2125,6 +2111,11 @@ class CalibrationObservation:
                 self.internal_switch.s22_model(self.freq.freq)
             )
 
+            load_s11_grp = fl.create_group("load_s11s")
+
+            for name, load in self._loads.items():
+                load_s11_grp.attrs[name] = yaml.dump(load.s11_model)
+
     def to_calfile(self):
         """Directly create a :class:`Calibration` object without writing to file."""
         return Calibration.from_calobs(self)
@@ -2208,6 +2199,14 @@ class Calibration:
             self.Tunc_poly = np.poly1d(fl["Tunc"][...])
 
             self.freq = FrequencyRange(fl["frequencies"][...])
+
+            if "load_s11s" in fl:
+                for load, m in fl["load_s11s"].attrs.items():
+                    setattr(
+                        self,
+                        f"{load}_s11_model",
+                        yaml.load(m, Loader=yaml.FullLoader).at(x=self.freq.freq),
+                    )
 
             self._lna_s11_rl = Spline(self.freq.freq, fl["lna_s11_real"][...])
             self._lna_s11_im = Spline(self.freq.freq, fl["lna_s11_imag"][...])

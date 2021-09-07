@@ -117,9 +117,10 @@ def simulate_qant_from_calobs(
     """
     scale = scale_model(calobs.freq.freq) if scale_model is not None else calobs.C1()
 
+    lna_s11 = calobs.lna_s11() if callable(calobs.lna_s11) else calobs.lna_s11
     return simulate_q(
         load_s11=ant_s11,
-        lna_s11=calobs.lna_s11,
+        lna_s11=lna_s11,
         load_temp=ant_temp,
         scale=scale,
         offset=calobs.C2(),
