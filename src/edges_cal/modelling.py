@@ -19,7 +19,7 @@ _MODELS = {}
 
 
 @attr.s(frozen=True, kw_only=True)
-class FixedLinearModel:
+class FixedLinearModel(yaml.YAMLObject):
     """
     A base class for a linear model fixed at a certain set of co-ordinates.
 
@@ -37,11 +37,18 @@ class FixedLinearModel:
         can be input directly to save computation time.
     """
 
+    yaml_tag = "!Model"
+
     model: Model = attr.ib()
     x: np.ndarray = attr.ib(converter=np.asarray)
     _init_basis: np.ndarray | None = attr.ib(
         default=None, converter=attr.converters.optional(np.asarray)
     )
+
+    @classmethod
+    def to_yaml(cls, dumper, data):
+        """Method to convert to YAML format."""
+        return _model_yaml_representer(dumper, data.model)
 
     @model.validator
     def _model_vld(self, att, val):
@@ -136,6 +143,11 @@ class FixedLinearModel:
         model = self.model.with_params(parameters=parameters)
         return attr.evolve(self, model=model, init_basis=init_basis)
 
+    @property
+    def parameters(self) -> np.ndarray | None:
+        """The parameters of the model, if set."""
+        return self.model.parameters
+
 
 def _transform_yaml_constructor(
     loader: yaml.SafeLoader, node: yaml.nodes.MappingNode
@@ -213,6 +225,8 @@ class UnitTransform(ModelTransform):
 
 @attr.s(frozen=True, kw_only=True)
 class LogTransform(ModelTransform):
+    scale: float = attr.ib(1.0)
+
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return np.log(x)
@@ -497,11 +511,6 @@ class Fourier(Model):
     """A Fourier-basis model."""
 
     period: float = attr.ib(default=2 * np.pi, converter=float)
-    transform: ModelTransform = attr.ib()
-
-    @transform.default
-    def _tr_default(self):
-        return ZerotooneTransform()
 
     @cached_property
     def _period_fac(self):
@@ -534,6 +543,10 @@ class FourierDay(Model):
 class CompositeModel:
     models: Dict[str, Model] = attr.ib()
     extra_basis: Dict[str, np.ndarray] = attr.ib(factory=dict)
+
+    @extra_basis.validator
+    def _eb_vld(self, att, val):
+        assert all(v in self.models for v in val)
 
     @cached_property
     def n_terms(self) -> int:
@@ -686,6 +699,145 @@ class CompositeModel:
     ) -> ModelFit:
         """Create a linear-regression fit object."""
         return self.at(x=xdata).fit(ydata, weights=weights)
+
+
+@attr.s(frozen=True, kw_only=True)
+class ComplexRealImagModel(yaml.YAMLObject):
+    """A composite model that is specifically for complex functions in real/imag."""
+
+    yaml_tag = "ComplexRealImagModel"
+
+    real: Model | FixedLinearModel = attr.ib()
+    imag: Model | FixedLinearModel = attr.ib()
+
+    def at(self, **kwargs) -> FixedLinearModel:
+        """Get an evaluated linear model."""
+        return attr.evolve(
+            self, real=self.real.at(**kwargs), imag=self.imag.at(**kwargs),
+        )
+
+    def __call__(
+        self, x: np.ndarray | None = None, parameters: Sequence | None = None,
+    ) -> np.ndarray:
+        """Evaluate the model.
+
+        Parameters
+        ----------
+        x
+            The co-ordinates at which to evaluate the model (by default, use
+            ``default_x``).
+        params
+            A list/array of parameters at which to evaluate the model. Will use the
+            instance's parameters if available. If using a subset of the basis
+            functions, you can pass a subset of parameters.
+
+        Returns
+        -------
+        model
+            The model evaluated at the input ``x`` or ``basis``.
+        """
+        return self.real(
+            x=x,
+            parameters=parameters[: self.real.n_terms]
+            if parameters is not None
+            else None,
+        ) + 1j * self.imag(
+            x=x,
+            parameters=parameters[self.real.n_terms :]
+            if parameters is not None
+            else None,
+        )
+
+    def fit(
+        self,
+        ydata: np.ndarray,
+        weights: np.ndarray | float = 1.0,
+        xdata: np.ndarray | None = None,
+    ):
+        """Create a linear-regression fit object."""
+        if isinstance(self.real, FixedLinearModel):
+            real = self.real
+        else:
+            real = self.real.at(x=xdata)
+
+        if isinstance(self.imag, FixedLinearModel):
+            imag = self.imag
+        else:
+            imag = self.imag.at(x=xdata)
+
+        real = real.fit(np.real(ydata), weights=weights).fit
+        imag = imag.fit(np.imag(ydata), weights=weights).fit
+        return attr.evolve(self, real=real, imag=imag)
+
+
+@attr.s(frozen=True, kw_only=True)
+class ComplexMagPhaseModel(yaml.YAMLObject):
+    """A composite model that is specifically for complex functions in mag/phase."""
+
+    yaml_tag = "ComplexMagPhaseModel"
+
+    mag: Model | FixedLinearModel = attr.ib()
+    phs: Model | FixedLinearModel = attr.ib()
+
+    def at(self, **kwargs) -> FixedLinearModel:
+        """Get an evaluated linear model."""
+        return attr.evolve(self, mag=self.mag.at(**kwargs), phs=self.phs.at(**kwargs),)
+
+    def __call__(
+        self, x: np.ndarray | None = None, parameters: Sequence | None = None,
+    ) -> np.ndarray:
+        """Evaluate the model.
+
+        Parameters
+        ----------
+        x
+            The co-ordinates at which to evaluate the model (by default, use
+            ``default_x``).
+        params
+            A list/array of parameters at which to evaluate the model. Will use the
+            instance's parameters if available. If using a subset of the basis
+            functions, you can pass a subset of parameters.
+
+        Returns
+        -------
+        model : np.ndarray
+            The model evaluated at the input ``x`` or ``basis``.
+        """
+        return self.mag(
+            x=x,
+            parameters=parameters[: self.mag.n_terms]
+            if parameters is not None
+            else None,
+        ) * np.exp(
+            1j
+            * self.phs(
+                x=x,
+                parameters=parameters[self.mag.n_terms :]
+                if parameters is not None
+                else None,
+            )
+        )
+
+    def fit(
+        self,
+        ydata: np.ndarray,
+        weights: np.ndarray | float = 1.0,
+        xdata: np.ndarray | None = None,
+    ):
+        """Create a linear-regression fit object."""
+        if isinstance(self.mag, FixedLinearModel):
+            mag = self.mag
+        else:
+            mag = self.mag.at(x=xdata)
+
+        if isinstance(self.phs, FixedLinearModel):
+            phs = self.phs
+        else:
+            phs = self.phs.at(x=xdata)
+
+        mag = mag.fit(np.abs(ydata), weights=weights).fit
+        phs = phs.fit(np.unwrap(np.angle(ydata)), weights=weights).fit
+        return attr.evolve(self, mag=mag, phs=phs)
 
 
 @attr.s(frozen=True, kw_only=True)
@@ -985,7 +1137,6 @@ def _model_yaml_constructor(
 def _model_yaml_representer(
     dumper: yaml.SafeDumper, model: Model
 ) -> yaml.nodes.MappingNode:
-
     model_dct = attr.asdict(model, recurse=False)
     model_dct.update(model=model.__class__.__name__.lower())
     if model_dct["parameters"] is not None:

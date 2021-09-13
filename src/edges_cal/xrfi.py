@@ -757,10 +757,13 @@ def _flag_a_window(
         elif std_estimator == 2:
             r_std = np.std(resids[mask])
 
-        new_flags = np.abs(resids) > threshold * r_std
+        zscore = np.abs(resids) / r_std
+        new_flags = zscore > threshold
 
         if watershed is not None:
-            new_flags |= _apply_watershed(new_flags, watershed)
+            new_flags |= _apply_watershed(
+                new_flags, watershed, zscore, threshold=threshold
+            )
 
         flags_changed = np.sum((~mask) ^ new_flags)
         counter += 1
@@ -791,7 +794,7 @@ def model_filter(
     min_resid_terms: int = 3,
     decrement_threshold: float = 0,
     min_threshold: float = 5,
-    watershed: int = 0,
+    watershed: int | Dict[float, int] | None = None,
     flag_if_broken: bool = True,
     init_flags: np.ndarray | None = None,
     std_estimator: Literal["model", "medfilt", "std", "mad"] = "model",
@@ -837,6 +840,9 @@ def model_filter(
         The minimum threshold to decrement to.
     watershed
         How many data points *on each side* of a flagged point that should be flagged.
+        If a dictionary, you can give keys as the threshold above which z-scores will
+        be flagged, and as values, the number of bins flagged beside it. Use 0.0
+        threshold to indicate the base threshold.
     init_flags
         Initial flags that are not remembered after the first iteration. These can
         help with getting the initial model. If a tuple, should be a min and max
@@ -980,13 +986,16 @@ def model_filter(
 
         std_list.append(model_std)
 
+        zscore = np.abs(res) / model_std
         # If we're not accumulating, we just take these flags (along with the fully
         # original flags).
-        new_flags = orig_flags | (np.abs(res) > threshold * model_std)
+        new_flags = orig_flags | (zscore > threshold)
 
         # Apply a watershed -- assume surrounding channels will succumb to RFI.
         if watershed is not None:
-            new_flags |= _apply_watershed(new_flags, watershed)
+            new_flags |= _apply_watershed(
+                new_flags, watershed, zscore, threshold=threshold
+            )
 
         n_flags_changed = np.sum(flags ^ new_flags)
         flags = new_flags.copy()
@@ -1351,12 +1360,30 @@ def xrfi_watershed(
 xrfi_watershed.ndim = (1, 2)
 
 
-def _apply_watershed(flags, watershed):
+def _apply_watershed(
+    flags: np.ndarray,
+    watershed: int | Dict[float, int],
+    zscore: np.ndarray,
+    threshold: float,
+):
     watershed_flags = np.zeros_like(flags)
 
-    for i in range(1, watershed + 1):
-        watershed_flags[i:] |= flags[:-i]
-        watershed_flags[:-i] |= flags[i:]
+    if isinstance(watershed, int):
+        watershed = {threshold: watershed}
+
+    # Allow the basic threshold to not be specified in the watershed dict, instead
+    # the user can use 0.0
+    if 0.0 in watershed:
+        watershed[threshold] = watershed[0.0]
+        del watershed[0.0]
+
+    for thr, nw in sorted(watershed.items()):
+        this_flg = zscore > thr
+
+        for i in range(1, nw + 1):
+            watershed_flags[i:] |= this_flg[:-i]
+            watershed_flags[:-i] |= this_flg[i:]
+
     return watershed_flags
 
 
