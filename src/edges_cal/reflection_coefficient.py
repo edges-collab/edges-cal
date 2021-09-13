@@ -9,7 +9,8 @@ from . import types as tp
 
 
 def impedance2gamma(
-    z: float | np.ndarray, z0: float | np.ndarray,
+    z: float | np.ndarray,
+    z0: float | np.ndarray,
 ) -> float | np.ndarray:
     """Convert impedance to reflection coefficient.
 
@@ -29,7 +30,8 @@ def impedance2gamma(
 
 
 def gamma2impedance(
-    gamma: float | np.ndarray, z0: float | np.ndarray,
+    gamma: float | np.ndarray,
+    z0: float | np.ndarray,
 ) -> float | np.ndarray:
     """Convert reflection coeffiency to impedance.
 

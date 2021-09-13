@@ -193,7 +193,9 @@ class _S11Base(metaclass=ABCMeta):
 
     @lru_cache()
     def get_corrected_s11_model(
-        self, n_terms: int | None = None, model_type: tp.Modelable | None = None,
+        self,
+        n_terms: int | None = None,
+        model_type: tp.Modelable | None = None,
     ):
         """Generate a callable model for the S11 correction.
 
@@ -1174,11 +1176,19 @@ class Load:
             reflection_kwargs = {}
 
         spec = LoadSpectrum.from_load_name(
-            load_name, path, f_low=f_low, f_high=f_high, **spec_kwargs,
+            load_name,
+            path,
+            f_low=f_low,
+            f_high=f_high,
+            **spec_kwargs,
         )
 
         refl = LoadS11.from_path(
-            load_name, path, f_low=f_low, f_high=f_high, **reflection_kwargs,
+            load_name,
+            path,
+            f_low=f_low,
+            f_high=f_high,
+            **reflection_kwargs,
         )
 
         return cls(spec, refl)
@@ -1910,7 +1920,10 @@ class CalibrationObservation:
             ax.axhline(temp_ave, color="C2", label="Average thermistor temp")
         else:
             ax.plot(
-                self.freq.freq, temp_ave, color="C2", label="Average thermistor temp",
+                self.freq.freq,
+                temp_ave,
+                color="C2",
+                label="Average thermistor temp",
             )
 
         ax.set_ylim([np.nanmin(freq_ave_cal), np.nanmax(freq_ave_cal)])
