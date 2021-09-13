@@ -81,10 +81,10 @@ def simulate_q_from_calobs(calobs, load: str, scale_model=None) -> np.ndarray:
         The 3-position switch values.
     """
     C1 = scale_model(calobs.freq.freq) if scale_model is not None else calobs.C1()
-
+    lna_s11 = calobs.lna_s11() if callable(calobs.lna_s11) else calobs.lna_s11
     return simulate_q(
-        load_s11=calobs.s11_correction_models[load],
-        lna_s11=calobs.lna_s11,
+        load_s11=calobs._loads[load].reflections.s11_model(calobs.freq.freq),
+        lna_s11=lna_s11,
         load_temp=calobs._loads[load].temp_ave,
         scale=C1,
         offset=calobs.C2(),

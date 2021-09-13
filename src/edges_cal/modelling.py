@@ -19,7 +19,7 @@ _MODELS = {}
 
 
 @attr.s(frozen=True, kw_only=True)
-class FixedLinearModel:
+class FixedLinearModel(yaml.YAMLObject):
     """
     A base class for a linear model fixed at a certain set of co-ordinates.
 
@@ -37,11 +37,18 @@ class FixedLinearModel:
         can be input directly to save computation time.
     """
 
+    yaml_tag = "!Model"
+
     model: Model = attr.ib()
     x: np.ndarray = attr.ib(converter=np.asarray)
     _init_basis: np.ndarray | None = attr.ib(
         default=None, converter=attr.converters.optional(np.asarray)
     )
+
+    @classmethod
+    def to_yaml(cls, dumper, data):
+        """Method to convert to YAML format."""
+        return _model_yaml_representer(dumper, data.model)
 
     @model.validator
     def _model_vld(self, att, val):
@@ -218,6 +225,8 @@ class UnitTransform(ModelTransform):
 
 @attr.s(frozen=True, kw_only=True)
 class LogTransform(ModelTransform):
+    scale: float = attr.ib(1.0)
+
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return np.log(x)
@@ -1121,7 +1130,6 @@ def _model_yaml_constructor(
 def _model_yaml_representer(
     dumper: yaml.SafeDumper, model: Model
 ) -> yaml.nodes.MappingNode:
-
     model_dct = attr.asdict(model, recurse=False)
     model_dct.update(model=model.__class__.__name__.lower())
     if model_dct["parameters"] is not None:

@@ -7,6 +7,7 @@ a one-stop interface for everything related to calibration.
 """
 from __future__ import annotations
 
+import attr
 import h5py
 import numpy as np
 import tempfile
@@ -22,7 +23,7 @@ from hashlib import md5
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from . import DATA_PATH
 from . import modelling as mdl
@@ -1447,6 +1448,11 @@ class CalibrationObservation:
         self.t_load = self.ambient.t_load
         self.t_load_ns = self.ambient.t_load_ns
 
+    @property
+    def load_names(self) -> Tuple[str]:
+        """Names of the loads."""
+        return tuple(self._loads.keys())
+
     def new_load(
         self,
         load_name: str,
@@ -2111,10 +2117,15 @@ class CalibrationObservation:
                 self.internal_switch.s22_model(self.freq.freq)
             )
 
-            load_s11_grp = fl.create_group("load_s11s")
+            load_grp = fl.create_group("loads")
 
             for name, load in self._loads.items():
-                load_s11_grp.attrs[name] = yaml.dump(load.s11_model)
+                grp = load_grp.create_group(name)
+                grp.attrs["s11_model"] = yaml.dump(load.s11_model)
+                grp["averaged_Q"] = load.spectrum.averaged_Q
+                grp["variance_Q"] = load.spectrum.variance_Q
+                grp["temp_ave"] = load.temp_ave
+                grp.attrs["n_integrations"] = load.spectrum.n_integrations
 
     def to_calfile(self):
         """Directly create a :class:`Calibration` object without writing to file."""
@@ -2173,6 +2184,25 @@ class CalibrationObservation:
         return new
 
 
+@attr.s
+class _LittleS11:
+    s11_model: Callable = attr.ib()
+
+
+@attr.s
+class _LittleSpectrum:
+    averaged_Q: np.ndarray = attr.ib()
+    variance_Q: np.ndarray = attr.ib()
+    n_integrations: int = attr.ib()
+
+
+@attr.s
+class _LittleLoad:
+    reflections: _LittleS11 = attr.ib()
+    spectrum: _LittleSpectrum = attr.ib()
+    temp_ave: np.ndarray = attr.ib()
+
+
 class Calibration:
     def __init__(self, filename: Union[str, Path]):
         """
@@ -2187,8 +2217,8 @@ class Calibration:
 
         with h5py.File(filename, "r") as fl:
             self.calobs_path = fl.attrs["path"]
-            self.cterms = fl.attrs["cterms"]
-            self.wterms = fl.attrs["wterms"]
+            self.cterms = int(fl.attrs["cterms"])
+            self.wterms = int(fl.attrs["wterms"])
             self.t_load = fl.attrs.get("t_load", 300)
             self.t_load_ns = fl.attrs.get("t_load_ns", 400)
 
@@ -2200,12 +2230,25 @@ class Calibration:
 
             self.freq = FrequencyRange(fl["frequencies"][...])
 
-            if "load_s11s" in fl:
-                for load, m in fl["load_s11s"].attrs.items():
-                    setattr(
-                        self,
-                        f"{load}_s11_model",
-                        yaml.load(m, Loader=yaml.FullLoader).at(x=self.freq.freq),
+            self._loads = {}
+            if "loads" in fl:
+                lg = fl["loads"]
+
+                self.load_names = list(lg.keys())
+
+                for name, grp in lg.items():
+                    self._loads[name] = _LittleLoad(
+                        reflections=_LittleS11(
+                            s11_model=yaml.load(
+                                grp.attrs["s11_model"], Loader=yaml.FullLoader
+                            ).at(x=self.freq.freq)
+                        ),
+                        spectrum=_LittleSpectrum(
+                            averaged_Q=grp["averaged_Q"][...],
+                            variance_Q=grp["variance_Q"][...],
+                            n_integrations=grp.attrs["n_integrations"],
+                        ),
+                        temp_ave=grp["temp_ave"][...],
                     )
 
             self._lna_s11_rl = Spline(self.freq.freq, fl["lna_s11_real"][...])
