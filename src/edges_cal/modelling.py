@@ -713,11 +713,15 @@ class ComplexRealImagModel(yaml.YAMLObject):
     def at(self, **kwargs) -> FixedLinearModel:
         """Get an evaluated linear model."""
         return attr.evolve(
-            self, real=self.real.at(**kwargs), imag=self.imag.at(**kwargs),
+            self,
+            real=self.real.at(**kwargs),
+            imag=self.imag.at(**kwargs),
         )
 
     def __call__(
-        self, x: np.ndarray | None = None, parameters: Sequence | None = None,
+        self,
+        x: np.ndarray | None = None,
+        parameters: Sequence | None = None,
     ) -> np.ndarray:
         """Evaluate the model.
 
@@ -781,10 +785,16 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
 
     def at(self, **kwargs) -> FixedLinearModel:
         """Get an evaluated linear model."""
-        return attr.evolve(self, mag=self.mag.at(**kwargs), phs=self.phs.at(**kwargs),)
+        return attr.evolve(
+            self,
+            mag=self.mag.at(**kwargs),
+            phs=self.phs.at(**kwargs),
+        )
 
     def __call__(
-        self, x: np.ndarray | None = None, parameters: Sequence | None = None,
+        self,
+        x: np.ndarray | None = None,
+        parameters: Sequence | None = None,
     ) -> np.ndarray:
         """Evaluate the model.
 
