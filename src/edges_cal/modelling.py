@@ -232,6 +232,13 @@ class LogTransform(ModelTransform):
         return np.log(x)
 
 
+@attr.s(frozen=True, kw_only=True)
+class ZerotooneTransform(ModelTransform):
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        return (x - x.min()) / (x.max() - x.min())
+
+
 @register_h5type
 @attr.s(frozen=True, kw_only=True)
 class Model(metaclass=ABCMeta):
@@ -504,10 +511,6 @@ class Fourier(Model):
     """A Fourier-basis model."""
 
     period: float = attr.ib(default=2 * np.pi, converter=float)
-<<<<<<< Updated upstream
-=======
-    transform: ModelTransform = attr.ib()
->>>>>>> Stashed changes
 
     @cached_property
     def _period_fac(self):
