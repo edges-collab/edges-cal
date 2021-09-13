@@ -757,10 +757,13 @@ def _flag_a_window(
         elif std_estimator == 2:
             r_std = np.std(resids[mask])
 
-        new_flags = np.abs(resids) > threshold * r_std
+        zscore = np.abs(resids) / r_std
+        new_flags = zscore > threshold
 
         if watershed is not None:
-            new_flags |= _apply_watershed(new_flags, watershed)
+            new_flags |= _apply_watershed(
+                new_flags, watershed, zscore, threshold=threshold
+            )
 
         flags_changed = np.sum((~mask) ^ new_flags)
         counter += 1
