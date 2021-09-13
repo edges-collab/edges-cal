@@ -504,6 +504,10 @@ class Fourier(Model):
     """A Fourier-basis model."""
 
     period: float = attr.ib(default=2 * np.pi, converter=float)
+<<<<<<< Updated upstream
+=======
+    transform: ModelTransform = attr.ib()
+>>>>>>> Stashed changes
 
     @cached_property
     def _period_fac(self):
