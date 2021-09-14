@@ -856,7 +856,7 @@ def model_filter(
     flags
         Boolean array of the same shape as ``data``.
     """
-   
+
     threshold = threshold or (
         min_threshold
         if not decrement_threshold
@@ -924,7 +924,7 @@ def model_filter(
         model.n_terms <= min_terms
         or (any(fl > 0 for fl in n_flags_changed_all) and np.sum(~flags) > model.n_terms * 2)
     ):
-        
+
 
         weights = np.where(flags, 0, orig_weights)
 
@@ -989,8 +989,8 @@ def model_filter(
 
         zscore = np.abs(res) / model_std
 <<<<<<< HEAD
-       
-        
+
+
 
 
         # If we're not accumulating, we just take these flags (along with the fully
@@ -1002,11 +1002,11 @@ def model_filter(
             new_flags |= _apply_watershed(
                 new_flags, watershed, zscore/threshold
             )
-          
+
 
         n_flags_changed_all = [np.sum(flags_f ^ new_flags) for flags_f in flag_list+[flags]]
         n_flags_changed = n_flags_changed_all[-1]
-        
+
         flags = new_flags.copy()
 
         counter += 1
@@ -1028,7 +1028,7 @@ def model_filter(
             f"max iterations ({max_iter}) reached, not all RFI might have been caught."
         )
         if flag_if_broken:
-            
+
             flags[:] = True
 
     elif np.sum(~flags) <= model.n_terms * 2:
@@ -1037,9 +1037,9 @@ def model_filter(
             "check data."
         )
         if flag_if_broken:
-            
+
             flags[:] = True
-    
+
     return (
         flags,
         ModelFilterInfo(
