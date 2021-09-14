@@ -988,11 +988,6 @@ def model_filter(
         std_list.append(model_std)
 
         zscore = np.abs(res) / model_std
-<<<<<<< HEAD
-       
-        
-
-
         # If we're not accumulating, we just take these flags (along with the fully
         # original flags).
         new_flags = orig_flags | (zscore > threshold)
