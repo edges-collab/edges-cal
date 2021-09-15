@@ -922,9 +922,11 @@ def model_filter(
     n_flags_changed_all = [1]
     while counter < max_iter and (
         model.n_terms <= min_terms
-        or (any(fl > 0 for fl in n_flags_changed_all) and np.sum(~flags) > model.n_terms * 2)
+        or (
+            any(fl > 0 for fl in n_flags_changed_all)
+            and np.sum(~flags) > model.n_terms * 2
+        )
     ):
-
 
         weights = np.where(flags, 0, orig_weights)
 
@@ -995,12 +997,11 @@ def model_filter(
 
         # Apply a watershed -- assume surrounding channels will succumb to RFI.
         if watershed is not None:
-            new_flags |= _apply_watershed(
-                new_flags, watershed, zscore/threshold
-            )
+            new_flags |= _apply_watershed(new_flags, watershed, zscore / threshold)
 
-
-        n_flags_changed_all = [np.sum(flags_f ^ new_flags) for flags_f in flag_list+[flags]]
+        n_flags_changed_all = [
+            np.sum(flags_f ^ new_flags) for flags_f in flag_list + [flags]
+        ]
         n_flags_changed = n_flags_changed_all[-1]
 
         flags = new_flags.copy()
@@ -1019,7 +1020,7 @@ def model_filter(
         total_flags_list.append(np.sum(flags))
         flag_list.append(flags)
 
-    if counter == max_iter and max_iter > 1 and n_flags_changed>0:
+    if counter == max_iter and max_iter > 1 and n_flags_changed > 0:
         warnings.warn(
             f"max iterations ({max_iter}) reached, not all RFI might have been caught."
         )
