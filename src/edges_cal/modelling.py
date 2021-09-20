@@ -8,7 +8,7 @@ import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
 from edges_io.h5 import register_h5type
-from typing import Dict, List, Optional, Sequence, Type
+from typing import Dict, List, Optional, Sequence, Tuple, Type
 
 from . import receiver_calibration_func as rcf
 from .simulate import simulate_q_from_calobs
@@ -207,24 +207,44 @@ class ScaleTransform(ModelTransform):
         return x / self.scale
 
 
+def tuple_converter(x):
+    """Convert input to tuple of floats."""
+    return tuple(float(xx) for xx in x)
+
+
 @attr.s(frozen=True, kw_only=True)
 class CentreTransform(ModelTransform):
-    centre: float = attr.ib(converter=float)
+    range: Tuple[float, float] = attr.ib(converter=tuple_converter)
+    centre: float = attr.ib(default=0.0, converter=float)
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
-        return x - x.min() - (x.max() - x.min()) / 2 + self.centre
+        return x - self.range[0] - (self.range[1] - self.range[0]) / 2 + self.centre
 
 
 @attr.s(frozen=True, kw_only=True)
 class UnitTransform(ModelTransform):
+    """A transform that takes the input range down to -1 to 1."""
+
+    range: Tuple[float, float] = attr.ib(converter=tuple_converter)
+
+    @cached_property
+    def _centre(self):
+        return CentreTransform(centre=0, range=self.range)
+
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
-        return 2 * CentreTransform(centre=0.0).transform(x) / (x.max() - x.min())
+        if self.range[0] is None:
+            self.range[0] = float(x.min())
+            self.range[1] = float(x.max())
+
+        return 2 * self._centre.transform(x) / (self.range[1] - self.range[0])
 
 
 @attr.s(frozen=True, kw_only=True)
 class LogTransform(ModelTransform):
+    """A transform that takes the logarithm of the input."""
+
     scale: float = attr.ib(1.0)
 
     def transform(self, x: np.ndarray) -> np.ndarray:
@@ -234,9 +254,17 @@ class LogTransform(ModelTransform):
 
 @attr.s(frozen=True, kw_only=True)
 class ZerotooneTransform(ModelTransform):
+    """A transform that takes an input range down to (0,1)."""
+
+    range: Tuple[float, float] = attr.ib(converter=tuple_converter)
+
+    @range.default
+    def _rng_default(self):
+        return [None, None]
+
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
-        return (x - x.min()) / (x.max() - x.min())
+        return (x - self.range[0]) / (self.range[1] - self.range[0])
 
 
 @register_h5type
@@ -590,6 +618,11 @@ class CompositeModel:
             extra = extra(x)
         return extra
 
+    @cached_property
+    def model_idx(self) -> Dict[str, slice]:
+        """Dictionary of parameter indices correponding to each model."""
+        return {name: self._get_model_param_indx(name) for name in self.models}
+
     def get_model(
         self,
         model: str,
@@ -598,7 +631,7 @@ class CompositeModel:
         with_extra: bool = False,
     ):
         """Calculate a sub-model."""
-        indx = self._get_model_param_indx(model)
+        indx = self.model_idx[model]
 
         extra = self.get_extra_basis(model, x) if with_extra else 1
         model = self.models[model]
@@ -713,15 +746,11 @@ class ComplexRealImagModel(yaml.YAMLObject):
     def at(self, **kwargs) -> FixedLinearModel:
         """Get an evaluated linear model."""
         return attr.evolve(
-            self,
-            real=self.real.at(**kwargs),
-            imag=self.imag.at(**kwargs),
+            self, real=self.real.at(**kwargs), imag=self.imag.at(**kwargs),
         )
 
     def __call__(
-        self,
-        x: np.ndarray | None = None,
-        parameters: Sequence | None = None,
+        self, x: np.ndarray | None = None, parameters: Sequence | None = None,
     ) -> np.ndarray:
         """Evaluate the model.
 
@@ -785,16 +814,10 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
 
     def at(self, **kwargs) -> FixedLinearModel:
         """Get an evaluated linear model."""
-        return attr.evolve(
-            self,
-            mag=self.mag.at(**kwargs),
-            phs=self.phs.at(**kwargs),
-        )
+        return attr.evolve(self, mag=self.mag.at(**kwargs), phs=self.phs.at(**kwargs),)
 
     def __call__(
-        self,
-        x: np.ndarray | None = None,
-        parameters: Sequence | None = None,
+        self, x: np.ndarray | None = None, parameters: Sequence | None = None,
     ) -> np.ndarray:
         """Evaluate the model.
 
@@ -1134,6 +1157,22 @@ class ModelFit:
     def weighted_rms(self) -> float:
         """The weighted root-mean-square of the residuals."""
         return np.sqrt(self.weighted_chi2) / np.sum(self.weights)
+
+    @cached_property
+    def hessian(self):
+        """The Hessian matrix of the linear parameters."""
+        return (self.model.basis * self.weights).dot(self.model.basis.T)
+
+    @cached_property
+    def parameter_covariance(self) -> np.ndarray:
+        """The Covariance matrix of the parameters."""
+        return np.linalg.inv(self.hessian)
+
+    def get_sample(self, size: int | Tuple[int] = 1):
+        """Generate a random sample from the posterior distribution."""
+        return np.random.multivariate_normal(
+            mean=self.model_parameters, cov=self.parameter_covariance, size=size
+        )
 
 
 def _model_yaml_constructor(

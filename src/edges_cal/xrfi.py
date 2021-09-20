@@ -1110,7 +1110,6 @@ class ModelFilterInfo:
                 yaml.load(grp.attrs[f"res_model_{i}"]) for i in range(info["n_iters"])
             ]
 
-            print(grp, grp.keys())
             for k in grp.keys():
                 info[k] = grp[k][...]
 
