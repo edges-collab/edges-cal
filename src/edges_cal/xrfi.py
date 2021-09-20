@@ -856,7 +856,6 @@ def model_filter(
     flags
         Boolean array of the same shape as ``data``.
     """
-
     threshold = threshold or (
         min_threshold
         if not decrement_threshold
