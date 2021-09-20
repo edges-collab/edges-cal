@@ -121,7 +121,11 @@ class FixedLinearModel(yaml.YAMLObject):
     ):
         """Create a linear-regression fit object."""
         thing = self.at_x(xdata) if xdata is not None else self
-        return ModelFit(thing, ydata=ydata, weights=weights,)
+        return ModelFit(
+            thing,
+            ydata=ydata,
+            weights=weights,
+        )
 
     def at_x(self, x: np.ndarray) -> FixedLinearModel:
         """Return a new :class:`FixedLinearModel` at given co-ordinates."""
@@ -397,7 +401,10 @@ class Model(metaclass=ABCMeta):
         return np.dot(parameters, basis[indices])
 
     def fit(
-        self, xdata: np.ndarray, ydata: np.ndarray, weights: np.ndarray | float = 1.0,
+        self,
+        xdata: np.ndarray,
+        ydata: np.ndarray,
+        weights: np.ndarray | float = 1.0,
     ) -> ModelFit:
         """Create a linear-regression fit object."""
         return self.at(x=xdata).fit(ydata, weights=weights)
@@ -728,7 +735,10 @@ class CompositeModel:
         )
 
     def fit(
-        self, xdata: np.ndarray, ydata: np.ndarray, weights: np.ndarray | float = 1.0,
+        self,
+        xdata: np.ndarray,
+        ydata: np.ndarray,
+        weights: np.ndarray | float = 1.0,
     ) -> ModelFit:
         """Create a linear-regression fit object."""
         return self.at(x=xdata).fit(ydata, weights=weights)

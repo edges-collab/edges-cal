@@ -271,7 +271,11 @@ class TestModelSweep:
 
         true_flags = rfi_model > 0
         flags, info = xrfi.xrfi_model_sweep(
-            sky, max_iter=10, threshold=5, use_median=True, which_bin="last",
+            sky,
+            max_iter=10,
+            threshold=5,
+            use_median=True,
+            which_bin="last",
         )
 
         # Only consider flags after bin 100 (since that's the bin width)

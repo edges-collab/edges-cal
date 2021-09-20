@@ -48,7 +48,10 @@ def test_basis(model: Type[mdl.Model]):
 
 def test_model_fit():
     pl = mdl.PhysicalLin()
-    fit = mdl.ModelFit(pl.at(x=np.linspace(0, 1, 10)), ydata=np.linspace(0, 1, 10),)
+    fit = mdl.ModelFit(
+        pl.at(x=np.linspace(0, 1, 10)),
+        ydata=np.linspace(0, 1, 10),
+    )
     assert isinstance(fit.model.model, mdl.PhysicalLin)
 
 

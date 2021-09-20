@@ -258,7 +258,10 @@ def report(
 
     # This actually runs the notebook itself.
     pm.execute_notebook(
-        str(single_notebook), out / fname, parameters=settings, kernel_name="edges",
+        str(single_notebook),
+        out / fname,
+        parameters=settings,
+        kernel_name="edges",
     )
     console.print(f"Saved interactive notebook to '{out/fname}'")
 
