@@ -920,7 +920,7 @@ class NoiseWaves:
 
         # x is the frequencies repeated for every input source
         x = np.tile(self.freq, len(self.gamma_src))
-        tr = UnitTransform()
+        tr = UnitTransform(range=(x.min(), x.max()))
 
         return CompositeModel(
             models={
