@@ -761,9 +761,7 @@ def _flag_a_window(
         new_flags = zscore > threshold
 
         if watershed is not None:
-            new_flags |= _apply_watershed(
-                new_flags, watershed, zscore, threshold=threshold
-            )
+            new_flags |= _apply_watershed(new_flags, watershed, zscore / threshold)
 
         flags_changed = np.sum((~mask) ^ new_flags)
         counter += 1
@@ -858,6 +856,7 @@ def model_filter(
     flags
         Boolean array of the same shape as ``data``.
     """
+
     threshold = threshold or (
         min_threshold
         if not decrement_threshold
@@ -920,9 +919,13 @@ def model_filter(
     # Iterate until either no flags are changed between iterations, or we get to the
     # requested maximum iterations, or until we have too few unflagged data to fit
     # appropriately. keep iterating
+    n_flags_changed_all = [1]
     while counter < max_iter and (
         model.n_terms <= min_terms
-        or (n_flags_changed > 0 and np.sum(~flags) > model.n_terms * 2)
+        or (
+            any(fl > 0 for fl in n_flags_changed_all)
+            and np.sum(~flags) > model.n_terms * 2
+        )
     ):
 
         weights = np.where(flags, 0, orig_weights)
@@ -987,17 +990,20 @@ def model_filter(
         std_list.append(model_std)
 
         zscore = np.abs(res) / model_std
+
         # If we're not accumulating, we just take these flags (along with the fully
         # original flags).
         new_flags = orig_flags | (zscore > threshold)
 
         # Apply a watershed -- assume surrounding channels will succumb to RFI.
         if watershed is not None:
-            new_flags |= _apply_watershed(
-                new_flags, watershed, zscore, threshold=threshold
-            )
+            new_flags |= _apply_watershed(new_flags, watershed, zscore / threshold)
 
-        n_flags_changed = np.sum(flags ^ new_flags)
+        n_flags_changed_all = [
+            np.sum(flags_f ^ new_flags) for flags_f in flag_list + [flags]
+        ]
+        n_flags_changed = n_flags_changed_all[-1]
+
         flags = new_flags.copy()
 
         counter += 1
@@ -1014,19 +1020,21 @@ def model_filter(
         total_flags_list.append(np.sum(flags))
         flag_list.append(flags)
 
-    if counter == max_iter and max_iter > 1:
+    if counter == max_iter and max_iter > 1 and n_flags_changed > 0:
         warnings.warn(
             f"max iterations ({max_iter}) reached, not all RFI might have been caught."
         )
         if flag_if_broken:
+
             flags[:] = True
 
-    if np.sum(~flags) <= model.n_terms * 2:
+    elif np.sum(~flags) <= model.n_terms * 2:
         warnings.warn(
             "Termination of iterative loop due to too many flags. Reduce n_signal or "
             "check data."
         )
         if flag_if_broken:
+
             flags[:] = True
 
     return (
@@ -1362,22 +1370,15 @@ xrfi_watershed.ndim = (1, 2)
 def _apply_watershed(
     flags: np.ndarray,
     watershed: int | Dict[float, int],
-    zscore: np.ndarray,
-    threshold: float,
+    zscore_thr_ratio: np.ndarray,
 ):
     watershed_flags = np.zeros_like(flags)
 
     if isinstance(watershed, int):
-        watershed = {threshold: watershed}
-
-    # Allow the basic threshold to not be specified in the watershed dict, instead
-    # the user can use 0.0
-    if 0.0 in watershed:
-        watershed[threshold] = watershed[0.0]
-        del watershed[0.0]
+        watershed = {1.0: watershed}
 
     for thr, nw in sorted(watershed.items()):
-        this_flg = zscore > thr
+        this_flg = zscore_thr_ratio > thr
 
         for i in range(1, nw + 1):
             watershed_flags[i:] |= this_flg[:-i]
