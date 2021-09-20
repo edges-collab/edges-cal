@@ -81,10 +81,10 @@ def simulate_q_from_calobs(calobs, load: str, scale_model=None) -> np.ndarray:
         The 3-position switch values.
     """
     C1 = scale_model(calobs.freq.freq) if scale_model is not None else calobs.C1()
-
+    lna_s11 = calobs.lna_s11() if callable(calobs.lna_s11) else calobs.lna_s11
     return simulate_q(
-        load_s11=calobs.s11_correction_models[load],
-        lna_s11=calobs.lna_s11,
+        load_s11=calobs._loads[load].reflections.s11_model(calobs.freq.freq),
+        lna_s11=lna_s11,
         load_temp=calobs._loads[load].temp_ave,
         scale=C1,
         offset=calobs.C2(),
@@ -97,7 +97,14 @@ def simulate_q_from_calobs(calobs, load: str, scale_model=None) -> np.ndarray:
 
 
 def simulate_qant_from_calobs(
-    calobs, ant_s11: np.ndarray, ant_temp: np.ndarray, scale_model=None
+    calobs,
+    ant_s11: np.ndarray,
+    ant_temp: np.ndarray,
+    scale_model=None,
+    freq=None,
+    loss=1,
+    t_amb=296,
+    bm_corr=1,
 ) -> np.ndarray:
     """Simulate antenna Q from a calibration observation.
 
@@ -115,17 +122,25 @@ def simulate_qant_from_calobs(
     np.ndarray
         The simulated 3-position switch ratio, Q.
     """
-    scale = scale_model(calobs.freq.freq) if scale_model is not None else calobs.C1()
+    if freq is None:
+        freq = calobs.freq.freq
 
+    scale = scale_model(freq) if scale_model is not None else calobs.C1(freq)
+
+    ant_temp = loss * ant_temp / bm_corr + (1 - loss) * t_amb
+
+    lna_s11 = (
+        calobs.lna_s11(freq) if callable(calobs.lna_s11) else calobs.lna.s11_model(freq)
+    )
     return simulate_q(
         load_s11=ant_s11,
-        lna_s11=calobs.lna_s11,
+        lna_s11=lna_s11,
         load_temp=ant_temp,
         scale=scale,
-        offset=calobs.C2(),
-        t_unc=calobs.Tunc(),
-        t_cos=calobs.Tcos(),
-        t_sin=calobs.Tsin(),
+        offset=calobs.C2(freq),
+        t_unc=calobs.Tunc(freq),
+        t_cos=calobs.Tcos(freq),
+        t_sin=calobs.Tsin(freq),
         t_load=calobs.t_load,
         t_load_ns=calobs.t_load_ns,
     )

@@ -8,7 +8,7 @@ import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
 from edges_io.h5 import register_h5type
-from typing import Dict, List, Optional, Sequence, Type
+from typing import Dict, List, Optional, Sequence, Tuple, Type
 
 from . import receiver_calibration_func as rcf
 from .simulate import simulate_q_from_calobs
@@ -19,7 +19,7 @@ _MODELS = {}
 
 
 @attr.s(frozen=True, kw_only=True)
-class FixedLinearModel:
+class FixedLinearModel(yaml.YAMLObject):
     """
     A base class for a linear model fixed at a certain set of co-ordinates.
 
@@ -37,11 +37,18 @@ class FixedLinearModel:
         can be input directly to save computation time.
     """
 
+    yaml_tag = "!Model"
+
     model: Model = attr.ib()
     x: np.ndarray = attr.ib(converter=np.asarray)
     _init_basis: np.ndarray | None = attr.ib(
         default=None, converter=attr.converters.optional(np.asarray)
     )
+
+    @classmethod
+    def to_yaml(cls, dumper, data):
+        """Method to convert to YAML format."""
+        return _model_yaml_representer(dumper, data.model)
 
     @model.validator
     def _model_vld(self, att, val):
@@ -140,6 +147,11 @@ class FixedLinearModel:
         model = self.model.with_params(parameters=parameters)
         return attr.evolve(self, model=model, init_basis=init_basis)
 
+    @property
+    def parameters(self) -> np.ndarray | None:
+        """The parameters of the model, if set."""
+        return self.model.parameters
+
 
 def _transform_yaml_constructor(
     loader: yaml.SafeLoader, node: yaml.nodes.MappingNode
@@ -199,27 +211,64 @@ class ScaleTransform(ModelTransform):
         return x / self.scale
 
 
+def tuple_converter(x):
+    """Convert input to tuple of floats."""
+    return tuple(float(xx) for xx in x)
+
+
 @attr.s(frozen=True, kw_only=True)
 class CentreTransform(ModelTransform):
-    centre: float = attr.ib(converter=float)
+    range: Tuple[float, float] = attr.ib(converter=tuple_converter)
+    centre: float = attr.ib(default=0.0, converter=float)
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
-        return x - x.min() - (x.max() - x.min()) / 2 + self.centre
+        return x - self.range[0] - (self.range[1] - self.range[0]) / 2 + self.centre
 
 
 @attr.s(frozen=True, kw_only=True)
 class UnitTransform(ModelTransform):
+    """A transform that takes the input range down to -1 to 1."""
+
+    range: Tuple[float, float] = attr.ib(converter=tuple_converter)
+
+    @cached_property
+    def _centre(self):
+        return CentreTransform(centre=0, range=self.range)
+
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
-        return 2 * CentreTransform(centre=0.0).transform(x) / (x.max() - x.min())
+        if self.range[0] is None:
+            self.range[0] = float(x.min())
+            self.range[1] = float(x.max())
+
+        return 2 * self._centre.transform(x) / (self.range[1] - self.range[0])
 
 
 @attr.s(frozen=True, kw_only=True)
 class LogTransform(ModelTransform):
+    """A transform that takes the logarithm of the input."""
+
+    scale: float = attr.ib(1.0)
+
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return np.log(x)
+
+
+@attr.s(frozen=True, kw_only=True)
+class ZerotooneTransform(ModelTransform):
+    """A transform that takes an input range down to (0,1)."""
+
+    range: Tuple[float, float] = attr.ib(converter=tuple_converter)
+
+    @range.default
+    def _rng_default(self):
+        return [None, None]
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        return (x - self.range[0]) / (self.range[1] - self.range[0])
 
 
 @register_h5type
@@ -530,6 +579,10 @@ class CompositeModel:
     models: Dict[str, Model] = attr.ib()
     extra_basis: Dict[str, np.ndarray] = attr.ib(factory=dict)
 
+    @extra_basis.validator
+    def _eb_vld(self, att, val):
+        assert all(v in self.models for v in val)
+
     @cached_property
     def n_terms(self) -> int:
         """The number of terms in the full composite model."""
@@ -572,6 +625,11 @@ class CompositeModel:
             extra = extra(x)
         return extra
 
+    @cached_property
+    def model_idx(self) -> Dict[str, slice]:
+        """Dictionary of parameter indices correponding to each model."""
+        return {name: self._get_model_param_indx(name) for name in self.models}
+
     def get_model(
         self,
         model: str,
@@ -580,7 +638,7 @@ class CompositeModel:
         with_extra: bool = False,
     ):
         """Calculate a sub-model."""
-        indx = self._get_model_param_indx(model)
+        indx = self.model_idx[model]
 
         extra = self.get_extra_basis(model, x) if with_extra else 1
         model = self.models[model]
@@ -687,6 +745,155 @@ class CompositeModel:
 
 
 @attr.s(frozen=True, kw_only=True)
+class ComplexRealImagModel(yaml.YAMLObject):
+    """A composite model that is specifically for complex functions in real/imag."""
+
+    yaml_tag = "ComplexRealImagModel"
+
+    real: Model | FixedLinearModel = attr.ib()
+    imag: Model | FixedLinearModel = attr.ib()
+
+    def at(self, **kwargs) -> FixedLinearModel:
+        """Get an evaluated linear model."""
+        return attr.evolve(
+            self,
+            real=self.real.at(**kwargs),
+            imag=self.imag.at(**kwargs),
+        )
+
+    def __call__(
+        self,
+        x: np.ndarray | None = None,
+        parameters: Sequence | None = None,
+    ) -> np.ndarray:
+        """Evaluate the model.
+
+        Parameters
+        ----------
+        x
+            The co-ordinates at which to evaluate the model (by default, use
+            ``default_x``).
+        params
+            A list/array of parameters at which to evaluate the model. Will use the
+            instance's parameters if available. If using a subset of the basis
+            functions, you can pass a subset of parameters.
+
+        Returns
+        -------
+        model
+            The model evaluated at the input ``x`` or ``basis``.
+        """
+        return self.real(
+            x=x,
+            parameters=parameters[: self.real.n_terms]
+            if parameters is not None
+            else None,
+        ) + 1j * self.imag(
+            x=x,
+            parameters=parameters[self.real.n_terms :]
+            if parameters is not None
+            else None,
+        )
+
+    def fit(
+        self,
+        ydata: np.ndarray,
+        weights: np.ndarray | float = 1.0,
+        xdata: np.ndarray | None = None,
+    ):
+        """Create a linear-regression fit object."""
+        if isinstance(self.real, FixedLinearModel):
+            real = self.real
+        else:
+            real = self.real.at(x=xdata)
+
+        if isinstance(self.imag, FixedLinearModel):
+            imag = self.imag
+        else:
+            imag = self.imag.at(x=xdata)
+
+        real = real.fit(np.real(ydata), weights=weights).fit
+        imag = imag.fit(np.imag(ydata), weights=weights).fit
+        return attr.evolve(self, real=real, imag=imag)
+
+
+@attr.s(frozen=True, kw_only=True)
+class ComplexMagPhaseModel(yaml.YAMLObject):
+    """A composite model that is specifically for complex functions in mag/phase."""
+
+    yaml_tag = "ComplexMagPhaseModel"
+
+    mag: Model | FixedLinearModel = attr.ib()
+    phs: Model | FixedLinearModel = attr.ib()
+
+    def at(self, **kwargs) -> FixedLinearModel:
+        """Get an evaluated linear model."""
+        return attr.evolve(
+            self,
+            mag=self.mag.at(**kwargs),
+            phs=self.phs.at(**kwargs),
+        )
+
+    def __call__(
+        self,
+        x: np.ndarray | None = None,
+        parameters: Sequence | None = None,
+    ) -> np.ndarray:
+        """Evaluate the model.
+
+        Parameters
+        ----------
+        x
+            The co-ordinates at which to evaluate the model (by default, use
+            ``default_x``).
+        params
+            A list/array of parameters at which to evaluate the model. Will use the
+            instance's parameters if available. If using a subset of the basis
+            functions, you can pass a subset of parameters.
+
+        Returns
+        -------
+        model : np.ndarray
+            The model evaluated at the input ``x`` or ``basis``.
+        """
+        return self.mag(
+            x=x,
+            parameters=parameters[: self.mag.n_terms]
+            if parameters is not None
+            else None,
+        ) * np.exp(
+            1j
+            * self.phs(
+                x=x,
+                parameters=parameters[self.mag.n_terms :]
+                if parameters is not None
+                else None,
+            )
+        )
+
+    def fit(
+        self,
+        ydata: np.ndarray,
+        weights: np.ndarray | float = 1.0,
+        xdata: np.ndarray | None = None,
+    ):
+        """Create a linear-regression fit object."""
+        if isinstance(self.mag, FixedLinearModel):
+            mag = self.mag
+        else:
+            mag = self.mag.at(x=xdata)
+
+        if isinstance(self.phs, FixedLinearModel):
+            phs = self.phs
+        else:
+            phs = self.phs.at(x=xdata)
+
+        mag = mag.fit(np.abs(ydata), weights=weights).fit
+        phs = phs.fit(np.unwrap(np.angle(ydata)), weights=weights).fit
+        return attr.evolve(self, mag=mag, phs=phs)
+
+
+@attr.s(frozen=True, kw_only=True)
 class NoiseWaves:
     freq: np.ndarray = attr.ib()
     gamma_src: Dict[str, np.ndarray] = attr.ib()
@@ -713,7 +920,7 @@ class NoiseWaves:
 
         # x is the frequencies repeated for every input source
         x = np.tile(self.freq, len(self.gamma_src))
-        tr = UnitTransform()
+        tr = UnitTransform(range=(x.min(), x.max()))
 
         return CompositeModel(
             models={
@@ -971,6 +1178,22 @@ class ModelFit:
         """The weighted root-mean-square of the residuals."""
         return np.sqrt(self.weighted_chi2) / np.sum(self.weights)
 
+    @cached_property
+    def hessian(self):
+        """The Hessian matrix of the linear parameters."""
+        return (self.model.basis * self.weights).dot(self.model.basis.T)
+
+    @cached_property
+    def parameter_covariance(self) -> np.ndarray:
+        """The Covariance matrix of the parameters."""
+        return np.linalg.inv(self.hessian)
+
+    def get_sample(self, size: int | Tuple[int] = 1):
+        """Generate a random sample from the posterior distribution."""
+        return np.random.multivariate_normal(
+            mean=self.model_parameters, cov=self.parameter_covariance, size=size
+        )
+
 
 def _model_yaml_constructor(
     loader: yaml.SafeLoader, node: yaml.nodes.MappingNode
@@ -983,7 +1206,6 @@ def _model_yaml_constructor(
 def _model_yaml_representer(
     dumper: yaml.SafeDumper, model: Model
 ) -> yaml.nodes.MappingNode:
-
     model_dct = attr.asdict(model, recurse=False)
     model_dct.update(model=model.__class__.__name__.lower())
     if model_dct["parameters"] is not None:

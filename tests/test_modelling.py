@@ -192,3 +192,27 @@ def test_noise_waves(cal_data, tmpdir):
     assert len(nw.get_full_model("hot_load")) == calobs.freq.n
     assert nw.with_params_from_calobs(calobs) == nw
     assert len(nw.get_data_from_calobs(calobs)) == 4 * calobs.freq.n
+
+
+def test_complex_model():
+    cmplx = mdl.ComplexMagPhaseModel(
+        mag=mdl.Polynomial(n_terms=5), phs=mdl.Polynomial(n_terms=6)
+    )
+
+    x = np.linspace(0, 1, 150)
+    data = cmplx(x=x, parameters=[0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5])
+    fit = cmplx.fit(ydata=data, xdata=x)
+    np.testing.assert_allclose(fit.mag.parameters, np.arange(5), atol=1e-10)
+    np.testing.assert_allclose(np.real(fit()), np.real(data), rtol=0, atol=1e-8)
+
+
+def test_complex_reim_model():
+    cmplx = mdl.ComplexRealImagModel(
+        real=mdl.Polynomial(n_terms=5), imag=mdl.Polynomial(n_terms=6)
+    )
+
+    x = np.linspace(0, 1, 150)
+    data = cmplx(x=x, parameters=np.arange(11))
+    fit = cmplx.fit(ydata=data, xdata=x)
+    np.testing.assert_allclose(fit.real.parameters, np.arange(5), atol=1e-10)
+    np.testing.assert_allclose(fit.imag.parameters, np.arange(5, 11), atol=1e-10)

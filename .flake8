@@ -7,6 +7,7 @@ ignore =
   D401    # First line should be in imperative mood -- cached_properties don't fit this bill.
   D101    # Missing docstring in public class -- my docstrings are in the __init__ which seems to fail this ?
   RST210  # Otherwise it flags down **kwargs in docstrings.
+  N815
 max-line-length = 88
 max-complexity = 20
 inline-quotes = double

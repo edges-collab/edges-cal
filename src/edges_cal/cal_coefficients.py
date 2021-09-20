@@ -7,10 +7,12 @@ a one-stop interface for everything related to calibration.
 """
 from __future__ import annotations
 
+import attr
 import h5py
 import numpy as np
 import tempfile
 import warnings
+import yaml
 from abc import ABCMeta, abstractmethod
 from astropy.convolution import Gaussian1DKernel, convolve
 from copy import copy
@@ -21,7 +23,7 @@ from hashlib import md5
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from . import DATA_PATH
 from . import modelling as mdl
@@ -220,28 +222,17 @@ class _S11Base(metaclass=ABCMeta):
         """
         n_terms = n_terms or self.n_terms
         model_type = mdl.get_mdl(model_type or self.model_type)
-        model = model_type(n_terms=n_terms)
-        emodel = model.at(x=self.freq.freq_recentred)
+        model = model_type(
+            n_terms=n_terms,
+            transform=mdl.UnitTransform(range=[self.freq.min, self.freq.max]),
+        )
+        emodel = model.at(x=self.freq.freq)
+
+        cmodel = mdl.ComplexMagPhaseModel(mag=emodel, phs=emodel)
 
         s11_correction = self.corrected_load_s11
 
-        def get_model(mag):
-            # Returns a callable function that will evaluate a model onto a set of
-            # un-normalised frequencies.
-
-            d = np.abs(s11_correction) if mag else np.unwrap(np.angle(s11_correction))
-
-            fit = emodel.fit(ydata=d)
-            return fit.evaluate
-
-        mag = get_model(True)
-        ang = get_model(False)
-
-        def model(f):
-            ff = self.freq.normalize(f)
-            return mag(ff) * (np.cos(ang(ff)) + 1j * np.sin(ang(ff)))
-
-        return model
+        return cmodel.fit(ydata=s11_correction)
 
     @cached_property
     def s11_model(self) -> callable:
@@ -284,8 +275,7 @@ class _S11Base(metaclass=ABCMeta):
         ax[-1].set_xlabel("Frequency [MHz]")
 
         corr = self.corrected_load_s11
-        model = self.s11_model
-        model = model(self.freq.freq)
+        model = self.s11_model(self.freq.freq)
 
         ax[0].plot(
             self.freq.freq, 20 * np.log10(np.abs(model)), color=color_abs, label=label
@@ -349,7 +339,7 @@ class LoadS11(_S11Base):
         repeat_num_load: int = None,
         repeat_num_switch: int = None,
         resistance: float = 50.166,
-        model_internal_switch: mdl.Model = mdl.Polynomial(n_terms=7),
+        model_internal_switch: mdl.Model = attr.NOTHING,
         **kwargs,
     ):
         """
@@ -946,6 +936,7 @@ class HotLoadCorrection:
         path: Union[str, Path] = ":semi_rigid_s_parameters_WITH_HEADER.txt",
         f_low: Optional[float] = None,
         f_high: Optional[float] = None,
+        n_terms: int = 21,
     ):
         """
         Corrections for the hot load.
@@ -985,41 +976,15 @@ class HotLoadCorrection:
         else:
             raise IOError("Semi-Rigid Cable file has wrong data format.")
 
-    def _get_model_part(self, kind: str, mag: bool = True):
-        """
-        Compute an evaluated S-parameter model, having fit to the data.
-
-        Parameters
-        ----------
-        kind : str
-            String specifying whether to get s11, s12, or s22.
-        mag : bool
-            Whether to return the magnitude (otherwise, the angle)
-
-        Returns
-        -------
-        array_like : The model S-parameter
-        """
-        d = self.data[:, self._kinds[kind]]
-        d = np.abs(d) if mag else np.unwrap(np.angle(d))
-        model = mdl.Polynomial(n_terms=21)
-        mag = model.fit(xdata=self.freq.freq_recentred, ydata=d)
-
-        def out(f):
-            ff = self.freq.normalize(f)
-            return mag.evaluate(ff)
-
-        return out
+        self.n_terms = int(n_terms)
 
     def _get_model_kind(self, kind):
-        mag = self._get_model_part(kind)
-        ang = self._get_model_part(kind, False)
-
-        def out(f):
-            a = ang(f)
-            return mag(f) * (np.cos(a) + 1j * np.sin(a))
-
-        return out
+        model = mdl.Polynomial(
+            n_terms=self.n_terms,
+            transform=mdl.UnitTransform(range=(self.freq.min, self.freq.max)),
+        )
+        model = mdl.ComplexMagPhaseModel(mag=model, phs=model)
+        return model.fit(xdata=self.freq.freq, ydata=self.data[:, self._kinds[kind]])
 
     @cached_property
     def s11_model(self):
@@ -1471,6 +1436,11 @@ class CalibrationObservation:
         self.t_load = self.ambient.t_load
         self.t_load_ns = self.ambient.t_load_ns
 
+    @property
+    def load_names(self) -> Tuple[str]:
+        """Names of the loads."""
+        return tuple(self._loads.keys())
+
     def new_load(
         self,
         load_name: str,
@@ -1782,7 +1752,7 @@ class CalibrationObservation:
             t_load=self.t_load,
         )
 
-    def calibrate(self, load: Union[Load, str]):
+    def calibrate(self, load: Union[Load, str], q=None, temp=None):
         """
         Calibrate the temperature of a given load.
 
@@ -1797,7 +1767,13 @@ class CalibrationObservation:
         """
         load = self._load_str_to_load(load)
         a, b = self.get_linear_coefficients(load)
-        return a * load.averaged_spectrum + b
+
+        if q is not None:
+            temp = self.t_load_ns * q + self.t_load
+        elif temp is None:
+            temp = load.averaged_spectrum
+
+        return a * temp + b
 
     def _load_str_to_load(self, load: Union[Load, str]):
         if isinstance(load, str):
@@ -2138,6 +2114,16 @@ class CalibrationObservation:
                 self.internal_switch.s22_model(self.freq.freq)
             )
 
+            load_grp = fl.create_group("loads")
+
+            for name, load in self._loads.items():
+                grp = load_grp.create_group(name)
+                grp.attrs["s11_model"] = yaml.dump(load.s11_model)
+                grp["averaged_Q"] = load.spectrum.averaged_Q
+                grp["variance_Q"] = load.spectrum.variance_Q
+                grp["temp_ave"] = load.temp_ave
+                grp.attrs["n_integrations"] = load.spectrum.n_integrations
+
     def to_calfile(self):
         """Directly create a :class:`Calibration` object without writing to file."""
         return Calibration.from_calobs(self)
@@ -2195,6 +2181,25 @@ class CalibrationObservation:
         return new
 
 
+@attr.s
+class _LittleS11:
+    s11_model: Callable = attr.ib()
+
+
+@attr.s
+class _LittleSpectrum:
+    averaged_Q: np.ndarray = attr.ib()
+    variance_Q: np.ndarray = attr.ib()
+    n_integrations: int = attr.ib()
+
+
+@attr.s
+class _LittleLoad:
+    reflections: _LittleS11 = attr.ib()
+    spectrum: _LittleSpectrum = attr.ib()
+    temp_ave: np.ndarray = attr.ib()
+
+
 class Calibration:
     def __init__(self, filename: Union[str, Path]):
         """
@@ -2209,8 +2214,8 @@ class Calibration:
 
         with h5py.File(filename, "r") as fl:
             self.calobs_path = fl.attrs["path"]
-            self.cterms = fl.attrs["cterms"]
-            self.wterms = fl.attrs["wterms"]
+            self.cterms = int(fl.attrs["cterms"])
+            self.wterms = int(fl.attrs["wterms"])
             self.t_load = fl.attrs.get("t_load", 300)
             self.t_load_ns = fl.attrs.get("t_load_ns", 400)
 
@@ -2221,6 +2226,27 @@ class Calibration:
             self.Tunc_poly = np.poly1d(fl["Tunc"][...])
 
             self.freq = FrequencyRange(fl["frequencies"][...])
+
+            self._loads = {}
+            if "loads" in fl:
+                lg = fl["loads"]
+
+                self.load_names = list(lg.keys())
+
+                for name, grp in lg.items():
+                    self._loads[name] = _LittleLoad(
+                        reflections=_LittleS11(
+                            s11_model=yaml.load(
+                                grp.attrs["s11_model"], Loader=yaml.FullLoader
+                            ).at(x=self.freq.freq)
+                        ),
+                        spectrum=_LittleSpectrum(
+                            averaged_Q=grp["averaged_Q"][...],
+                            variance_Q=grp["variance_Q"][...],
+                            n_integrations=grp.attrs["n_integrations"],
+                        ),
+                        temp_ave=grp["temp_ave"][...],
+                    )
 
             self._lna_s11_rl = Spline(self.freq.freq, fl["lna_s11_real"][...])
             self._lna_s11_im = Spline(self.freq.freq, fl["lna_s11_imag"][...])

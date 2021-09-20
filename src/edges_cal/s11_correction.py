@@ -8,7 +8,7 @@ from edges_io import io
 from typing import Callable, Tuple, Union
 
 from . import reflection_coefficient as rc
-from .modelling import Model, Polynomial
+from .modelling import ComplexRealImagModel, Model, Polynomial, UnitTransform
 
 
 def _read_data_and_corrections(switching_state: io.SwitchingState):
@@ -46,10 +46,17 @@ def _tuplify(x):
 class InternalSwitch:
     data: io.SwitchingState = attr.ib()
     resistance: float = attr.ib(default=50.0)
-    model: Model = attr.ib(default=Polynomial(n_terms=7))
+    model: Model = attr.ib()
     n_terms: Union[Tuple[int, int, int], int] = attr.ib(
         default=(7, 7, 7), converter=_tuplify
     )
+
+    @model.default
+    def _mdl_default(self):
+        return Polynomial(
+            n_terms=7,
+            transform=UnitTransform(range=(self.data.freq.min(), self.data.freq.max())),
+        )
 
     @cached_property
     def fixed_model(self):
@@ -84,17 +91,20 @@ class InternalSwitch:
     @cached_property
     def _s11_model(self):
         """The input unfit S11 model."""
-        return self.fixed_model.with_nterms(n_terms=self.n_terms[0])
+        model = self.model.with_nterms(n_terms=self.n_terms[0])
+        return ComplexRealImagModel(real=model, imag=model)
 
     @cached_property
     def _s12_model(self):
         """The input unfit S12 model."""
-        return self.fixed_model.with_nterms(n_terms=self.n_terms[1])
+        model = self.model.with_nterms(n_terms=self.n_terms[1])
+        return ComplexRealImagModel(real=model, imag=model)
 
     @cached_property
     def _s22_model(self):
         """The input unfit S22 model."""
-        return self.fixed_model.with_nterms(n_terms=self.n_terms[2])
+        model = self.model.with_nterms(n_terms=self.n_terms[2])
+        return ComplexRealImagModel(real=model, imag=model)
 
     @cached_property
     def s11_model(self) -> Callable:
@@ -136,8 +146,4 @@ class InternalSwitch:
     def _get_reflection_model(self, kind: str) -> Model:
         # 'kind' should be 's11', 's12' or 's22'
         data = getattr(self, f"{kind}_data")
-
-        rl = getattr(self, f"_{kind}_model").fit(np.real(data))
-        im = getattr(self, f"_{kind}_model").fit(np.imag(data))
-
-        return lambda freq: rl.evaluate(freq) + 1j * im.evaluate(freq)
+        return getattr(self, f"_{kind}_model").fit(xdata=self.data.freq, ydata=data)
