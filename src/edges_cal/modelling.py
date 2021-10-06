@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Type
 
 from . import receiver_calibration_func as rcf
 from .simulate import simulate_q_from_calobs
-from .tools import as_readonly
+from .tools import as_readonly, bin
 
 F_CENTER = 75.0
 _MODELS = {}
@@ -1026,12 +1026,18 @@ class NoiseWaves:
         return np.concatenate(tuple(data))
 
     @classmethod
-    def from_calobs(cls, calobs) -> NoiseWaves:
+    def from_calobs(cls, calobs, smooth: int = 1) -> NoiseWaves:
         """Initialize a noise wave model from a calibration observation."""
+        freq = bin(calobs.freq.freq, smooth)
+
+        gamma_src = {
+            name: source.s11_model(freq) for name, source in calobs._loads.items()
+        }
+
         nw_model = cls(
-            freq=calobs.freq.freq,
-            gamma_src=calobs.s11_correction_models,
-            gamma_rec=calobs.lna.s11_model(calobs.freq.freq),
+            freq=freq,
+            gamma_src=gamma_src,
+            gamma_rec=calobs.lna.s11_model(freq),
             c_terms=calobs.cterms,
             w_terms=calobs.wterms,
         )
