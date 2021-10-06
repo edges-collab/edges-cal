@@ -5,6 +5,7 @@ import h5py
 import numpy as np
 import warnings
 import yaml
+from astropy.convolution import Box1DKernel, convolve_fft
 from cached_property import cached_property
 from dataclasses import dataclass, field
 from matplotlib import pyplot as plt
@@ -795,8 +796,9 @@ def model_filter(
     watershed: int | Dict[float, int] | None = None,
     flag_if_broken: bool = True,
     init_flags: np.ndarray | None = None,
-    std_estimator: Literal["model", "medfilt", "std", "mad"] = "model",
+    std_estimator: Literal["model", "medfilt", "std", "mad", "sliding_rms"] = "model",
     medfilt_width: int = 100,
+    sliding_rms_width: int = 100,
 ):
     """
     Flag data by subtracting a smooth model and iteratively removing outliers.
@@ -981,6 +983,29 @@ def model_filter(
             model_std = np.std(res[~flags]) * np.ones_like(x)
         elif std_estimator == "mad":
             model_std = _get_mad(res[~flags]) * np.ones_like(x)
+        elif std_estimator == "sliding_rms":
+            # This gets the sliding RMS by convolving a top-hat with the residuals^2
+            # then taking the square root. To ensure that the mean at the edges doesn't
+            # get distorted, we extend the array on both sides with NaNs.
+            res2 = np.concatenate(
+                (
+                    np.ones(sliding_rms_width // 2) * np.nan,
+                    res ** 2,
+                    np.ones(sliding_rms_width // 2) * np.nan,
+                )
+            )
+            fflags = np.concatenate(
+                (
+                    np.ones(sliding_rms_width // 2, dtype=bool),
+                    flags,
+                    np.ones(sliding_rms_width // 2, dtype=bool),
+                )
+            )
+            model_std = np.sqrt(
+                convolve_fft(res2, Box1DKernel(sliding_rms_width), mask=fflags)[
+                    sliding_rms_width // 2 : -sliding_rms_width // 2
+                ]
+            )
         else:
             raise ValueError(
                 "std_estimator must be one of 'medfilt', 'model','std' or 'mad'."

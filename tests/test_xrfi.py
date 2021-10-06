@@ -221,8 +221,11 @@ class TestXRFIModel:
         assert not np.any(flags)
 
     @parametrize("rfi_model", [fxref(rfi_random_1d), fxref(rfi_regular_1d)])
-    @pytest.mark.parametrize("std_estimator", ["medfilt", "std", "mad"])
+    @pytest.mark.parametrize("std_estimator", ["medfilt", "std", "mad", "sliding_rms"])
     def test_std_estimator(self, sky_flat_1d, rfi_model, std_estimator, freq):
+        if std_estimator == "sliding_rms" and rfi_model[50] == 0:
+            pytest.skip("sliding_rms doesn't work well for unrealistic random RFI")
+
         sky, std, noise, rfi = make_sky(sky_flat_1d, rfi_model, scale=1000)
 
         true_flags = rfi_model > 0

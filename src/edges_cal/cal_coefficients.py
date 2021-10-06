@@ -1825,13 +1825,22 @@ class CalibrationObservation:
         a, b = self.get_linear_coefficients(load)
         return (temp - b) / a
 
-    def get_K(self) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    def get_K(
+        self, freq: np.ndarray | None = None
+    ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """Get the source-S11-dependent factors of Monsalve (2017) Eq. 7."""
+        if freq is None:
+            freq = self.freq.freq
+            gamma_ants = self.s11_correction_models
+        else:
+            gamma_ants = {
+                name: source.s11_model(freq) for name, source in self._loads.items()
+            }
+
+        lna_s11 = self.lna.s11_model(freq)
         return {
-            name: rcf.get_K(
-                gamma_rec=self.lna.s11_model(self.freq.freq), gamma_ant=gamma_ant
-            )
-            for name, gamma_ant in self.s11_correction_models.items()
+            name: rcf.get_K(gamma_rec=lna_s11, gamma_ant=gamma_ant)
+            for name, gamma_ant in gamma_ants.items()
         }
 
     def plot_calibrated_temp(

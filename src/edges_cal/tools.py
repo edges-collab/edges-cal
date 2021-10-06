@@ -209,3 +209,10 @@ class EdgesFrequencyRange(FrequencyRange):
         # The final frequency here will be slightly less than 200 MHz. 200 MHz
         # corresponds to the centre of the N+1 bin, which doesn't actually exist.
         return np.arange(0, max_freq, df)
+
+
+def bin(x: np.ndarray, size=1):  # noqa
+    """Simple unweighted mean-binning of an array."""
+    n = len(x)
+    nn = size * (n // size)
+    return np.mean(x[:nn].reshape((-1, size)), axis=1)
