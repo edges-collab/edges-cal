@@ -237,6 +237,12 @@ class TestXRFIModel:
 
         assert len(wrong) == 0
 
+    def test_bad_std_estimator(self, sky_flat_1d, rfi_random_1d, freq):
+        sky, std, noise, rfi = make_sky(sky_flat_1d, rfi_random_1d, scale=1000)
+
+        with pytest.raises(ValueError):
+            flags, info = xrfi.xrfi_model(sky, freq=freq, std_estimator="bad_estimator")
+
 
 class TestWatershed:
     def test_watershed(self):
