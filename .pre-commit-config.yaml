@@ -39,7 +39,6 @@ repos:
       - flake8-rst-docstrings
       - flake8-rst
       - flake8-copyright
-      - flake8-ownership
 
 #- repo: https://github.com/terrencepreilly/darglint  Removed until it gets faster.
 #  rev: master
