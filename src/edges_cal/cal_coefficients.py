@@ -103,6 +103,7 @@ class _S11Base(metaclass=ABCMeta):
         "AntSim2": 55,
         "AntSim3": 55,
         "AntSim4": 55,
+        "AntSim1": 55,
         "lna": 37,
     }
 
@@ -729,6 +730,7 @@ class LoadSpectrum:
             )
             means = {}
             variances = {}
+            n_integrations = 0
             with h5py.File(fname, "r") as fl:
                 for kind in kinds:
                     means[kind] = fl[kind + "_mean"][...]
@@ -2208,6 +2210,9 @@ class _LittleLoad:
     spectrum: _LittleSpectrum = attr.ib()
     temp_ave: np.ndarray = attr.ib()
 
+    def s11_model(self, freq):
+        return self.reflections.s11_model(freq)
+
 
 class Calibration:
     def __init__(self, filename: Union[str, Path]):
@@ -2256,6 +2261,7 @@ class Calibration:
                         ),
                         temp_ave=grp["temp_ave"][...],
                     )
+                    setattr(self, name, self._loads[name])
 
             self._lna_s11_rl = Spline(self.freq.freq, fl["lna_s11_real"][...])
             self._lna_s11_im = Spline(self.freq.freq, fl["lna_s11_imag"][...])
@@ -2339,6 +2345,24 @@ class Calibration:
         if freq is None:
             freq = self.freq.freq
         return self.Tunc_poly(self.freq.normalize(freq))
+
+    def get_K(
+        self, freq: np.ndarray | None = None
+    ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+        """Get the source-S11-dependent factors of Monsalve (2017) Eq. 7."""
+        if freq is None:
+            freq = self.freq.freq
+            gamma_ants = self.s11_correction_models
+        else:
+            gamma_ants = {
+                name: source.s11_model(freq) for name, source in self._loads.items()
+            }
+
+        lna_s11 = self.lna_s11(freq)
+        return {
+            name: rcf.get_K(gamma_rec=lna_s11, gamma_ant=gamma_ant)
+            for name, gamma_ant in gamma_ants.items()
+        }
 
     def _linear_coefficients(self, freq, ant_s11):
         return rcf.get_linear_coefficients(

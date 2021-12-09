@@ -8,7 +8,7 @@ import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
 from edges_io.h5 import register_h5type
-from typing import Dict, List, Optional, Sequence, Tuple, Type
+from typing import Dict, Optional, Sequence, Tuple, Type
 
 from . import receiver_calibration_func as rcf
 from .simulate import simulate_q_from_calobs
@@ -903,9 +903,9 @@ class NoiseWaves:
     parameters: Sequence | None = attr.ib(default=None)
 
     @cached_property
-    def src_names(self) -> List[str]:
+    def src_names(self) -> tuple[str]:
         """List of names of inputs sources (eg. ambient, hot_load, open, short)."""
-        return list(self.gamma_src.keys())
+        return tuple(self.gamma_src.keys())
 
     @cached_property
     def linear_model(self) -> CompositeModel:
@@ -993,7 +993,7 @@ class NoiseWaves:
     def with_params_from_calobs(self, calobs) -> NoiseWaves:
         """Get a new noise wave model with parameters fitted using standard methods."""
         c2 = (-calobs.C2_poly.coefficients[::-1]).tolist()
-        c2[0] += calobs.open.spectrum.t_load
+        c2[0] += calobs.t_load
 
         params = (
             calobs.Tunc_poly.coefficients[::-1].tolist()
@@ -1012,7 +1012,7 @@ class NoiseWaves:
         for src in self.src_names:
             load = calobs._loads[src]
             if tns is None:
-                _tns = calobs.C1() * load.spectrum.t_load_ns
+                _tns = calobs.C1() * calobs.t_load_ns
             else:
                 _tns = tns(x=calobs.freq.freq)
 
@@ -1026,22 +1026,35 @@ class NoiseWaves:
         return np.concatenate(tuple(data))
 
     @classmethod
-    def from_calobs(cls, calobs, smooth: int = 1) -> NoiseWaves:
+    def from_calobs(
+        cls, calobs, smooth: int = 1, cterms=None, wterms=None, sources=None
+    ) -> NoiseWaves:
         """Initialize a noise wave model from a calibration observation."""
+        if sources is None:
+            sources = tuple(calobs._loads.keys())
+
+        loads = {src: load for src, load in calobs._loads.items() if src in sources}
+
         freq = bin(calobs.freq.freq, smooth)
 
-        gamma_src = {
-            name: source.s11_model(freq) for name, source in calobs._loads.items()
-        }
+        gamma_src = {name: source.s11_model(freq) for name, source in loads.items()}
+
+        try:
+            lna_s11 = calobs.lna.s11_model(freq)
+        except AttributeError:
+            lna_s11 = calobs.lna_s11(freq)
 
         nw_model = cls(
             freq=freq,
             gamma_src=gamma_src,
-            gamma_rec=calobs.lna.s11_model(freq),
-            c_terms=calobs.cterms,
-            w_terms=calobs.wterms,
+            gamma_rec=lna_s11,
+            c_terms=cterms or calobs.cterms,
+            w_terms=wterms or calobs.wterms,
         )
-        return nw_model.with_params_from_calobs(calobs)
+        if not cterms and not wterms:
+            return nw_model.with_params_from_calobs(calobs)
+        else:
+            return nw_model
 
     def __call__(self, **kwargs) -> np.ndarray:
         """Call the underlying linear model."""

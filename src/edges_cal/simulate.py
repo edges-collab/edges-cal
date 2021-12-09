@@ -65,7 +65,9 @@ def simulate_q(
     return (uncal_temp - t_load) / t_load_ns
 
 
-def simulate_q_from_calobs(calobs, load: str, scale_model=None) -> np.ndarray:
+def simulate_q_from_calobs(
+    calobs, load: str, scale_model=None, freq=None
+) -> np.ndarray:
     """Simulate the observed 3-position switch ratio, Q, from noise-wave solutions.
 
     Parameters
@@ -80,17 +82,35 @@ def simulate_q_from_calobs(calobs, load: str, scale_model=None) -> np.ndarray:
     np.ndarray
         The 3-position switch values.
     """
-    C1 = scale_model(calobs.freq.freq) if scale_model is not None else calobs.C1()
-    lna_s11 = calobs.lna_s11() if callable(calobs.lna_s11) else calobs.lna_s11
+    default_freq = freq is None
+    if freq is None:
+        freq = calobs.freq.freq
+
+    C1 = scale_model(freq) if scale_model is not None else calobs.C1(freq)
+    try:
+        lna_s11 = calobs.lna.s11_model(freq)
+    except AttributeError:
+        lna_s11 = calobs.lna_s11(freq)
+
+    if not default_freq and load == "hot_load":
+        gain = calobs.hot_load._correction.power_gain(freq, calobs.hot_load.reflections)
+        # temperature
+        temp_ave = (
+            gain * calobs.hot_load.spectrum.temp_ave
+            + (1 - gain) * calobs.hot_load._ambient.temp_ave
+        )
+    else:
+        temp_ave = calobs._loads[load].temp_ave
+
     return simulate_q(
-        load_s11=calobs._loads[load].reflections.s11_model(calobs.freq.freq),
+        load_s11=calobs._loads[load].reflections.s11_model(freq),
         lna_s11=lna_s11,
-        load_temp=calobs._loads[load].temp_ave,
+        load_temp=temp_ave,
         scale=C1,
-        offset=calobs.C2(),
-        t_unc=calobs.Tunc(),
-        t_cos=calobs.Tcos(),
-        t_sin=calobs.Tsin(),
+        offset=calobs.C2(freq),
+        t_unc=calobs.Tunc(freq),
+        t_cos=calobs.Tcos(freq),
+        t_sin=calobs.Tsin(freq),
         t_load=calobs.t_load,
         t_load_ns=calobs.t_load_ns,
     )
