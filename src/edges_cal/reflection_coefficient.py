@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import numpy as np
 from edges_io import io
-from typing import List, Tuple, Union
 
 from . import types as tp
 
@@ -60,10 +59,10 @@ def gamma_shifted(s11, s12s21, s22, r):  # noqa
 
 def s2p_read(
     path: tp.PathLike,
-) -> Union[
-    Tuple[np.ndarray, np.ndarray],
-    Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-]:
+) -> (
+    tuple[np.ndarray, np.ndarray]
+    | tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+):
     """Read an S2P file format.
 
     Parameters
@@ -182,7 +181,7 @@ def fiducial_parameters_85033E(  # noqa: N802
 
 
 def standard(
-    f: np.ndarray, par: [List[float], np.ndarray], kind: str
+    f: np.ndarray, par: [list[float], np.ndarray], kind: str
 ) -> np.ndarray:  # noqa
     """Compute the standard.
 

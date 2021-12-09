@@ -48,7 +48,7 @@ main = click.Group()
 def run(config, path, out, cache_dir, plot, simulators):
     """Calibrate using lab measurements in PATH, and make all relevant plots."""
     out = Path(out)
-    with open(config, "r") as fl:
+    with open(config) as fl:
         settings = yaml.load(fl, Loader=yaml.FullLoader)
 
     if cache_dir != ".":
@@ -144,7 +144,7 @@ def sweep(
     cache_dir,
 ):
     """Perform a sweep of number of terms to obtain the best parameter set."""
-    with open(config, "r") as fl:
+    with open(config) as fl:
         settings = yaml.load(fl, Loader=yaml.FullLoader)
 
     if cache_dir != ".":
@@ -237,7 +237,7 @@ def report(
     fname = Path(f"calibration_{datetime.now().strftime('%Y-%m-%d-%H.%M.%S')}.ipynb")
 
     if config is not None:
-        with open(config, "r") as fl:
+        with open(config) as fl:
             settings = yaml.load(fl, Loader=yaml.FullLoader)
     else:
         settings = {}
@@ -362,7 +362,7 @@ def compare(
     )
 
     if config is not None:
-        with open(config, "r") as fl:
+        with open(config) as fl:
             settings = yaml.load(fl, Loader=yaml.FullLoader)
     else:
         settings = {}
@@ -373,7 +373,7 @@ def compare(
         settings["wterms"] = wterms
 
     if config_cmp is not None:
-        with open(config_cmp, "r") as fl:
+        with open(config_cmp) as fl:
             settings_cmp = yaml.load(fl, Loader=yaml.FullLoader)
     else:
         settings_cmp = {}

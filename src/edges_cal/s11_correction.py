@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Functions dealing with correcting S11's."""
 
 import attr

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Functions for calibrating the receiver."""
 from __future__ import annotations
 

@@ -52,6 +52,7 @@ class FrequencyRange:
         f: np.ndarray,
         f_low: Optional[float] = None,
         f_high: Optional[float] = None,
+        bin_size: int = 1,
     ):
         """
         Class defining a set of frequencies.
@@ -70,9 +71,13 @@ class FrequencyRange:
         self.freq_full = f
         self._f_high = f_high or f.max()
         self._f_low = f_low or f.min()
+        self.bin_size = bin_size
 
         if self._f_low >= self._f_high:
             raise ValueError("Cannot create frequency range: f_low >= f_high")
+
+        if self.bin_size < 1:
+            raise ValueError("Cannot create frequency range: bin_size < 1")
 
     @cached_property
     def n(self) -> int:
@@ -108,7 +113,7 @@ class FrequencyRange:
     @cached_property
     def freq(self):
         """The frequency array."""
-        return self.freq_full[self.mask]
+        return bin_array(self.freq_full[self.mask], self.bin_size)
 
     @cached_property
     def range(self):
@@ -211,8 +216,41 @@ class EdgesFrequencyRange(FrequencyRange):
         return np.arange(0, max_freq, df)
 
 
-def bin(x: np.ndarray, size=1):  # noqa
-    """Simple unweighted mean-binning of an array."""
-    n = len(x)
+def bin_array(x: np.ndarray, size: int = 1) -> np.ndarray:
+    """Simple unweighted mean-binning of an array.
+
+    Parameters
+    ----------
+    x
+        The array to be binned. Only the last axis will be binned.
+    size
+        The size of the bins.
+
+    Notes
+    -----
+    The last axis of `x` is binned. It is assumed that the coordinates corresponding
+    to `x` are regularly spaced, so the final average just takes `size` values and
+    averages them together.
+
+    If the array is not divisible by `size`, the last values are left out.
+
+    Examples
+    --------
+    Simple 1D example::
+
+        >>> x = np.array([1, 1, 2, 2, 3, 3])
+        >>> bin_array(x, size=2)
+        [1, 2, 3]
+
+    The last remaining values are left out::
+
+        >>> x = np.array([1, 1, 2, 2, 3, 3, 4])
+        >>> bin_array(x, size=2)
+        [1, 2, 3]
+    """
+    if size == 1:
+        return x
+
+    n = x.shape[-1]
     nn = size * (n // size)
-    return np.mean(x[:nn].reshape((-1, size)), axis=1)
+    return np.nanmean(x[..., :nn].reshape(x.shape[:-1] + (-1, size)), axis=-1)

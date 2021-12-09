@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 The main user-facing module of ``edges-cal``.
 
@@ -23,7 +22,7 @@ from hashlib import md5
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable
 
 from . import DATA_PATH
 from . import modelling as mdl
@@ -110,10 +109,10 @@ class _S11Base(metaclass=ABCMeta):
     def __init__(
         self,
         *,
-        load_s11: Union[io._S11SubDir, io.ReceiverReading],
-        f_low: Optional[float] = None,
-        f_high: Optional[float] = None,
-        n_terms: Optional[int] = None,
+        load_s11: io._S11SubDir | io.ReceiverReading,
+        f_low: float | None = None,
+        f_high: float | None = None,
+        n_terms: int | None = None,
         model_type: tp.Modelable = "fourier",
     ):
         """
@@ -194,7 +193,7 @@ class _S11Base(metaclass=ABCMeta):
         """The measured S11 of the load, corrected for internal switch."""
         return self.measured_load_s11_raw
 
-    @lru_cache()
+    @lru_cache
     def get_corrected_s11_model(
         self,
         n_terms: int | None = None,
@@ -432,8 +431,8 @@ class LNA(_S11Base):
     @classmethod
     def from_path(
         cls,
-        path: Union[str, Path],
-        repeat_num: Optional[int] = None,
+        path: str | Path,
+        repeat_num: int | None = None,
         run_num: int = 1,
         **kwargs,
     ):
@@ -491,19 +490,20 @@ class LNA(_S11Base):
 class LoadSpectrum:
     def __init__(
         self,
-        spec_obj: List[io.Spectrum],
+        spec_obj: list[io.Spectrum],
         resistance_obj: io.Resistance,
-        switch_correction: Optional[LoadS11] = None,
+        switch_correction: LoadS11 | None = None,
         f_low: float = 40.0,
-        f_high: Optional[float] = None,
+        f_high: float | None = None,
         ignore_times_percent: float = 5.0,
         rfi_removal: str = "1D2D",
         rfi_kernel_width_time: int = 16,
         rfi_kernel_width_freq: int = 16,
         rfi_threshold: float = 6,
-        cache_dir: Optional[Union[str, Path]] = None,
+        cache_dir: str | Path | None = None,
         t_load: float = 300.0,
         t_load_ns: float = 400.0,
+        freq_bin_size: int = 1,
     ):
         """A class representing a measured spectrum from some Load.
 
@@ -547,6 +547,9 @@ class LoadSpectrum:
             Fiducial guess for the temperature of the internal load.
         t_load_ns
             Fiducial guess for the temperature of the internal load + noise source.
+        freq_bin_size
+            The size of the frequency bins, in units of their raw size (i.e. default of
+            one is to not bin in frequency).
         """
         self.spec_obj = spec_obj
         self.resistance_obj = resistance_obj
@@ -576,11 +579,15 @@ class LoadSpectrum:
         ], "rfi_removal must be either '1D', '2D', '1D2D, or False/None"
 
         self.rfi_removal = rfi_removal
-
+        self.freq_bin_size = freq_bin_size
         self.switch_correction = switch_correction
 
         self.ignore_times_percent = ignore_times_percent
-        self.freq = EdgesFrequencyRange(f_low=f_low, f_high=f_high)
+
+        self.freq = EdgesFrequencyRange(
+            f_low=f_low, f_high=f_high, bin_size=freq_bin_size
+        )
+
         self.t_load = t_load
         self.t_load_ns = t_load_ns
 
@@ -588,9 +595,9 @@ class LoadSpectrum:
     def from_load_name(
         cls,
         load_name: str,
-        direc: Union[str, Path],
-        run_num: Optional[int] = None,
-        filetype: Optional[str] = None,
+        direc: str | Path,
+        run_num: int | None = None,
+        filetype: str | None = None,
         **kwargs,
     ):
         """Instantiate the class from a given load name and directory.
@@ -661,7 +668,7 @@ class LoadSpectrum:
         return self.variance_Q * self.t_load_ns ** 2
 
     @property
-    def ancillary(self) -> dict:
+    def ancillary(self) -> list[dict]:
         """Ancillary measurement data."""
         return [d.data["meta"] for d in self.spec_obj]
 
@@ -712,6 +719,7 @@ class LoadSpectrum:
             self.freq.max,
             self.t_load,
             self.t_load_ns,
+            self.freq_bin_size,
             tuple(path.name for path in self.spec_files),
         )
         hsh = md5(str(params).encode()).hexdigest()
@@ -719,7 +727,7 @@ class LoadSpectrum:
         return self.cache_dir / f"{self.load_name}_{hsh}.h5"
 
     @cached_property
-    def _ave_and_var_spec(self) -> Tuple[Dict, Dict, int]:
+    def _ave_and_var_spec(self) -> tuple[dict, dict, int]:
         """Get the mean and variance of the spectra."""
         fname = self._get_integrated_filename()
 
@@ -747,6 +755,8 @@ class LoadSpectrum:
         for key, spec in spectra.items():
             # Weird thing where there are zeros in the spectra.
             spec[spec == 0] = np.nan
+
+            spec = tools.bin_array(spec.T, size=self.freq_bin_size).T
 
             mean = np.nanmean(spec, axis=1)
             var = np.nanvar(spec, axis=1)
@@ -935,9 +945,9 @@ class HotLoadCorrection:
 
     def __init__(
         self,
-        path: Union[str, Path] = ":semi_rigid_s_parameters_WITH_HEADER.txt",
-        f_low: Optional[float] = None,
-        f_high: Optional[float] = None,
+        path: str | Path = ":semi_rigid_s_parameters_WITH_HEADER.txt",
+        f_low: float | None = None,
+        f_high: float | None = None,
         n_terms: int = 21,
     ):
         """
@@ -976,7 +986,7 @@ class HotLoadCorrection:
                 ]
             ).T
         else:
-            raise IOError("Semi-Rigid Cable file has wrong data format.")
+            raise OSError("Semi-Rigid Cable file has wrong data format.")
 
         self.n_terms = int(n_terms)
 
@@ -1076,8 +1086,8 @@ class Load:
         self,
         spectrum: LoadSpectrum,
         reflections: LoadS11,
-        hot_load_correction: Optional[HotLoadCorrection] = None,
-        ambient: Optional[LoadSpectrum] = None,
+        hot_load_correction: HotLoadCorrection | None = None,
+        ambient: LoadSpectrum | None = None,
     ):
         """Wrapper class containing all relevant information for a given load.
 
@@ -1109,12 +1119,12 @@ class Load:
     @classmethod
     def from_path(
         cls,
-        path: Union[str, Path],
+        path: str | Path,
         load_name: str,
-        f_low: Optional[float] = None,
-        f_high: Optional[float] = None,
-        reflection_kwargs: Optional[dict] = None,
-        spec_kwargs: Optional[dict] = None,
+        f_low: float | None = None,
+        f_high: float | None = None,
+        reflection_kwargs: dict | None = None,
+        spec_kwargs: dict | None = None,
     ):
         """
         Define a full :class:`Load` from a path and name.
@@ -1196,22 +1206,22 @@ class CalibrationObservation:
 
     def __init__(
         self,
-        path: Union[str, Path],
-        semi_rigid_path: Union[str, Path] = ":semi_rigid_s_parameters_WITH_HEADER.txt",
-        f_low: Optional[float] = 40,
-        f_high: Optional[float] = None,
-        run_num: Union[None, int, dict] = None,
-        repeat_num: Union[None, int, dict] = None,
-        resistance_f: Optional[float] = None,
+        path: str | Path,
+        semi_rigid_path: str | Path = ":semi_rigid_s_parameters_WITH_HEADER.txt",
+        f_low: float | None = 40,
+        f_high: float | None = None,
+        run_num: None | int | dict = None,
+        repeat_num: None | int | dict = None,
+        resistance_f: float | None = None,
         cterms: int = 5,
         wterms: int = 7,
-        load_kwargs: Optional[dict] = None,
-        s11_kwargs: Optional[dict] = None,
-        load_spectra: Optional[dict] = None,
-        load_s11s: Optional[dict] = None,
+        load_kwargs: dict | None = None,
+        s11_kwargs: dict | None = None,
+        load_spectra: dict | None = None,
+        load_s11s: dict | None = None,
         compile_from_def: bool = True,
         include_previous: bool = False,
-        internal_switch_kwargs: Optional[Dict[str, Any]] = None,
+        internal_switch_kwargs: dict[str, Any] | None = None,
     ):
         """
         A composite object representing a full Calibration Observation.
@@ -1439,7 +1449,7 @@ class CalibrationObservation:
         self.t_load_ns = self.ambient.t_load_ns
 
     @property
-    def load_names(self) -> Tuple[str]:
+    def load_names(self) -> tuple[str]:
         """Names of the loads."""
         return tuple(self._loads.keys())
 
@@ -1447,8 +1457,8 @@ class CalibrationObservation:
         self,
         load_name: str,
         run_num: int = 1,
-        reflection_kwargs: Optional[dict] = None,
-        spec_kwargs: Optional[dict] = None,
+        reflection_kwargs: dict | None = None,
+        spec_kwargs: dict | None = None,
     ):
         """Create a new load with the given load name.
 
@@ -1560,7 +1570,7 @@ class CalibrationObservation:
             }
 
     @cached_property
-    def source_thermistor_temps(self) -> Dict[str, Union[float, np.ndarray]]:
+    def source_thermistor_temps(self) -> dict[str, float | np.ndarray]:
         """Dictionary of input source thermistor temperatures."""
         if (
             hasattr(self, "_injected_source_temps")
@@ -1644,7 +1654,7 @@ class CalibrationObservation:
         """
         return self._calibration_coefficients[4]
 
-    def C1(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
+    def C1(self, f: float | np.ndarray | None = None):  # noqa: N802
         """
         Scaling calibration parameter.
 
@@ -1659,7 +1669,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.C1_poly(fnorm)
 
-    def C2(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
+    def C2(self, f: float | np.ndarray | None = None):  # noqa: N802
         """
         Offset calibration parameter.
 
@@ -1674,7 +1684,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.C2_poly(fnorm)
 
-    def Tunc(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
+    def Tunc(self, f: float | np.ndarray | None = None):  # noqa: N802
         """
         Uncorrelated noise-wave parameter.
 
@@ -1689,7 +1699,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.Tunc_poly(fnorm)
 
-    def Tcos(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
+    def Tcos(self, f: float | np.ndarray | None = None):  # noqa: N802
         """
         Cosine noise-wave parameter.
 
@@ -1704,7 +1714,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.Tcos_poly(fnorm)
 
-    def Tsin(self, f: Optional[Union[float, np.ndarray]] = None):  # noqa: N802
+    def Tsin(self, f: float | np.ndarray | None = None):  # noqa: N802
         """
         Sine noise-wave parameter.
 
@@ -1727,7 +1737,7 @@ class CalibrationObservation:
         else:
             return self.lna.s11_model(self.freq.freq)
 
-    def get_linear_coefficients(self, load: Union[Load, str]):
+    def get_linear_coefficients(self, load: Load | str):
         """
         Calibration coefficients a,b such that T = aT* + b (derived from Eq. 7).
 
@@ -1754,7 +1764,7 @@ class CalibrationObservation:
             t_load=self.t_load,
         )
 
-    def calibrate(self, load: Union[Load, str], q=None, temp=None):
+    def calibrate(self, load: Load | str, q=None, temp=None):
         """
         Calibrate the temperature of a given load.
 
@@ -1777,7 +1787,7 @@ class CalibrationObservation:
 
         return a * temp + b
 
-    def _load_str_to_load(self, load: Union[Load, str]):
+    def _load_str_to_load(self, load: Load | str):
         if isinstance(load, str):
             try:
                 load = self._loads[load]
@@ -1789,12 +1799,10 @@ class CalibrationObservation:
         else:
             assert isinstance(
                 load, Load
-            ), "load must be a Load instance, got the {} {}".format(load, type(Load))
+            ), f"load must be a Load instance, got the {load} {type(Load)}"
         return load
 
-    def decalibrate(
-        self, temp: np.ndarray, load: Union[Load, str], freq: np.ndarray = None
-    ):
+    def decalibrate(self, temp: np.ndarray, load: Load | str, freq: np.ndarray = None):
         """
         Decalibrate a temperature spectrum, yielding uncalibrated T*.
 
@@ -1829,7 +1837,7 @@ class CalibrationObservation:
 
     def get_K(
         self, freq: np.ndarray | None = None
-    ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    ) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """Get the source-S11-dependent factors of Monsalve (2017) Eq. 7."""
         if freq is None:
             freq = self.freq.freq
@@ -1847,7 +1855,7 @@ class CalibrationObservation:
 
     def plot_calibrated_temp(
         self,
-        load: Union[Load, str],
+        load: Load | str,
         bins: int = 2,
         fig=None,
         ax=None,
@@ -1987,7 +1995,7 @@ class CalibrationObservation:
         fig.suptitle("Calibrated Temperatures for Calibration Sources", fontsize=15)
         return fig
 
-    def write_coefficients(self, path: Optional[str] = None):
+    def write_coefficients(self, path: str | None = None):
         """
         Save a text file with the derived calibration co-efficients.
 
@@ -2075,7 +2083,7 @@ class CalibrationObservation:
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-    def write(self, filename: Union[str, Path]):
+    def write(self, filename: str | Path):
         """
         Write all information required to calibrate a new spectrum to file.
 
@@ -2142,14 +2150,14 @@ class CalibrationObservation:
     def inject(
         self,
         lna_s11: np.ndarray = None,
-        source_s11s: Dict[str, np.ndarray] = None,
+        source_s11s: dict[str, np.ndarray] = None,
         c1: np.ndarray = None,
         c2: np.ndarray = None,
         t_unc: np.ndarray = None,
         t_cos: np.ndarray = None,
         t_sin: np.ndarray = None,
-        averaged_spectra: Dict[str, np.ndarray] = None,
-        thermistor_temp_ave: Dict[str, np.ndarray] = None,
+        averaged_spectra: dict[str, np.ndarray] = None,
+        thermistor_temp_ave: dict[str, np.ndarray] = None,
     ) -> CalibrationObservation:
         """Make a new :class:`CalibrationObservation` based on this, with injections.
 
@@ -2215,7 +2223,7 @@ class _LittleLoad:
 
 
 class Calibration:
-    def __init__(self, filename: Union[str, Path]):
+    def __init__(self, filename: str | Path):
         """
         A class defining an interface to a HDF5 file containing calibration information.
 
@@ -2348,7 +2356,7 @@ class Calibration:
 
     def get_K(
         self, freq: np.ndarray | None = None
-    ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    ) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """Get the source-S11-dependent factors of Monsalve (2017) Eq. 7."""
         if freq is None:
             freq = self.freq.freq
