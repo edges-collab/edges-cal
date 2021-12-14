@@ -3,7 +3,7 @@ import pytest
 
 import numpy as np
 
-from edges_cal import EdgesFrequencyRange, FrequencyRange
+from edges_cal import FrequencyRange
 
 
 def test_freq_class():
@@ -16,7 +16,7 @@ def test_freq_class():
 
 
 def test_edges_freq():
-    freq = EdgesFrequencyRange()
+    freq = FrequencyRange.from_edges()
     assert freq.min == 0.0
     assert freq.max < 200.0
     assert len(freq.freq) == 32768
@@ -24,7 +24,7 @@ def test_edges_freq():
 
 
 def test_edges_freq_limited():
-    freq = EdgesFrequencyRange(f_low=50.0, f_high=100.0)
+    freq = FrequencyRange.from_edges(f_low=50.0, f_high=100.0)
     assert len(freq.freq) == 8193
     assert freq.min == 50.0
     assert freq.max == 100.0

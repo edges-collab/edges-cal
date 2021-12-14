@@ -33,15 +33,15 @@ from . import tools
 from . import types as tp
 from . import xrfi
 from .cached_property import cached_property
-from .tools import EdgesFrequencyRange, FrequencyRange
+from .tools import FrequencyRange
 
 
 class S1P:
     def __init__(
         self,
         s1p: tp.PathLike | io.S1P,
-        f_low: float | None = None,
-        f_high: float | None = None,
+        f_low: float | attr.NOTHING = attr.NOTHING,
+        f_high: float | attr.NOTHING = attr.NOTHING,
         switchval: int | None = None,
     ):
         """
@@ -76,7 +76,7 @@ class S1P:
         spec = self.s1p.s11
         f = self.s1p.freq
 
-        self.freq = FrequencyRange(f, f_low, f_high)
+        self.freq = FrequencyRange(f, f_low=f_low, f_high=f_high)
         self.s11 = spec[self.freq.mask]
         self._switchval = switchval
 
@@ -110,8 +110,8 @@ class _S11Base(metaclass=ABCMeta):
         self,
         *,
         load_s11: io._S11SubDir | io.ReceiverReading,
-        f_low: float | None = None,
-        f_high: float | None = None,
+        f_low: float | attr.NOTHING = attr.NOTHING,
+        f_high: float | attr.NOTHING = attr.NOTHING,
         n_terms: int | None = None,
         model_type: tp.Modelable = "fourier",
     ):
@@ -494,7 +494,7 @@ class LoadSpectrum:
         resistance_obj: io.Resistance,
         switch_correction: LoadS11 | None = None,
         f_low: float = 40.0,
-        f_high: float | None = None,
+        f_high: float | attr.NOTHING = attr.NOTHING,
         ignore_times_percent: float = 5.0,
         rfi_removal: str = "1D2D",
         rfi_kernel_width_time: int = 16,
@@ -584,7 +584,7 @@ class LoadSpectrum:
 
         self.ignore_times_percent = ignore_times_percent
 
-        self.freq = EdgesFrequencyRange(
+        self.freq = FrequencyRange.from_edges(
             f_low=f_low, f_high=f_high, bin_size=freq_bin_size
         )
 
@@ -946,8 +946,8 @@ class HotLoadCorrection:
     def __init__(
         self,
         path: str | Path = ":semi_rigid_s_parameters_WITH_HEADER.txt",
-        f_low: float | None = None,
-        f_high: float | None = None,
+        f_low: float | attr.NOTHING = attr.NOTHING,
+        f_high: float | attr.NOTHING = attr.NOTHING,
         n_terms: int = 21,
     ):
         """
@@ -973,7 +973,7 @@ class HotLoadCorrection:
         data = np.genfromtxt(self.path)
 
         f = data[:, 0]
-        self.freq = FrequencyRange(f, f_low, f_high)
+        self.freq = FrequencyRange(f, f_low=f_low, f_high=f_high)
 
         if data.shape[1] == 7:  # Original file from 2015
             self.data = data[self.freq.mask, 1::2] + 1j * data[self.freq.mask, 2::2]
@@ -1121,8 +1121,8 @@ class Load:
         cls,
         path: str | Path,
         load_name: str,
-        f_low: float | None = None,
-        f_high: float | None = None,
+        f_low: float | attr.NOTHING = attr.NOTHING,
+        f_high: float | attr.NOTHING = attr.NOTHING,
         reflection_kwargs: dict | None = None,
         spec_kwargs: dict | None = None,
     ):
@@ -1208,8 +1208,8 @@ class CalibrationObservation:
         self,
         path: str | Path,
         semi_rigid_path: str | Path = ":semi_rigid_s_parameters_WITH_HEADER.txt",
-        f_low: float | None = 40,
-        f_high: float | None = None,
+        f_low: float | attr.NOTHING = 40,
+        f_high: float | attr.NOTHING = attr.NOTHING,
         run_num: None | int | dict = None,
         repeat_num: None | int | dict = None,
         resistance_f: float | None = None,
@@ -1441,7 +1441,9 @@ class CalibrationObservation:
                 "The inputs loads and S11s have non-overlapping frequency ranges!"
             )
 
-        self.freq = EdgesFrequencyRange(f_low=fmin, f_high=fmax, bin_size=freq_bin_size)
+        self.freq = FrequencyRange.from_edges(
+            f_low=fmin, f_high=fmax, bin_size=freq_bin_size
+        )
 
         # Now make everything actually consistent in its frequency range.
         for load in self._loads.values():

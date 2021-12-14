@@ -1,8 +1,10 @@
 """Tools to use in other modules."""
+from __future__ import annotations
+
+import attr
 import numpy as np
 import warnings
 from itertools import product
-from typing import List, Optional
 
 from .cached_property import cached_property
 
@@ -14,7 +16,7 @@ def as_readonly(x: np.ndarray) -> np.ndarray:
     return result
 
 
-def dct_of_list_to_list_of_dct(dct: dict) -> List:
+def dct_of_list_to_list_of_dct(dct: dict) -> list:
     """Take a dict of key: list pairs and turn it into a list of all combinations of dicts.
 
     Parameters
@@ -46,43 +48,64 @@ def dct_of_list_to_list_of_dct(dct: dict) -> List:
     return [{k: v for k, v in zip(dct.keys(), p)} for p in prod]
 
 
+@attr.s
 class FrequencyRange:
-    def __init__(
-        self,
-        f: np.ndarray,
-        f_low: Optional[float] = None,
-        f_high: Optional[float] = None,
-        bin_size: int = 1,
-    ):
-        """
-        Class defining a set of frequencies.
+    """
+    Class defining a set of frequencies.
 
-        A given frequency range can be cut on either end.
+    A given frequency range can be cut on either end, and be made more sparse.
 
-        Parameters
-        ----------
-        f : array_like
-            An array of frequencies defining a given spectrum.
-        f_low : float
-            A minimum frequency to keep in the array. Default is min(f).
-        f_high : float
-            A minimum frequency to keep in the array. Default is min(f).
-        """
-        self.freq_full = f
-        self._f_high = f_high or f.max()
-        self._f_low = f_low or f.min()
-        self.bin_size = bin_size
+    Parameters
+    ----------
+    f
+        An array of frequencies defining a given spectrum.
+    f_low
+        A minimum frequency to keep in the array. Default is min(f).
+    f_high
+        A minimum frequency to keep in the array. Default is min(f).
+    bin_size
+        Bin input frequencies into bins of this size.
+    """
 
-        if self._f_low >= self._f_high:
-            raise ValueError("Cannot create frequency range: f_low >= f_high")
+    _f: np.ndarray = attr.ib(converter=np.array)
+    _f_low: float = attr.ib(converter=attr.converters.optional(float), kw_only=True)
+    _f_high: float = attr.ib(converter=attr.converters.optional(float), kw_only=True)
+    bin_size: int = attr.ib(default=1, converter=int, kw_only=True)
 
-        if self.bin_size < 1:
-            raise ValueError("Cannot create frequency range: bin_size < 1")
+    @_f_low.default
+    def _flow_default(self):
+        return self._f.min()
 
-    @cached_property
+    @_f_high.default
+    def _fhigh_default(self):
+        return self._f.max()
+
+    @bin_size.validator
+    def _bin_size_validator(self, att, val):
+        if val < 1:
+            raise ValueError("Cannot use bin_size < 1")
+
+        if val > self._f.size:
+            raise ValueError(
+                "Cannot use bin_size larger than the total number of freqs."
+            )
+
+    @_f.validator
+    def _f_validator(self, att, val):
+        if np.any(val < 0):
+            raise ValueError("Cannot have negative input frequencies!")
+        if val.ndim > 1:
+            raise ValueError("Frequency array must be 1D!")
+
+    @_f_high.validator
+    def _fhigh_validator(self, att, val):
+        if val <= self._f_low:
+            raise ValueError("Cannot have f_high <= f_low.")
+
+    @property
     def n(self) -> int:
         """The number of frequencies in the (masked) array."""
-        return len(self.freq)
+        return self.freq.size
 
     @cached_property
     def df(self) -> float:
@@ -92,6 +115,11 @@ class FrequencyRange:
                 "Not all frequency intervals are even, so using df is ill-advised!"
             )
         return self.freq[1] - self.freq[0]
+
+    @property
+    def freq_full(self):
+        """Alias for `f`."""
+        return self._f
 
     @cached_property
     def min(self):  # noqa
@@ -166,10 +194,11 @@ class FrequencyRange:
         """
         return f * self.range / 2 + self.center
 
-
-class EdgesFrequencyRange(FrequencyRange):
-    def __init__(self, n_channels=16384 * 2, max_freq=200.0, **kwargs):
-        """Subclass of :class:`FrequencyRange` specifying the default EDGES frequencies.
+    @classmethod
+    def from_edges(
+        cls, n_channels: int = 16384 * 2, max_freq: float = 200.0, **kwargs
+    ) -> FrequencyRange:
+        """Construct a :class:`FrequencyRange` object with underlying EDGES freqs.
 
         Parameters
         ----------
@@ -179,41 +208,44 @@ class EdgesFrequencyRange(FrequencyRange):
             Maximum frequency in original measurement.
         kwargs
             All other arguments passed through to :class:`FrequencyRange`.
-        """
-        f = self.get_edges_freqs(n_channels, max_freq)
-        super().__init__(f, **kwargs)
-
-    @staticmethod
-    def get_edges_freqs(
-        n_channels: int = 16384 * 2, max_freq: float = 200.0
-    ) -> np.ndarray:
-        """
-        Return the raw EDGES frequency array, in MHz.
-
-        Parameters
-        ----------
-        n_channels : int
-            Number of channels in the EDGES spectrum
-        max_freq : float
-            Maximum frequency in the spectrum.
 
         Returns
         -------
-        freqs: 1D-array
-            full frequency array from 0 to 200 MHz, at raw resolution
-        """
-        df = max_freq / n_channels
+        :class:`FrequencyRange`
+            The FrequencyRange object with the correct underlying frequencies.
 
-        # This is correct. The channel width is the important thing.
-        # The channel width is given by the FFT. We actually take
-        # 32678*2 samples of data at 400 Mega-samples per second.
-        # We only use the first half of the samples (since it's real input).
-        # Regardless, the frequency channel width is thus
-        # 400 MHz / (32678*2) == 200 MHz / 32678 ~ 6.103 kHz
+        Notes
+        -----
+        This is correct. The channel width is the important thing.
+        The channel width is given by the FFT. We actually take
+        32678*2 samples of data at 400 Mega-samples per second.
+        We only use the first half of the samples (since it's real input).
+        Regardless, the frequency channel width is thus
+        400 MHz / (32678*2) == 200 MHz / 32678 ~ 6.103 kHz
+
+        """
+        n_channels = int(n_channels)
+        max_freq = float(max_freq)
+
+        if n_channels < 100:
+            raise ValueError("Shouldn't have less than 100 channels for EDGES!")
+
+        df = max_freq / n_channels
 
         # The final frequency here will be slightly less than 200 MHz. 200 MHz
         # corresponds to the centre of the N+1 bin, which doesn't actually exist.
-        return np.arange(0, max_freq, df)
+        f = np.arange(0, max_freq, df)
+
+        return cls(f=f, **kwargs)
+
+    def clone(self, **kwargs):
+        """Make a new frequency range object with updated parameters."""
+        return attr.evolve(self, **kwargs)
+
+    def with_new_mask(self, **kwargs):
+        """Make a new read-only frequency range object with the same freqs."""
+        f = as_readonly(self.freq_full)
+        return attr.evolve(self, f=f, **kwargs)
 
 
 def bin_array(x: np.ndarray, size: int = 1) -> np.ndarray:

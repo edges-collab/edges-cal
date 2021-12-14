@@ -16,7 +16,6 @@ from .cal_coefficients import (  # noqa: E402
     S1P,
     Calibration,
     CalibrationObservation,
-    EdgesFrequencyRange,
     FrequencyRange,
     LoadS11,
     LoadSpectrum,
