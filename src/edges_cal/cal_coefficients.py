@@ -764,12 +764,11 @@ class LoadSpectrum:
 
             if self.rfi_removal == "1D2D":
                 nsample = np.sum(~np.isnan(spec), axis=1)
-                varfilt = xrfi.flagged_filter(
-                    var, size=2 * self.rfi_kernel_width_freq + 1
-                )
-                resid = mean - xrfi.flagged_filter(
-                    mean, size=2 * self.rfi_kernel_width_freq + 1
-                )
+
+                width = max(1, self.rfi_kernel_width_freq // self.freq_bin_size)
+
+                varfilt = xrfi.flagged_filter(var, size=2 * width + 1)
+                resid = mean - xrfi.flagged_filter(mean, size=2 * width + 1)
                 flags = np.logical_or(
                     resid > self.rfi_threshold * np.sqrt(varfilt / nsample),
                     var - varfilt
@@ -840,11 +839,12 @@ class LoadSpectrum:
         data = [spec_obj.data for spec_obj in self.spec_obj]
 
         n_times = sum(len(d["time_ancillary"]["times"]) for d in data)
+        nfreq = np.sum(self.freq.mask)
         out = {
-            "p0": np.empty((len(self.freq.freq), n_times)),
-            "p1": np.empty((len(self.freq.freq), n_times)),
-            "p2": np.empty((len(self.freq.freq), n_times)),
-            "Q": np.empty((len(self.freq.freq), n_times)),
+            "p0": np.empty((nfreq, n_times)),
+            "p1": np.empty((nfreq, n_times)),
+            "p2": np.empty((nfreq, n_times)),
+            "Q": np.empty((nfreq, n_times)),
         }
 
         index_start_spectra = int((self.ignore_times_percent / 100) * n_times)
@@ -1222,6 +1222,7 @@ class CalibrationObservation:
         compile_from_def: bool = True,
         include_previous: bool = False,
         internal_switch_kwargs: dict[str, Any] | None = None,
+        freq_bin_size: int = 1,
     ):
         """
         A composite object representing a full Calibration Observation.
@@ -1297,6 +1298,8 @@ class CalibrationObservation:
         include_previous : bool
             Whether to include the previous observation by default to supplement this
             one if required files are missing.
+        freq_bin_size
+            The size of each frequency bin (of the spectra) in units of the raw size.
 
         Examples
         --------
@@ -1364,6 +1367,7 @@ class CalibrationObservation:
                     resistance_obj=getattr(self.io.resistance, source),
                     f_low=f_low,
                     f_high=f_high,
+                    freq_bin_size=freq_bin_size,
                     **{**load_kwargs, **load},
                 )
 
@@ -1437,7 +1441,7 @@ class CalibrationObservation:
                 "The inputs loads and S11s have non-overlapping frequency ranges!"
             )
 
-        self.freq = EdgesFrequencyRange(f_low=fmin, f_high=fmax)
+        self.freq = EdgesFrequencyRange(f_low=fmin, f_high=fmax, bin_size=freq_bin_size)
 
         # Now make everything actually consistent in its frequency range.
         for load in self._loads.values():
@@ -1503,6 +1507,7 @@ class CalibrationObservation:
         reflection_kwargs["repeat_num_switch"] = self.io.s11.switching_state.repeat_num
         reflection_kwargs["run_num_switch"] = self.io.s11.switching_state.run_num
         spec_kwargs["run_num"] = run_num
+        spec_kwargs["freq_bin_size"] = self.freq.bin_size
 
         return Load.from_path(
             path=self.io.path,
