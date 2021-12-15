@@ -18,7 +18,6 @@ from copy import copy
 from edges_io import io
 from edges_io.logging import logger
 from functools import lru_cache
-from hashlib import md5
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
@@ -740,22 +739,7 @@ class LoadSpectrum:
 
     def _get_integrated_filename(self):
         """Determine a unique filename for the reduced data of this instance."""
-        params = (
-            self.rfi_threshold,
-            self.rfi_kernel_width_time,
-            self.rfi_kernel_width_freq,
-            self.rfi_removal,
-            self.ignore_times_percent,
-            self.freq.min,
-            self.freq.max,
-            self.t_load,
-            self.t_load_ns,
-            self.freq_bin_size,
-            tuple(path.name for path in self.spec_files),
-        )
-        hsh = md5(str(params).encode()).hexdigest()
-
-        return self.cache_dir / f"{self.load_name}_{hsh}.h5"
+        return self.cache_dir / f"{self.load_name}_{hash(self)}.h5"
 
     @cached_property
     def _ave_and_var_spec(self) -> tuple[dict, dict, int]:
@@ -1422,7 +1406,7 @@ class CalibrationObservation:
 
     @load_s11s.validator
     def _load_s11s_vld(self, att, val):
-        if any(name not in self._sources for name in val):
+        if any(name not in self._sources and name not in ["lna"] for name in val):
             raise ValueError(f"Can't specify load_s11s with names: {list(val.keys())}")
 
     @cached_property
