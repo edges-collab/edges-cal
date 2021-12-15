@@ -5,8 +5,22 @@ import attr
 import numpy as np
 import warnings
 from itertools import product
+from pathlib import Path
+from typing import Sequence
 
+from . import DATA_PATH
 from .cached_property import cached_property
+
+
+def get_data_path(pth: str | Path) -> Path:
+    """Impute the global data path to a given input in place of a colon."""
+    if isinstance(pth, str):
+        if pth.startswith(":"):
+            return DATA_PATH / pth[1:]
+        else:
+            return Path(pth)
+    else:
+        return pth
 
 
 def as_readonly(x: np.ndarray) -> np.ndarray:
@@ -16,17 +30,17 @@ def as_readonly(x: np.ndarray) -> np.ndarray:
     return result
 
 
-def dct_of_list_to_list_of_dct(dct: dict) -> list:
+def dct_of_list_to_list_of_dct(dct: dict[str, Sequence]) -> list[dict]:
     """Take a dict of key: list pairs and turn it into a list of all combinations of dicts.
 
     Parameters
     ----------
-    dct : dict
+    dct
         A dictionary for which each value is an iterable.
 
     Returns
     -------
-    list :
+    list
         A list of dictionaries, each having the same keys as the input ``dct``, but
         in which the values are the elements of the original iterables.
 

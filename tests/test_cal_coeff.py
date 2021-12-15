@@ -222,9 +222,9 @@ def test_update(cal_data: Path, tmpdir: Path):
 
     assert len(calobs.Tcos_poly) == 4
 
-    calobs.update(wterms=7)
+    c2 = calobs.clone(wterms=7)
 
-    assert len(calobs.Tcos_poly) == 6
+    assert len(c2.Tcos_poly) == 6
 
 
 def test_calibration_init(cal_data: Path, tmpdir: Path):
@@ -268,7 +268,6 @@ def test_term_sweep(cal_data: Path, tmpdir: Path):
         wterms=7,
         f_low=60,
         f_high=80,
-        compile_from_def=False,
     )
 
     calobs_opt = cc.perform_term_sweep(

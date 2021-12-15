@@ -41,7 +41,7 @@ def _tuplify(x):
         return tuple(int(xx) for xx in x)
 
 
-@attr.s
+@attr.s(frozen=True)
 class InternalSwitch:
     data: io.SwitchingState = attr.ib()
     resistance: float = attr.ib(default=50.0)
@@ -69,7 +69,7 @@ class InternalSwitch:
                 f"n_terms must be an integer or tuple of three integers "
                 f"(for s11, s12, s22). Got {val}."
             )
-        if any(not isinstance(v, (np.int, int)) for v in val):
+        if any(not isinstance(v, int) for v in val):
             raise TypeError(f"n_terms must be integer, got {val}.")
 
     @cached_property
