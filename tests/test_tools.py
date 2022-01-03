@@ -1,3 +1,5 @@
+import pytest
+
 import numpy as np
 
 from edges_cal import tools
@@ -38,3 +40,8 @@ def test_bin_array_2d():
     )
     out = tools.bin_array(x, 2)
     assert np.all(out == np.array([[1, 2, 3], [4, 5, 6]]))
+
+
+def test_bad_bin_size():
+    with pytest.raises(ValueError, match="Cannot create frequency range: bin_size < 1"):
+        tools.FrequencyRange(np.linspace(0, 1, 100), bin_size=0)
