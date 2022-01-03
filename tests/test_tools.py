@@ -43,5 +43,5 @@ def test_bin_array_2d():
 
 
 def test_bad_bin_size():
-    with pytest.raises(ValueError, match="Cannot create frequency range: bin_size < 1"):
+    with pytest.raises(ValueError, match="Cannot use bin_size < 1"):
         tools.FrequencyRange(np.linspace(0, 1, 100), bin_size=0)
