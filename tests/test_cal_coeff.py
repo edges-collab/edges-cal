@@ -285,3 +285,12 @@ def test_term_sweep(cal_data: Path, tmpdir: Path):
 def test_2017_semi_rigid():
     hlc = cc.HotLoadCorrection(path=":semi_rigid_s_parameters_2017.txt")
     assert hlc.s12_model(hlc.freq.freq).dtype == complex
+
+
+def test_calobs_equivalence(cal_data):
+    calobs1 = cc.CalibrationObservation(cal_data, compile_from_def=True)
+    calobs2 = cc.CalibrationObservation(cal_data, compile_from_def=True)
+
+    assert calobs1.open == calobs2.open
+    assert calobs1.open.spectrum == calobs2.open.spectrum
+    assert hash(calobs1.open.spectrum) == hash(calobs2.open.spectrum)

@@ -526,7 +526,7 @@ class LNA(_S11Base):
         )[0]
 
 
-@attr.s(kw_only=True)
+@attr.s(kw_only=True, frozen=True)
 class LoadSpectrum:
     """A class representing a measured spectrum from some Load.
 
@@ -573,7 +573,7 @@ class LoadSpectrum:
         one is to not bin in frequency).
     """
 
-    spec_obj: list[io.Spectrum] = attr.ib()
+    spec_obj: tuple[io.Spectrum] = attr.ib(converter=tuple)
     resistance_obj: io.Resistance = attr.ib()
     switch_correction: LoadS11 | None = attr.ib(default=None)
     f_low: float = attr.ib(default=40.0)
