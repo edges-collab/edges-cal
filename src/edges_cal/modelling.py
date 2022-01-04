@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Functions for generating least-squares model fits for linear models."""
 from __future__ import annotations
 
@@ -8,11 +7,11 @@ import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
 from edges_io.h5 import register_h5type
-from typing import Dict, List, Optional, Sequence, Tuple, Type
+from typing import Sequence
 
 from . import receiver_calibration_func as rcf
 from .simulate import simulate_q_from_calobs
-from .tools import as_readonly, bin
+from .tools import as_readonly
 
 F_CENTER = 75.0
 _MODELS = {}
@@ -186,7 +185,7 @@ class ModelTransform(metaclass=ABCMeta):
         pass
 
     @classmethod
-    def get(cls, model: str) -> Type[ModelTransform]:
+    def get(cls, model: str) -> type[ModelTransform]:
         """Get a ModelTransform class."""
         return cls._models[model.lower()]
 
@@ -218,7 +217,7 @@ def tuple_converter(x):
 
 @attr.s(frozen=True, kw_only=True)
 class CentreTransform(ModelTransform):
-    range: Tuple[float, float] = attr.ib(converter=tuple_converter)
+    range: tuple[float, float] = attr.ib(converter=tuple_converter)
     centre: float = attr.ib(default=0.0, converter=float)
 
     def transform(self, x: np.ndarray) -> np.ndarray:
@@ -230,7 +229,7 @@ class CentreTransform(ModelTransform):
 class UnitTransform(ModelTransform):
     """A transform that takes the input range down to -1 to 1."""
 
-    range: Tuple[float, float] = attr.ib(converter=tuple_converter)
+    range: tuple[float, float] = attr.ib(converter=tuple_converter)
 
     @cached_property
     def _centre(self):
@@ -260,7 +259,7 @@ class LogTransform(ModelTransform):
 class ZerotooneTransform(ModelTransform):
     """A transform that takes an input range down to (0,1)."""
 
-    range: Tuple[float, float] = attr.ib(converter=tuple_converter)
+    range: tuple[float, float] = attr.ib(converter=tuple_converter)
 
     @range.default
     def _rng_default(self):
@@ -410,7 +409,7 @@ class Model(metaclass=ABCMeta):
         return self.at(x=xdata).fit(ydata, weights=weights)
 
 
-def get_mdl(model: str | Type[Model]) -> Type[Model]:
+def get_mdl(model: str | type[Model]) -> type[Model]:
     """Get a linear model class from a string input."""
     if isinstance(model, str):
         return _MODELS[model]
@@ -420,7 +419,7 @@ def get_mdl(model: str | Type[Model]) -> Type[Model]:
         raise ValueError("model needs to be a string or Model subclass")
 
 
-def get_mdl_inst(model: str | Model | Type[Model], **kwargs) -> Model:
+def get_mdl_inst(model: str | Model | type[Model], **kwargs) -> Model:
     """Get a model instance from given string input."""
     if isinstance(model, Model):
         if kwargs:
@@ -576,8 +575,8 @@ class FourierDay(Model):
 
 @attr.s(frozen=True, kw_only=True)
 class CompositeModel:
-    models: Dict[str, Model] = attr.ib()
-    extra_basis: Dict[str, np.ndarray] = attr.ib(factory=dict)
+    models: dict[str, Model] = attr.ib()
+    extra_basis: dict[str, np.ndarray] = attr.ib(factory=dict)
 
     @extra_basis.validator
     def _eb_vld(self, att, val):
@@ -626,7 +625,7 @@ class CompositeModel:
         return extra
 
     @cached_property
-    def model_idx(self) -> Dict[str, slice]:
+    def model_idx(self) -> dict[str, slice]:
         """Dictionary of parameter indices correponding to each model."""
         return {name: self._get_model_param_indx(name) for name in self.models}
 
@@ -634,7 +633,7 @@ class CompositeModel:
         self,
         model: str,
         parameters: np.ndarray = None,
-        x: Optional[np.ndarray] = None,
+        x: np.ndarray | None = None,
         with_extra: bool = False,
     ):
         """Calculate a sub-model."""
@@ -896,16 +895,16 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
 @attr.s(frozen=True, kw_only=True)
 class NoiseWaves:
     freq: np.ndarray = attr.ib()
-    gamma_src: Dict[str, np.ndarray] = attr.ib()
+    gamma_src: dict[str, np.ndarray] = attr.ib()
     gamma_rec: np.ndarray = attr.ib()
     c_terms: int = attr.ib(default=5)
     w_terms: int = attr.ib(default=6)
     parameters: Sequence | None = attr.ib(default=None)
 
     @cached_property
-    def src_names(self) -> List[str]:
+    def src_names(self) -> tuple[str]:
         """List of names of inputs sources (eg. ambient, hot_load, open, short)."""
-        return list(self.gamma_src.keys())
+        return tuple(self.gamma_src.keys())
 
     @cached_property
     def linear_model(self) -> CompositeModel:
@@ -993,7 +992,7 @@ class NoiseWaves:
     def with_params_from_calobs(self, calobs) -> NoiseWaves:
         """Get a new noise wave model with parameters fitted using standard methods."""
         c2 = (-calobs.C2_poly.coefficients[::-1]).tolist()
-        c2[0] += calobs.open.spectrum.t_load
+        c2[0] += calobs.t_load
 
         params = (
             calobs.Tunc_poly.coefficients[::-1].tolist()
@@ -1012,7 +1011,7 @@ class NoiseWaves:
         for src in self.src_names:
             load = calobs._loads[src]
             if tns is None:
-                _tns = calobs.C1() * load.spectrum.t_load_ns
+                _tns = calobs.C1() * calobs.t_load_ns
             else:
                 _tns = tns(x=calobs.freq.freq)
 
@@ -1026,22 +1025,32 @@ class NoiseWaves:
         return np.concatenate(tuple(data))
 
     @classmethod
-    def from_calobs(cls, calobs, smooth: int = 1) -> NoiseWaves:
+    def from_calobs(cls, calobs, cterms=None, wterms=None, sources=None) -> NoiseWaves:
         """Initialize a noise wave model from a calibration observation."""
-        freq = bin(calobs.freq.freq, smooth)
+        if sources is None:
+            sources = tuple(calobs._loads.keys())
 
-        gamma_src = {
-            name: source.s11_model(freq) for name, source in calobs._loads.items()
-        }
+        loads = {src: load for src, load in calobs._loads.items() if src in sources}
+        freq = calobs.freq.freq
+
+        gamma_src = {name: source.s11_model(freq) for name, source in loads.items()}
+
+        try:
+            lna_s11 = calobs.lna.s11_model(freq)
+        except AttributeError:
+            lna_s11 = calobs.lna_s11(freq)
 
         nw_model = cls(
             freq=freq,
             gamma_src=gamma_src,
-            gamma_rec=calobs.lna.s11_model(freq),
-            c_terms=calobs.cterms,
-            w_terms=calobs.wterms,
+            gamma_rec=lna_s11,
+            c_terms=cterms or calobs.cterms,
+            w_terms=wterms or calobs.wterms,
         )
-        return nw_model.with_params_from_calobs(calobs)
+        if not cterms and not wterms:
+            return nw_model.with_params_from_calobs(calobs)
+        else:
+            return nw_model
 
     def __call__(self, **kwargs) -> np.ndarray:
         """Call the underlying linear model."""
@@ -1150,7 +1159,7 @@ class ModelFit:
         # parent model will change the model_parameters of this fit!
         return as_readonly(self.fit.model.parameters)
 
-    def evaluate(self, x: Optional[np.ndarray] = None) -> np.ndarray:
+    def evaluate(self, x: np.ndarray | None = None) -> np.ndarray:
         """Evaluate the best-fit model.
 
         Parameters
@@ -1194,7 +1203,7 @@ class ModelFit:
         """The Covariance matrix of the parameters."""
         return np.linalg.inv(self.hessian)
 
-    def get_sample(self, size: int | Tuple[int] = 1):
+    def get_sample(self, size: int | tuple[int] = 1):
         """Generate a random sample from the posterior distribution."""
         return np.random.multivariate_normal(
             mean=self.model_parameters, cov=self.parameter_covariance, size=size

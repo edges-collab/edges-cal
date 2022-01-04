@@ -2,10 +2,6 @@
 from __future__ import annotations
 
 import numpy as np
-from edges_io import io
-from typing import List, Tuple, Union
-
-from . import types as tp
 
 
 def impedance2gamma(
@@ -56,50 +52,6 @@ def gamma_de_embed(s11, s12s21, s22, rp):  # noqa
 
 def gamma_shifted(s11, s12s21, s22, r):  # noqa
     return s11 + (s12s21 * r / (1 - s22 * r))
-
-
-def s2p_read(
-    path: tp.PathLike,
-) -> Union[
-    Tuple[np.ndarray, np.ndarray],
-    Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-]:
-    """Read an S2P file format.
-
-    Parameters
-    ----------
-    path : str or Path
-        Path to the file.
-
-    Returns
-    -------
-    gamma : np.ndarray
-        The reflection coefficient
-    gamma1, gamma2, gamma3 : np.ndarray
-        The other reflection coefficients(?!)
-    f : np.ndarray
-        The frequencies at which the gamma was measured.
-    """
-    # loading data
-    d, flag = io.S1P._get_kind(path)
-    f = d[:, 0]
-
-    if flag == "DB":
-        r = 10 ** (d[:, 1] / 20) * (
-            np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2])
-        )
-        return r, f
-    if flag == "MA":
-        r = d[:, 1] * (
-            np.cos((np.pi / 180) * d[:, 2]) + 1j * np.sin((np.pi / 180) * d[:, 2])
-        )
-        return r, f
-    if flag == "RI":
-        r = d[:, 1] + 1j * d[:, 2]
-        r1 = d[:, 3] + 1j * d[:, 4]
-        r2 = d[:, 5] + 1j * d[:, 6]
-        r3 = d[:, 7] + 1j * d[:, 8]
-        return r, r1, r2, r3, f
 
 
 def de_embed(r1a, r2a, r3a, r1m, r2m, r3m, rp):  # noqa
@@ -182,7 +134,7 @@ def fiducial_parameters_85033E(  # noqa: N802
 
 
 def standard(
-    f: np.ndarray, par: [List[float], np.ndarray], kind: str
+    f: np.ndarray, par: [list[float], np.ndarray], kind: str
 ) -> np.ndarray:  # noqa
     """Compute the standard.
 

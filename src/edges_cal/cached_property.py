@@ -5,7 +5,12 @@ from cached_property import cached_property as cp
 class cached_property(cp):  # noqa
     def __get__(self, obj, cls):
         """Get the store value of the attribute."""
-        value = super().__get__(obj, cls)
+        try:
+            value = super().__get__(obj, cls)
+        except AttributeError as e:
+            raise RuntimeError(
+                f"{self.func.__name__} failed with an AttributeError: {e}"
+            )
 
         # Add the name of the decorated func to the _cached_ item of the dict
         if obj is not None:
@@ -15,3 +20,15 @@ class cached_property(cp):  # noqa
             obj.__dict__["_cached_"].add(self.func.__name__)
 
         return value
+
+
+def safe_property(f):
+    """An alternative property decorator that substitates AttributeError for RunTime."""
+
+    def getter(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except AttributeError as e:
+            raise RuntimeError(f"Wrapped AttributeError in {f.__name__}: {e}")
+
+    return property(getter)

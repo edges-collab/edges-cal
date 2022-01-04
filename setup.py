@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Setup the package."""
 from pkg_resources import VersionConflict, require
 from setuptools import setup

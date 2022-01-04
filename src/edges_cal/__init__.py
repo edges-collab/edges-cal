@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Calibration of EDGES data."""
 from pkg_resources import DistributionNotFound, get_distribution
 
@@ -17,7 +16,6 @@ from .cal_coefficients import (  # noqa: E402
     S1P,
     Calibration,
     CalibrationObservation,
-    EdgesFrequencyRange,
     FrequencyRange,
     LoadS11,
     LoadSpectrum,

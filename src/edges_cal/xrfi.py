@@ -10,7 +10,7 @@ from cached_property import cached_property
 from dataclasses import dataclass, field
 from matplotlib import pyplot as plt
 from scipy import ndimage
-from typing import Any, Dict, Literal, Tuple
+from typing import Any, Literal
 
 from . import modelling as mdl
 from . import types as tp
@@ -21,7 +21,7 @@ class NoDataError(Exception):
     pass
 
 
-def _check_convolve_dims(data, half_size: Tuple[int] | None = None):
+def _check_convolve_dims(data, half_size: tuple[int] | None = None):
     """Check the kernel sizes to be used in various convolution-like operations.
 
     If the kernel sizes are too big, replace them with the largest allowable size
@@ -104,7 +104,7 @@ def robust_divide(num, den):
 
 def flagged_filter(
     data: np.ndarray,
-    size: int | Tuple[int],
+    size: int | tuple[int],
     kind: str = "median",
     flags: np.ndarray | None = None,
     mode: str | None = None,
@@ -200,7 +200,7 @@ def flagged_filter(
 def detrend_medfilt(
     data: np.ndarray,
     flags: np.ndarray | None = None,
-    half_size: Tuple[int | None] | None = None,
+    half_size: tuple[int | None] | None = None,
 ):
     """Detrend array using a median filter.
 
@@ -269,7 +269,7 @@ def detrend_medfilt(
 def detrend_meanfilt(
     data: np.ndarray,
     flags: np.ndarray | None = None,
-    half_size: Tuple[int | None] | None = None,
+    half_size: tuple[int | None] | None = None,
 ):
     """Detrend array using a mean filter.
 
@@ -324,7 +324,7 @@ def xrfi_medfilt(
     poly_order: int = 0,
     accumulate: bool = False,
     use_meanfilt: bool = True,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> tuple[np.ndarray, dict[str, Any]]:
     """Generate RFI flags for a given spectrum using a median filter.
 
     Parameters
@@ -511,7 +511,7 @@ def xrfi_explicit(
 
     rfi_freqs = []
     if rfi_file:
-        with open(rfi_file, "r") as fl:
+        with open(rfi_file) as fl:
             rfi_freqs += yaml.load(fl, Loader=yaml.FullLoader)["rfi_ranges"]
 
     if extra_rfi:
@@ -546,7 +546,7 @@ def xrfi_model_sweep(
     which_bin: str = "last",
     watershed: int = 0,
     max_iter: int = 1,
-) -> Tuple[np.ndarray, dict]:
+) -> tuple[np.ndarray, dict]:
     """
     Flag RFI by using a moving window and a low-order polynomial to detrend.
 
@@ -793,7 +793,7 @@ def model_filter(
     min_resid_terms: int = 3,
     decrement_threshold: float = 0,
     min_threshold: float = 5,
-    watershed: int | Dict[float, int] | None = None,
+    watershed: int | dict[float, int] | None = None,
     flag_if_broken: bool = True,
     init_flags: np.ndarray | None = None,
     std_estimator: Literal["model", "medfilt", "std", "mad", "sliding_rms"] = "model",
@@ -1281,7 +1281,7 @@ def xrfi_model(
     *,
     freq: np.ndarray,
     inplace: bool = False,
-    init_flags: np.ndarray | Tuple[float, float] | None = None,
+    init_flags: np.ndarray | tuple[float, float] | None = None,
     flags: np.ndarray | None = None,
     **kwargs,
 ):
@@ -1337,7 +1337,7 @@ def xrfi_watershed(
     freq: np.ndarray | None = None,
     flags: np.ndarray | None = None,
     weights: np.ndarray | None = None,
-    tol: float | Tuple[float] = 0.5,
+    tol: float | tuple[float] = 0.5,
     inplace=False,
 ):
     """Apply a watershed over frequencies and times for flags.
@@ -1395,7 +1395,7 @@ xrfi_watershed.ndim = (1, 2)
 
 def _apply_watershed(
     flags: np.ndarray,
-    watershed: int | Dict[float, int],
+    watershed: int | dict[float, int],
     zscore_thr_ratio: np.ndarray,
 ):
     watershed_flags = np.zeros_like(flags)

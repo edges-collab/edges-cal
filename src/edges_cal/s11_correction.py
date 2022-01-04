@@ -1,5 +1,4 @@
-# -*- coding: utf-8 -*-
-"""Functions dealing with correcting S11's."""
+"""Functions and classes for correcting S11 measurements using the internal switch."""
 
 import attr
 import numpy as np
@@ -42,7 +41,7 @@ def _tuplify(x):
         return tuple(int(xx) for xx in x)
 
 
-@attr.s
+@attr.s(frozen=True)
 class InternalSwitch:
     data: io.SwitchingState = attr.ib()
     resistance: float = attr.ib(default=50.0)
@@ -70,8 +69,8 @@ class InternalSwitch:
                 f"n_terms must be an integer or tuple of three integers "
                 f"(for s11, s12, s22). Got {val}."
             )
-        if any(not isinstance(v, (np.int, int)) for v in val):
-            raise TypeError(f"n_terms must be integer, got {val}.")
+        if any(v < 1 for v in val):
+            raise ValueError(f"n_terms must be >0, got {val}.")
 
     @cached_property
     def s11_data(self):
