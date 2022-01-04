@@ -69,8 +69,8 @@ class InternalSwitch:
                 f"n_terms must be an integer or tuple of three integers "
                 f"(for s11, s12, s22). Got {val}."
             )
-        if any(not isinstance(v, int) for v in val):
-            raise TypeError(f"n_terms must be integer, got {val}.")
+        if any(v < 1 for v in val):
+            raise ValueError(f"n_terms must be >0, got {val}.")
 
     @cached_property
     def s11_data(self):
