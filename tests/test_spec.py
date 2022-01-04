@@ -1,15 +1,21 @@
 """
 Test spectrum reading.
 """
-from pathlib import Path
+import pytest
 
 from edges_cal import LoadSpectrum
 
 
-def test_read(data_path: Path, tmpdir: Path):
-
+@pytest.fixture(scope="module")
+def ambient(data_path, tmpdir) -> LoadSpectrum:
     calpath = data_path / "Receiver01_25C_2019_11_26_040_to_200MHz"
 
-    spec = LoadSpectrum.from_load_name("ambient", calpath, cache_dir=tmpdir)
+    return LoadSpectrum.from_load_name("ambient", calpath, cache_dir=tmpdir)
 
-    assert spec.averaged_Q.ndim == 1
+
+def test_read(ambient: LoadSpectrum):
+    assert ambient.averaged_Q.ndim == 1
+
+
+def test_datetimes(ambient: LoadSpectrum):
+    assert len(ambient.thermistor_timestamps) == len(ambient.thermistor)
