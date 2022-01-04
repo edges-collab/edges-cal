@@ -1,4 +1,4 @@
-"""Functions dealing with correcting S11's."""
+"""Functions and classes for correcting S11 measurements using the internal switch."""
 
 import attr
 import numpy as np
