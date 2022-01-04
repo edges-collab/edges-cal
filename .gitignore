@@ -55,3 +55,4 @@ src/edges_cal/notebooks/*.h5
 .vscode/
 prof/
 docs/reference/_autosummary/
+*.h5
