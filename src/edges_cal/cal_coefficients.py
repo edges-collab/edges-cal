@@ -82,7 +82,7 @@ class S1P:
     @property
     def repeat_num(self) -> int:
         """The repeat number of this S11 measurement."""
-        return self.s1p.repeat_num
+        return int(self.s1p.repeat_num)
 
     @cached_property
     def freq(self) -> FrequencyRange:

@@ -294,3 +294,10 @@ def test_calobs_equivalence(cal_data):
     assert calobs1.open == calobs2.open
     assert calobs1.open.spectrum == calobs2.open.spectrum
     assert hash(calobs1.open.spectrum) == hash(calobs2.open.spectrum)
+
+
+def test_basic_s11_properties(cal_data):
+    calobs = cc.CalibrationObservation(cal_data, compile_from_def=False)
+
+    assert calobs.open.reflections.match.load_name == "Match"
+    assert calobs.open.reflections.match.repeat_num == 1
