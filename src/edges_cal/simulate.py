@@ -93,11 +93,13 @@ def simulate_q_from_calobs(
         lna_s11 = calobs.lna_s11(freq)
 
     if not default_freq and load == "hot_load":
-        gain = calobs.hot_load._correction.power_gain(freq, calobs.hot_load.reflections)
+        gain = calobs.hot_load.hot_load_correction.power_gain(
+            freq, calobs.hot_load.reflections
+        )
         # temperature
         temp_ave = (
             gain * calobs.hot_load.spectrum.temp_ave
-            + (1 - gain) * calobs.hot_load._ambient.temp_ave
+            + (1 - gain) * calobs.hot_load.ambient.temp_ave
         )
     else:
         temp_ave = calobs._loads[load].temp_ave
