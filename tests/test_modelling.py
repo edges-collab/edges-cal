@@ -193,6 +193,10 @@ def test_noise_waves(cal_data, tmpdir):
     assert nw.with_params_from_calobs(calobs) == nw
     assert len(nw.get_data_from_calobs(calobs)) == 4 * calobs.freq.n
 
+    c2 = calobs.to_calfile()
+    nw2 = mdl.NoiseWaves.from_calobs(c2)
+    assert nw.src_names == nw2.src_names
+
 
 def test_complex_model():
     cmplx = mdl.ComplexMagPhaseModel(
