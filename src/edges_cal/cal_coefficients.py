@@ -1444,13 +1444,15 @@ class CalibrationObservation:
     @cached_property
     def internal_switch(self) -> s11.InternalSwitch:
         """The internal switch measurements."""
-        return s11.InternalSwitch(
-            data=self.io.s11.switching_state,
-            resistance=self.io.definition["measurements"]["resistance_m"][
-                self.io.s11.switching_state.run_num
-            ],
+        kwargs = {
             **self.internal_switch_kwargs,
-        )
+            **{
+                "resistance": self.io.definition["measurements"]["resistance_m"][
+                    self.io.s11.switching_state.run_num
+                ]
+            },
+        }
+        return s11.InternalSwitch(data=self.io.s11.switching_state, **kwargs)
 
     @cached_property
     def hot_load_correction(self) -> HotLoadCorrection:
