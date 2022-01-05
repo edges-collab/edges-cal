@@ -15,6 +15,7 @@ import yaml
 from abc import ABCMeta, abstractmethod
 from astropy.convolution import Gaussian1DKernel, convolve
 from copy import copy
+from datetime import datetime, timedelta
 from edges_io import io
 from edges_io.logging import logger
 from functools import lru_cache
@@ -587,6 +588,7 @@ class LoadSpectrum:
     t_load: float = attr.ib(default=300.0)
     t_load_ns: float = attr.ib(default=400.0)
     freq_bin_size: int = attr.ib(default=1)
+    temperature_range: float | tuple[float, float] = attr.ib((0, np.inf))
 
     @property
     def load_name(self) -> str:
@@ -767,11 +769,30 @@ class LoadSpectrum:
         means = {}
         variances = {}
 
+        if not hasattr(self.temperature_range, "__len__"):
+            median = np.median(self.thermistor_temp)
+            temp_range = (
+                median - self.temperature_range / 2,
+                median + self.temperature_range / 2,
+            )
+        else:
+            temp_range = self.temperature_range
+
+        temp_mask = np.zeros(spectra["Q"].shape[1], dtype=bool)
+        for i, c in enumerate(self.get_thermistor_indices()):
+            if np.isnan(c):
+                temp_mask[i] = False
+            else:
+                temp_mask[i] = (self.thermistor_temp[c] >= temp_range[0]) & (
+                    self.thermistor_temp[c] < temp_range[1]
+                )
+
         for key, spec in spectra.items():
             # Weird thing where there are zeros in the spectra.
             spec[spec == 0] = np.nan
 
             spec = tools.bin_array(spec.T, size=self.freq_bin_size).T
+            spec[:, ~temp_mask] = np.nan
 
             mean = np.nanmean(spec, axis=1)
             var = np.nanvar(spec, axis=1)
@@ -807,6 +828,44 @@ class LoadSpectrum:
             fl.attrs["n_integrations"] = n_intg
 
         return means, variances, n_intg
+
+    @cached_property
+    def spectrum_ancillary(self) -> dict[str, np.ndarray]:
+        """Ancillary data from the spectrum measurements."""
+        fname = self._get_integrated_filename().with_suffix(".anc.h5")
+        if fname.exists():
+            logger.info("Reading in ancillary spectrum data from .anc.h5 file...")
+            out = {}
+            with h5py.File(fname) as fl:
+                for key in fl.keys():
+                    out[key] = fl[key][...]
+
+        else:
+            anc = [spec_obj.data["time_ancillary"] for spec_obj in self.spec_obj]
+
+            n_times = sum(len(a["times"]) for a in anc)
+
+            index_start_spectra = int((self.ignore_times_percent / 100) * n_times)
+
+            out = {
+                key: np.hstack(tuple(a[key].T for a in anc)).T[index_start_spectra:]
+                for key in anc[0]
+            }
+
+            with h5py.File(fname, "w") as fl:
+                logger.info(f"Saving spectrum ancillary to cache at {fname}")
+                for key, val in out.items():
+                    fl[key] = val
+
+        return out
+
+    @cached_property
+    def spectrum_timestamps(self) -> list[datetime]:
+        """Timestamps from each 3-position switch measurement."""
+        return [
+            datetime.strptime(d, "%Y:%j:%H:%M:%S")
+            for d in self.spectrum_ancillary["times"].astype(str)
+        ]
 
     def get_spectra(self) -> dict:
         """Read all spectra and remove RFI.
@@ -874,12 +933,55 @@ class LoadSpectrum:
 
         return out
 
+    def get_thermistor_indices(self) -> list[int | np.nan]:
+        """Get the index of the closest therm measurement for each spectrum."""
+        closest = []
+        indx = 0
+
+        deltat = self.thermistor_timestamps[1] - self.thermistor_timestamps[0]
+
+        for d in self.spectrum_timestamps:
+            if indx >= len(self.thermistor_timestamps):
+                closest.append(np.nan)
+                continue
+
+            for i, td in enumerate(self.thermistor_timestamps[indx:], start=indx):
+
+                if d - td > timedelta(0) and d - td <= deltat:
+                    closest.append(i)
+                    break
+                if d - td > timedelta(0):
+                    indx += 1
+
+            else:
+                closest.append(np.nan)
+
+        return closest
+
     @cached_property
     def thermistor(self) -> np.ndarray:
         """The thermistor readings."""
         ary = self.resistance_obj.read()[0]
 
         return ary[int((self.ignore_times_percent / 100) * len(ary)) :]
+
+    @cached_property
+    def thermistor_timestamps(self) -> list[datetime]:
+        """Timestamps of all the thermistor measurements."""
+        if "time" in self.thermistor.dtype.names:
+            times = self.thermistor["time"]
+            dates = self.thermistor["date"]
+            times = [
+                datetime.strptime(d + ":" + t, "%m/%d/%Y:%H:%M:%S")
+                for d, t in zip(dates.astype(str), times.astype(str))
+            ]
+        else:
+            times = [
+                datetime.strptime(d.split(".")[0], "%m/%d/%Y %H:%M:%S")
+                for d in self.thermistor["start_time"].astype(str)
+            ]
+
+        return times
 
     @cached_property
     def thermistor_temp(self):
