@@ -572,6 +572,9 @@ class LoadSpectrum:
     freq_bin_size
         The size of the frequency bins, in units of their raw size (i.e. default of
         one is to not bin in frequency).
+    temperature_range
+        If set, mask out spectra taken when the thermistor temp is outside the range
+        (i.e. don't include it in the average /variance).
     """
 
     spec_obj: tuple[io.Spectrum] = attr.ib(converter=tuple)
@@ -588,7 +591,7 @@ class LoadSpectrum:
     t_load: float = attr.ib(default=300.0)
     t_load_ns: float = attr.ib(default=400.0)
     freq_bin_size: int = attr.ib(default=1)
-    temperature_range: float | tuple[float, float] = attr.ib((0, np.inf))
+    temperature_range: float | tuple[float, float] | None = attr.ib(None)
 
     @property
     def load_name(self) -> str:
@@ -769,23 +772,40 @@ class LoadSpectrum:
         means = {}
         variances = {}
 
-        if not hasattr(self.temperature_range, "__len__"):
-            median = np.median(self.thermistor_temp)
-            temp_range = (
-                median - self.temperature_range / 2,
-                median + self.temperature_range / 2,
-            )
-        else:
-            temp_range = self.temperature_range
-
-        temp_mask = np.zeros(spectra["Q"].shape[1], dtype=bool)
-        for i, c in enumerate(self.get_thermistor_indices()):
-            if np.isnan(c):
-                temp_mask[i] = False
-            else:
-                temp_mask[i] = (self.thermistor_temp[c] >= temp_range[0]) & (
-                    self.thermistor_temp[c] < temp_range[1]
+        if self.temperature_range is not None:
+            # Cut on temperature.
+            if not hasattr(self.temperature_range, "__len__"):
+                median = np.median(self.thermistor_temp)
+                temp_range = (
+                    median - self.temperature_range / 2,
+                    median + self.temperature_range / 2,
                 )
+            else:
+                temp_range = self.temperature_range
+
+            temp_mask = np.zeros(spectra["Q"].shape[1], dtype=bool)
+            for i, c in enumerate(self.get_thermistor_indices()):
+                if np.isnan(c):
+                    temp_mask[i] = False
+                else:
+                    temp_mask[i] = (self.thermistor_temp[c] >= temp_range[0]) & (
+                        self.thermistor_temp[c] < temp_range[1]
+                    )
+
+            if not np.any(temp_mask):
+                raise RuntimeError(
+                    "The temperature range has masked all spectra!"
+                    f"Temperature Range Desired: {temp_range}.\n"
+                    "Temperature Range of Data: "
+                    f"{(self.thermistor_temp.min(), self.thermistor_temp.max())}\n"
+                    f"Time Range of Spectra: "
+                    f"{(self.spectrum_timestamps[0], self.spectrum_timestamps[-1])}\n"
+                    f"Time Range of Thermistor: "
+                    f"{(self.thermistor_timestamps[0], self.thermistor_timestamps[-1])}"
+                )
+
+        else:
+            temp_mask = np.ones(spectra["Q"].shape[1], dtype=bool)
 
         for key, spec in spectra.items():
             # Weird thing where there are zeros in the spectra.
