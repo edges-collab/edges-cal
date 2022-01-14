@@ -1567,12 +1567,12 @@ class CalibrationObservation:
     def internal_switch(self) -> s11.InternalSwitch:
         """The internal switch measurements."""
         kwargs = {
-            **self.internal_switch_kwargs,
             **{
-                "resistance": self.io.definition["measurements"]["resistance_m"][
-                    self.io.s11.switching_state.run_num
-                ]
+                "resistance": self.io.definition.get("measurements", {})
+                .get("resistance_m", {})
+                .get(self.io.s11.switching_state.run_num, 50.0)
             },
+            **self.internal_switch_kwargs,
         }
         return s11.InternalSwitch(data=self.io.s11.switching_state, **kwargs)
 
@@ -1684,9 +1684,9 @@ class CalibrationObservation:
             f_low=self.f_low,
             f_high=self.f_high,
             resistance=self.resistance_f
-            or self.io.definition["measurements"]["resistance_f"][
-                self.io.s11.receiver_reading.run_num
-            ],
+            or self.io.definition.get("measurements", {})
+            .get("resistance_f", {})
+            .get(self.io.s11.receiver_reading.run_num, 50),
             **{**self.s11_kwargs, **refl},
         )
 
@@ -2119,6 +2119,10 @@ class CalibrationObservation:
         ax=None,
         xlabel=True,
         ylabel=True,
+        label: str = "",
+        as_residuals: bool = False,
+        load_in_title: bool = False,
+        rms_in_label: bool = True,
     ):
         """
         Make a plot of calibrated temperature for a given source.
@@ -2161,23 +2165,40 @@ class CalibrationObservation:
 
         rms = np.sqrt(np.mean((freq_ave_cal - np.mean(freq_ave_cal)) ** 2))
 
-        ax.plot(
-            self.freq.freq,
-            freq_ave_cal,
-            label=f"Calibrated {load.spectrum.load_name} [RMS = {rms:.3f}]",
-        )
-
         temp_ave = self.source_thermistor_temps.get(load.load_name, load.temp_ave)
 
-        if not hasattr(temp_ave, "__len__"):
-            ax.axhline(temp_ave, color="C2", label="Average thermistor temp")
+        if as_residuals:
+            freq_ave_cal -= temp_ave
+
+        if load_in_title:
+            ax.set_title(load.spectrum.load_name)
+        elif label:
+            label += f" ({load.spectrum.load_name})"
         else:
-            ax.plot(
-                self.freq.freq,
-                temp_ave,
-                color="C2",
-                label="Average thermistor temp",
-            )
+            label = load.spectrum.load_name
+
+        if rms_in_label:
+            if label:
+                label += f" [RMS={rms:.3f}]"
+            else:
+                label = f"RMS={rms:.3f}"
+
+        ax.plot(self.freq.freq, freq_ave_cal, label=label)
+
+        if not as_residuals:
+            if not hasattr(temp_ave, "__len__"):
+                ax.axhline(
+                    temp_ave,
+                    color="C2",
+                    label="Average thermistor temp" if label else None,
+                )
+            else:
+                ax.plot(
+                    self.freq.freq,
+                    temp_ave,
+                    color="C2",
+                    label="Average thermistor temp",
+                )
 
         ax.set_ylim([np.nanmin(freq_ave_cal), np.nanmax(freq_ave_cal)])
         if xlabel:
@@ -2218,7 +2239,7 @@ class CalibrationObservation:
             out[name] = np.sqrt(np.nanmean(res ** 2))
         return out
 
-    def plot_calibrated_temps(self, bins=64, fig=None, ax=None):
+    def plot_calibrated_temps(self, bins=64, fig=None, ax=None, **kwargs):
         """
         Plot all calibrated temperatures in a single figure.
 
@@ -2248,6 +2269,7 @@ class CalibrationObservation:
                 fig=fig,
                 ax=ax[i],
                 xlabel=i == (len(self._sources) - 1),
+                **kwargs,
             )
 
         fig.suptitle("Calibrated Temperatures for Calibration Sources", fontsize=15)
