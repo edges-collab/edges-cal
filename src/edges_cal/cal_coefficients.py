@@ -522,7 +522,13 @@ class LNA(_S11Base):
 
         # Correction at switch
         return rc.de_embed(
-            oa.value, sa.value, la.value, self.open.s11, self.short.s11, self.match.s11, self.external.s11
+            oa.value,
+            sa.value,
+            la.value,
+            self.open.s11,
+            self.short.s11,
+            self.match.s11,
+            self.external.s11,
         )[0]
 
 

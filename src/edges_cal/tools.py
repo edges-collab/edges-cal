@@ -4,13 +4,14 @@ from __future__ import annotations
 import attr
 import numpy as np
 import warnings
+from astropy import units
 from itertools import product
 from pathlib import Path
-from typing import Sequence, Callable
+from typing import Callable, Sequence
 
 from . import DATA_PATH
 from .cached_property import cached_property
-from astropy import units
+
 
 def get_data_path(pth: str | Path) -> Path:
     """Impute the global data path to a given input in place of a colon."""
@@ -23,17 +24,28 @@ def get_data_path(pth: str | Path) -> Path:
         return pth
 
 
-def unit_convert_or_apply(x: float | units.Quantity, unit: str | units.Unit) -> units.Quantity:
-    if hasattr(x, 'unit'):
+def unit_convert_or_apply(
+    x: float | units.Quantity, unit: str | units.Unit, in_place: bool = False
+) -> units.Quantity:
+    """Safely convert a given value to a quantity."""
+    if hasattr(x, "unit"):
         return x.to(unit)
     elif isinstance(unit, units.Unit):
         return x * unit
     else:
-        return x * getattr(units, unit)
+        if in_place:
+            return x << getattr(units, unit)
+        else:
+            return x * getattr(units, unit)
 
-def unit_converter(unit: str | units.Unit) -> Callable[[float | units.Quantity], units.Quantity]:
+
+def unit_converter(
+    unit: str | units.Unit,
+) -> Callable[[float | units.Quantity], units.Quantity]:
+    """Return a function that will convert values to a given quantity."""
     return lambda x: unit_convert_or_apply(x, unit)
-    
+
+
 def as_readonly(x: np.ndarray) -> np.ndarray:
     """Get a read-only view into an array without copying."""
     result = x.view()

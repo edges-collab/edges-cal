@@ -23,3 +23,4 @@ per-file-ignores =
     src/edges_cal/cal_coefficients.py:N802
     tests/*:D
     src/edges_cal/__init__.py:F401
+    src/edges_cal/reflection_coefficient.py:A002
