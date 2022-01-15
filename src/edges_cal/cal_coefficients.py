@@ -522,7 +522,7 @@ class LNA(_S11Base):
 
         # Correction at switch
         return rc.de_embed(
-            oa, sa, la, self.open.s11, self.short.s11, self.match.s11, self.external.s11
+            oa.value, sa.value, la.value, self.open.s11, self.short.s11, self.match.s11, self.external.s11
         )[0]
 
 
@@ -2028,13 +2028,14 @@ class CalibrationObservation:
 
         # binning
         temp_calibrated = self.calibrate(load)
-
+        print(type(temp_calibrated))
         if bins > 0:
             freq_ave_cal = convolve(
                 temp_calibrated, Gaussian1DKernel(stddev=bins), boundary="extend"
             )
         else:
             freq_ave_cal = temp_calibrated
+        print(np.any(np.isinf(freq_ave_cal)))
         freq_ave_cal[np.isinf(freq_ave_cal)] = np.nan
 
         rms = np.sqrt(np.mean((freq_ave_cal - np.mean(freq_ave_cal)) ** 2))

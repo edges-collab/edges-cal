@@ -8,7 +8,7 @@ from typing import Callable, Tuple, Union
 
 from . import reflection_coefficient as rc
 from .modelling import ComplexRealImagModel, Model, Polynomial, UnitTransform
-
+from astropy import units
 
 def _read_data_and_corrections(switching_state: io.SwitchingState):
 
@@ -18,6 +18,8 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
         "short": -1 * np.ones_like(switching_state.freq),
         "match": np.zeros_like(switching_state.freq),
     }
+    if isinstance(sw['open'], units.Quantity):
+        raise ValueError("WHAT IT'S A QUANTITY!")
     # Correction at the switch
     corrections = {
         kind: rc.de_embed(
@@ -131,9 +133,9 @@ class InternalSwitch:
         )
 
         _, s11, s12s21, s22 = rc.de_embed(
-            oa,
-            sa,
-            la,
+            oa.value,
+            sa.value,
+            la.value,
             corrections["open"],
             corrections["short"],
             corrections["match"],
