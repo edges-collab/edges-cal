@@ -14,7 +14,6 @@ import warnings
 import yaml
 from abc import ABCMeta, abstractmethod
 from astropy.convolution import Gaussian1DKernel, convolve
-from copy import copy
 from edges_io import io
 from edges_io.logging import logger
 from functools import lru_cache
@@ -2311,8 +2310,7 @@ class CalibrationObservation:
         :class:`CalibrationObservation`
             A new observation object with the injected models.
         """
-        new = copy(self)
-        new.invalidate_cache()
+        new = self.clone()
         new._injected_lna_s11 = lna_s11
         new._injected_source_s11s = source_s11s
         new._injected_c1 = c1
