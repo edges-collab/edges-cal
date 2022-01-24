@@ -27,7 +27,7 @@ def impedance2gamma(
 ) -> float | np.ndarray:
     """Convert impedance to reflection coefficient.
 
-    See Eq. 19 of Monsale et al. 2016.
+    See Eq. 19 of Monsalve et al. 2016.
 
     Parameters
     ----------
@@ -57,7 +57,7 @@ def gamma2impedance(
     gamma
         Reflection coefficient.
     z0
-        Impedance of the match.
+        Reference impedance.
 
     Returns
     -------
@@ -84,16 +84,16 @@ def gamma_de_embed(
     Parameters
     ----------
     s11
-        The reflection coefficient of the two-port
-        network.
+        The S11 parameter of the two-port network for the port facing the calibration
+        plane.
     s12s21
         The product of ``S12*S21`` of the two-port
         network.
     s22
-        The S22 of the two-port network.
+        The S22 of the two-port network for the port facing the device under test (DUT)
     gamma_ref
         The reflection coefficient of the device
-        under test (DUT) at the reference plane.
+        under test (DUT) measured at the reference plane.
 
     Returns
     -------
@@ -125,13 +125,13 @@ def gamma_embed(
     Parameters
     ----------
     s11
-        The reflection coefficient of the two-port
-        network.
+        The S11 parameter of the two-port network for the port facing the calibration
+        plane.
     s12s21
         The product of ``S12*S21`` of the two-port
         network.
     s22
-        The S22 of the two-port network.
+        The S22 of the two-port network for the port facing the device under test (DUT)
     gamma
         The intrinsic reflection coefficient of the device
         under test (DUT);.
@@ -140,7 +140,7 @@ def gamma_embed(
     -------
     gamma_ref
          The reflection coefficient of the DUT
-         at the reference plane.
+         measured at the reference plane.
 
     See Also
     --------
@@ -159,7 +159,7 @@ def de_embed(
     gamma_match_meas: np.ndarray,
     gamma_ref,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Obtain network S-parameters from OSL standards.
+    """Obtain network S-parameters from OSL standards and intrinsic reflections of DUT.
 
     See Eq. 3 of Monsalve et al., 2016.
 
@@ -243,7 +243,7 @@ def input_impedance_transmission_line(
     z0: np.ndarray, gamma: np.ndarray, length: float, z_load: np.ndarray
 ) -> np.ndarray:
     """
-    Calculate the impedance of a transmission line.
+    Calculate the impedance of a terminated transmission line.
 
     Parameters
     ----------
@@ -280,7 +280,7 @@ class CalkitStandard:
     Parameters
     ----------
     resistance
-        The resistance of the standard, either assumed or measured.
+        The resistance of the standard termination, either assumed or measured.
     offset_impedance
         Impedance of the transmission line, in Ohms.
     offset_delay
@@ -335,7 +335,7 @@ class CalkitStandard:
     def termination_impedance(self, freq: tp.FreqType) -> tp.OhmType:
         """The impedance of the termination of the standard.
 
-        See Eq. 24/25 of M16 for open and short standards. The match standard
+        See Eq. 22-25 of M16 for open and short standards. The match standard
         uses the input measured resistance as the impedance.
         """
         self._verify_freq(freq)
@@ -358,7 +358,7 @@ class CalkitStandard:
     def lossy_characteristic_impedance(self, freq: tp.FreqType) -> tp.OhmType:
         """Obtain the lossy characteristic impedance of the transmission line (offset).
 
-        See Eq. 20 of Monsale et al., 2016
+        See Eq. 20 of Monsalve et al., 2016
         """
         self._verify_freq(freq)
         return self.offset_impedance + (1 - 1j) * (
@@ -377,7 +377,7 @@ class CalkitStandard:
             (self.offset_loss * self.offset_delay) / (2 * self.offset_impedance)
         ) * np.sqrt(freq.to("GHz").value)
 
-    def gamma_offset(self, freq: tp.FreqType) -> tp.DimlessType:
+    def offset_gamma(self, freq: tp.FreqType) -> tp.DimlessType:
         """Obtain reflection coefficient of the offset.
 
         Eq. 19 of M16.
@@ -392,7 +392,7 @@ class CalkitStandard:
         See Eq. 18 of M16.
         """
         ex = np.exp(-2 * self.gl(freq))
-        r1 = self.gamma_offset(freq)
+        r1 = self.offset_gamma(freq)
         gamma_termination = self.termination_gamma(freq)
         return (r1 * (1 - ex - r1 * gamma_termination) + ex * gamma_termination) / (
             1 - r1 * (ex * r1 + gamma_termination * (1 - ex))
