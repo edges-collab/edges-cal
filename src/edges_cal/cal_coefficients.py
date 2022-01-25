@@ -18,11 +18,13 @@ from copy import copy
 from edges_io import io
 from edges_io.logging import logger
 from functools import lru_cache
+from hashlib import md5
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 from typing import Any, Callable, Literal
 
+from . import __version__
 from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
@@ -731,9 +733,20 @@ class LoadSpectrum:
         """The number of integrations recorded for the spectrum (after ignoring)."""
         return self._ave_and_var_spec[2]
 
+    @cached_property
+    def _stable_hash(self):
+        """A hash of the object that is stable across python sessions.
+
+        Hashes based on the values of all attributes, plus the *major version* of
+        edges-cal.
+
+        Standard hash() is randomized by default every session.
+        """
+        return md5(tuple(attr.asdict(self).values()) + (__version__.split(".")[0]))
+
     def _get_integrated_filename(self):
         """Determine a unique filename for the reduced data of this instance."""
-        return self.cache_dir / f"{self.load_name}_{hash(self)}.h5"
+        return self.cache_dir / f"{self.load_name}_{self._stable_hash}.h5"
 
     @cached_property
     def _ave_and_var_spec(self) -> tuple[dict, dict, int]:
