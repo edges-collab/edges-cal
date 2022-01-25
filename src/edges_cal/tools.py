@@ -28,15 +28,7 @@ def unit_convert_or_apply(
     x: float | units.Quantity, unit: str | units.Unit, in_place: bool = False
 ) -> units.Quantity:
     """Safely convert a given value to a quantity."""
-    if hasattr(x, "unit"):
-        return x.to(unit)
-    elif isinstance(unit, units.Unit):
-        return x * unit
-    else:
-        if in_place:
-            return x << getattr(units, unit)
-        else:
-            return x * getattr(units, unit)
+    return units.Quantity(x, unit, copy=not in_place)
 
 
 def unit_converter(

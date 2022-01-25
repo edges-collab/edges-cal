@@ -281,8 +281,7 @@ class Model(metaclass=ABCMeta):
 
     parameters: Sequence | None = attr.ib(
         default=None,
-        converter=attr.converters.optional(np.asarray),
-        eq=attr.cmp_using(eq=np.array_equal),
+        converter=attr.converters.optional(tuple),
     )
     n_terms: int = attr.ib(converter=attr.converters.optional(int))
     transform: ModelTransform = attr.ib(default=IdentityTransform())
@@ -378,7 +377,7 @@ class Model(metaclass=ABCMeta):
         model : np.ndarray
             The model evaluated at the input ``x`` or ``basis``.
         """
-        parameters = self.parameters if parameters is None else np.array(parameters)
+        parameters = np.asarray(self.parameters if parameters is None else parameters)
 
         if parameters is None:
             raise ValueError("You must supply parameters to evaluate the model!")

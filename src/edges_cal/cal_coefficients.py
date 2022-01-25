@@ -70,9 +70,6 @@ class S1P:
     f_high: float | None = attr.ib(
         default=None, converter=attr.converters.optional(float), kw_only=True
     )
-    _switchval: int | None = attr.ib(
-        default=None, kw_only=True, converter=attr.converters.optional(int)
-    )
 
     @property
     def load_name(self) -> str:
@@ -99,14 +96,6 @@ class S1P:
     def s11(self) -> np.ndarray:
         """The S11 measurement."""
         return self.s1p.s11[self.freq.mask]
-
-    @cached_property
-    def switchval(self):
-        """The standard value of the switch for the component."""
-        if self._switchval is not None:
-            return self._switchval * np.ones(self.freq.n)
-        else:
-            return None
 
 
 # For backwards compatibility
@@ -178,7 +167,6 @@ class _S11Base(metaclass=ABCMeta):
                 s1p=self.load_s11.children[name.lower()],
                 f_low=self.f_low,
                 f_high=self.f_high,
-                switchval=self._switchvals.get(name.lower()),
             )
             for name in self.load_s11.STANDARD_NAMES
         }
@@ -420,9 +408,9 @@ class LoadS11(_S11Base):
     def measured_load_s11_raw(self):
         """The measured S11 of the load, calculated from raw internal standards."""
         return rc.de_embed(
-            self.open.switchval,
-            self.short.switchval,
-            self.match.switchval,
+            self.internal_switch.calkit.open.intrinsic_gamma,
+            self.internal_switch.calkit.short.intrinsic_gamma,
+            0.0,  # TODO: self.calkit.match.intrinsic_gamma, ??
             self.open.s11,
             self.short.s11,
             self.match.s11,
@@ -1450,14 +1438,16 @@ class CalibrationObservation:
     @cached_property
     def internal_switch(self) -> s11.InternalSwitch:
         """The internal switch measurements."""
-        kwargs = {
-            **self.internal_switch_kwargs,
-            **{
-                "resistance": self.io.definition["measurements"]["resistance_m"][
+        kwargs = {**self.internal_switch_kwargs}
+
+        if "calkit" not in kwargs:
+            kwargs["calkit"] = rc.get_calkit(
+                rc.AGILENT_85033E,
+                resistance_of_match=self.io.definition["measurements"]["resistance_m"][
                     self.io.s11.switching_state.run_num
-                ]
-            },
-        }
+                ],
+            )
+
         return s11.InternalSwitch(data=self.io.s11.switching_state, **kwargs)
 
     @cached_property

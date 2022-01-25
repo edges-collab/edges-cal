@@ -19,8 +19,7 @@ def _read_data_and_corrections(switching_state: io.SwitchingState):
         "short": -1 * np.ones_like(switching_state.freq),
         "match": np.zeros_like(switching_state.freq),
     }
-    if isinstance(sw["open"], units.Quantity):
-        raise ValueError("WHAT IT'S A QUANTITY!")
+
     # Correction at the switch
     corrections = {
         kind: rc.de_embed(
@@ -52,6 +51,7 @@ class InternalSwitch:
     n_terms: Union[Tuple[int, int, int], int] = attr.ib(
         default=(7, 7, 7), converter=_tuplify
     )
+    calkit: rc.Calkit = attr.ib(rc.AGILENT_85033E)
 
     @model.default
     def _mdl_default(self):
@@ -128,15 +128,10 @@ class InternalSwitch:
         """Get de-embedded reflection parameters for the internal switch."""
         corrections = _read_data_and_corrections(self.data)[0]
 
-        # Computation of S-parameters to the receiver input
-        oa, sa, la = rc.agilent_85033E(
-            f=self.data.freq * 1e6, resistance_of_match=self.resistance
-        )
-
         _, s11, s12s21, s22 = rc.de_embed(
-            oa.value,
-            sa.value,
-            la.value,
+            self.calkit.open.reflection_coefficient(self.data.freq * units.MHz),
+            self.calkit.short.reflection_coefficient(self.data.freq * units.MHz),
+            self.calkit.match.reflection_coefficient(self.data.freq * units.MHz),
             corrections["open"],
             corrections["short"],
             corrections["match"],

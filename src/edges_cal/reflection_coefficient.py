@@ -332,6 +332,14 @@ class CalkitStandard:
                 f"Got {units.get_physical_type(freq)}"
             )
 
+    @property
+    def intrinsic_gamma(self) -> float:
+        """The intrinsic reflection coefficient of the idealized standard."""
+        if np.isinf(self.resistance):
+            return 1.0  # np.inf / np.inf
+        else:
+            return impedance2gamma(self.resistance, 50.0 * units.Ohm)
+
     def termination_impedance(self, freq: tp.FreqType) -> tp.OhmType:
         """The impedance of the termination of the standard.
 
@@ -365,7 +373,7 @@ class CalkitStandard:
             self.offset_loss / (2 * 2 * np.pi * freq)
         ) * np.sqrt(freq.to("GHz").value)
 
-    def gl(self, freq: tp.FreqType) -> tp.DimlessType:
+    def gl(self, freq: tp.FreqType) -> np.ndarray:
         """Obtain the product gamma*length.
 
         gamma is the propagation constant of the transmission line (offset) and l
@@ -373,9 +381,14 @@ class CalkitStandard:
         """
         self._verify_freq(freq)
 
-        return 2 * np.pi * freq * self.offset_delay + (1 + 1j) * (
-            (self.offset_loss * self.offset_delay) / (2 * self.offset_impedance)
-        ) * np.sqrt(freq.to("GHz").value)
+        temp = (
+            np.sqrt(freq.to("GHz").value)
+            * (self.offset_loss * self.offset_delay)
+            / (2 * self.offset_impedance)
+        )
+        return ((2 * np.pi * freq * self.offset_delay) * 1j + (1 + 1j) * temp).to_value(
+            ""
+        )
 
     def offset_gamma(self, freq: tp.FreqType) -> tp.DimlessType:
         """Obtain reflection coefficient of the offset.
