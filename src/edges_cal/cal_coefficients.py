@@ -742,7 +742,13 @@ class LoadSpectrum:
 
         Standard hash() is randomized by default every session.
         """
-        return md5(tuple(attr.asdict(self).values()) + (__version__.split(".")[0],))
+        return str(
+            md5(
+                str(
+                    tuple(attr.asdict(self).values()) + (__version__.split(".")[0],)
+                ).encode()
+            ).digest()
+        )
 
     def _get_integrated_filename(self):
         """Determine a unique filename for the reduced data of this instance."""
