@@ -136,9 +136,9 @@ def test_calkit_quantities_match_with_loss():
     assert std.inductance_model is None
     assert std.termination_gamma(freq=150 * u.MHz) == 0.0
     assert std.termination_impedance(freq=150 * u.MHz) == 50 * u.Ohm
-    assert std.lossy_characteristic_impedance(freq=1 * u.GHz) == 50 * u.Ohm + (1 - 1j)
+    assert std.lossy_characteristic_impedance(freq=1 * u.GHz) == (51 - 1j) * u.Ohm
     assert std.gl(freq=1 * u.GHz) == 5e-2j + (1 + 1j) * 1e-3
-    assert std.reflection_coefficient(150 * u.MHz) == 0.0
+    assert std.reflection_coefficient(150 * u.MHz) != 0.0
 
 
 def test_calkit_quantities_open_trivial():

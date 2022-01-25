@@ -151,9 +151,9 @@ def gamma_embed(
 
 
 def de_embed(
-    gamma_open_intr: np.ndarray,
-    gamma_short_intr: np.ndarray,
-    gamma_match_intr: np.ndarray,
+    gamma_open_intr: np.ndarray | float,
+    gamma_short_intr: np.ndarray | float,
+    gamma_match_intr: np.ndarray | float,
     gamma_open_meas: np.ndarray,
     gamma_short_meas: np.ndarray,
     gamma_match_meas: np.ndarray,
@@ -200,8 +200,9 @@ def de_embed(
     """
     # This only works with 1D arrays, where each point in the array is
     # a value at a given frequency
-
-    # The output is also a 1D array
+    gamma_open_intr = gamma_open_intr * np.ones_like(gamma_open_meas)
+    gamma_short_intr = gamma_short_intr * np.ones_like(gamma_open_meas)
+    gamma_match_intr = gamma_match_intr * np.ones_like(gamma_open_meas)
 
     s11 = np.zeros(len(gamma_open_intr)) + 0j  # 0j added to make array complex
     s12s21 = np.zeros(len(gamma_open_intr)) + 0j

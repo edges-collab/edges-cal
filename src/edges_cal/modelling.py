@@ -6,6 +6,7 @@ import numpy as np
 import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
+from copy import copy
 from edges_io.h5 import register_h5type
 from typing import Sequence
 
@@ -377,11 +378,13 @@ class Model(metaclass=ABCMeta):
         model : np.ndarray
             The model evaluated at the input ``x`` or ``basis``.
         """
-        parameters = np.asarray(self.parameters if parameters is None else parameters)
-
-        if parameters is None:
+        if parameters is None and self.parameters is None:
             raise ValueError("You must supply parameters to evaluate the model!")
 
+        if parameters is None:
+            parameters = np.asarray(self.parameters)
+
+        print("params: ", parameters, parameters is None)
         indices = np.arange(len(parameters)) if indices is None else np.array(indices)
 
         if x is None and basis is None:
@@ -1156,7 +1159,7 @@ class ModelFit:
         """The best-fit model parameters."""
         # Parameters need to be copied into this object, otherwise a new fit on the
         # parent model will change the model_parameters of this fit!
-        return as_readonly(self.fit.model.parameters)
+        return copy(self.fit.model.parameters)
 
     def evaluate(self, x: np.ndarray | None = None) -> np.ndarray:
         """Evaluate the best-fit model.
@@ -1223,7 +1226,7 @@ def _model_yaml_representer(
     model_dct = attr.asdict(model, recurse=False)
     model_dct.update(model=model.__class__.__name__.lower())
     if model_dct["parameters"] is not None:
-        model_dct["parameters"] = model_dct["parameters"].tolist()
+        model_dct["parameters"] = tuple(float(x) for x in model_dct["parameters"])
 
     return dumper.represent_mapping("!Model", model_dct)
 
