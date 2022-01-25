@@ -384,7 +384,6 @@ class Model(metaclass=ABCMeta):
         if parameters is None:
             parameters = np.asarray(self.parameters)
 
-        print("params: ", parameters, parameters is None)
         indices = np.arange(len(parameters)) if indices is None else np.array(indices)
 
         if x is None and basis is None:
