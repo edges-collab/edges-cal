@@ -13,11 +13,12 @@ import tempfile
 import warnings
 import yaml
 from abc import ABCMeta, abstractmethod
+from astropy import units as un
 from astropy.convolution import Gaussian1DKernel, convolve
 from edges_io import io
+from edges_io import utils as iou
 from edges_io.logging import logger
 from functools import lru_cache
-from hashlib import md5
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
@@ -444,7 +445,10 @@ class LNA(_S11Base):
     """
 
     load_s11: io.ReceiverReading = attr.ib()
-    resistance: float = attr.ib(default=50.009, kw_only=True)
+    calkit: rc.Calkit = attr.ib(
+        default=rc.get_calkit(rc.AGILENT_85033E, resistance_of_match=50.009 * un.Ohm),
+        kw_only=True,
+    )
 
     @cached_property
     def load_name(self) -> str:
@@ -504,16 +508,11 @@ class LNA(_S11Base):
     @cached_property
     def measured_load_s11_raw(self):
         """Measured S11 of of the LNA."""
-        # Models of standards
-        oa, sa, la = rc.agilent_85033E(
-            self.freq.freq, self.resistance, match_delay=True
-        )
-
         # Correction at switch
         return rc.de_embed(
-            oa.value,
-            sa.value,
-            la.value,
+            self.calkit.open.reflection_coefficient(self.freq.freq * un.MHz),
+            self.calkit.short.reflection_coefficient(self.freq.freq * un.MHz),
+            self.calkit.match.reflection_coefficient(self.freq.freq * un.MHz),
             self.open.s11,
             self.short.s11,
             self.match.s11,
@@ -741,12 +740,8 @@ class LoadSpectrum:
 
         Standard hash() is randomized by default every session.
         """
-        return str(
-            md5(
-                str(
-                    tuple(attr.asdict(self).values()) + (__version__.split(".")[0],)
-                ).encode()
-            ).digest()
+        return iou.stable_hash(
+            tuple(attr.asdict(self).values()) + (__version__.split(".")[0],)
         )
 
     def _get_integrated_filename(self):
@@ -1571,15 +1566,20 @@ class CalibrationObservation:
         """The LNA measurements."""
         refl = self.load_s11s.get("lna", {})
 
+        kw = {**self.s11_kwargs, **refl}
+        if "calkit" not in kw:
+            kw["calkit"] = rc.get_calkit(
+                rc.AGILENT_85033E,
+                resistance_of_match=self.io.definition.get("measurements", {})
+                .get("resistance_f", {})
+                .get(self.io.s11.receiver_reading.run_num, 50.0 * un.Ohm),
+            )
+
         return LNA(
             load_s11=self.io.s11.receiver_reading,
             f_low=self.f_low,
             f_high=self.f_high,
-            resistance=self.resistance_f
-            or self.io.definition["measurements"]["resistance_f"][
-                self.io.s11.receiver_reading.run_num
-            ],
-            **{**self.s11_kwargs, **refl},
+            **kw,
         )
 
     @cached_property
