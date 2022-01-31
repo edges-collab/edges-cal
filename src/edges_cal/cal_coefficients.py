@@ -1386,9 +1386,10 @@ class CalibrationObservation:
     load_s11s: dict = attr.ib(default=attr.Factory(dict), kw_only=True)
     compile_from_def: bool = attr.ib(default=True, kw_only=True)
     include_previous: bool = attr.ib(default=False, kw_only=True)
-    internal_switch_kwargs: dict[str, Any] | None = attr.ib(
+    internal_switch_kwargs: dict[str, Any] = attr.ib(
         default=attr.Factory(dict), kw_only=True
     )
+    lna_kwargs: dict[str, Any] = attr.ib(default=attr.Factory(dict), kw_only=True)
     freq_bin_size: int = attr.ib(default=1, kw_only=True)
 
     @f_high.validator
@@ -1564,9 +1565,7 @@ class CalibrationObservation:
     @cached_property
     def lna(self) -> LNA:
         """The LNA measurements."""
-        refl = self.load_s11s.get("lna", {})
-
-        kw = {**self.s11_kwargs, **refl}
+        kw = {**self.lna_kwargs}
         if "calkit" not in kw:
             kw["calkit"] = rc.get_calkit(
                 rc.AGILENT_85033E,
