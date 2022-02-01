@@ -248,7 +248,7 @@ latex_documents = [
 # latex_domain_indices = True
 
 # -- External mapping ------------------------------------------------------------
-python_version = ".".join(map(str, sys.version_info[0:2]))
+python_version = ".".join(map(str, sys.version_info[:2]))
 intersphinx_mapping = {
     "sphinx": ("http://www.sphinx-doc.org/en/stable", None),
     "python": ("https://docs.python.org/" + python_version, None),
@@ -259,3 +259,17 @@ intersphinx_mapping = {
     "scipy": ("https://docs.scipy.org/doc/scipy/reference", None),
     'edges-io': ("https://edges-io.readthedocs.io/en/latest")
 }
+
+def build_custom_docs(app):
+    import pypandoc
+    pypandoc.convert_file(Path(__file__).parent/'CHANGELOG.md', 'md') # check markdown formatting
+    ch = pypandoc.convert_file(Path(__file__).parent/'CHANGELOG.md', 'rst')
+
+    with open("changelog.rst", 'w') as fl:
+        fl.write(ch)
+
+# -- Extension configuration -------------------------------------------------
+
+
+def setup(app):
+    app.connect('builder-inited', build_custom_docs)
