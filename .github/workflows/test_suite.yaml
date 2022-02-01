@@ -41,7 +41,8 @@ jobs:
       - name: Run Tests
         run: |
           python -m pytest --cov=edges_cal --cov-config=.coveragerc --cov-report xml:./coverage.xml --durations=25
-      - uses: codecov/codecov-action@v1.5.2
+      - uses: codecov/codecov-action@v2.1.0
         if: matrix.os == 'ubuntu-latest' && success()
         with:
-          file: ./coverage.xml #optional
+          fail_ci_if_error: true
+          verbose: true
