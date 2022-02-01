@@ -18,6 +18,12 @@ jobs:
         uses: actions/setup-python@v2
         with:
           python-version: 3.x
+      - name: Python Semantic Release
+        run: |
+          pip install python-semantic-release
+          semantic-release --noop version
+          semantic-release --noop changelog
+
       - name: Install build
         run: |
           python -m pip install build
