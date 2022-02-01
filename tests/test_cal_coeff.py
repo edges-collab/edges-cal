@@ -301,3 +301,16 @@ def test_basic_s11_properties(cal_data):
 
     assert calobs.open.reflections.match.load_name == "Match"
     assert calobs.open.reflections.match.repeat_num == 1
+
+
+def test_inject(cal_data):
+    calobs = cc.CalibrationObservation(cal_data, compile_from_def=False)
+    new = calobs.inject(
+        lna_s11=calobs.lna_s11 * 2,
+    )
+
+    np.testing.assert_allclose(new.lna_s11, 2 * calobs.lna_s11)
+    assert not np.allclose(
+        new.get_linear_coefficients("open")[0],
+        calobs.get_linear_coefficients("open")[0],
+    )
