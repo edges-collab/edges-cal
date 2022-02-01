@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+
+[tool.setuptools_scm]
+
+[tool.semantic_release]
+version_source = "tag"
+branch = "main"                             # branch to make releases of
+changelog_file = "CHANGELOG.md"             # changelog file
+upload_to_pypi = false                      # don't auto-upload to PyPI
