@@ -102,7 +102,7 @@ def gamma_de_embed(
 
     See Also
     --------
-    gamma_shifted
+    gamma_embed
         The inverse function to this one.
     """
     return (gamma_ref - s11) / (s22 * (gamma_ref - s11) + s12s21)
