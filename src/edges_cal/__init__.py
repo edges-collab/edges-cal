@@ -13,11 +13,9 @@ from pathlib import Path
 DATA_PATH = Path(__file__).parent / "data"
 
 from .cal_coefficients import (  # noqa: E402
-    S1P,
     Calibration,
     CalibrationObservation,
-    FrequencyRange,
-    LoadS11,
     LoadSpectrum,
 )
-from .s11_correction import InternalSwitch  # noqa: E402
+from .s11 import InternalSwitch, LoadS11, Receiver  # noqa: E402
+from .tools import FrequencyRange  # noqa: E402

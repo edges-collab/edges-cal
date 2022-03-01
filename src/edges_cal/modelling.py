@@ -744,7 +744,7 @@ class CompositeModel:
         return self.at(x=xdata).fit(ydata, weights=weights)
 
 
-@attr.s(frozen=True, kw_only=True)
+@attr.s(frozen=True)
 class ComplexRealImagModel(yaml.YAMLObject):
     """A composite model that is specifically for complex functions in real/imag."""
 
@@ -817,7 +817,7 @@ class ComplexRealImagModel(yaml.YAMLObject):
         return attr.evolve(self, real=real, imag=imag)
 
 
-@attr.s(frozen=True, kw_only=True)
+@attr.s(frozen=True)
 class ComplexMagPhaseModel(yaml.YAMLObject):
     """A composite model that is specifically for complex functions in mag/phase."""
 

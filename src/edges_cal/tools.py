@@ -5,9 +5,10 @@ import attr
 import numpy as np
 import warnings
 from astropy import units
+from astropy import units as u
 from itertools import product
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 from . import DATA_PATH
 from .cached_property import cached_property
@@ -16,12 +17,49 @@ from .cached_property import cached_property
 def get_data_path(pth: str | Path) -> Path:
     """Impute the global data path to a given input in place of a colon."""
     if isinstance(pth, str):
-        if pth.startswith(":"):
-            return DATA_PATH / pth[1:]
-        else:
-            return Path(pth)
+        return DATA_PATH / pth[1:] if pth.startswith(":") else Path(pth)
     else:
         return pth
+
+
+def is_unit(unit: str) -> bool:
+    """Whether the given input is a recognized unit."""
+    if isinstance(unit, u.Unit):
+        return True
+
+    try:
+        u.Unit(unit)
+        return True
+    except ValueError:
+        return False
+
+
+def vld_unit(
+    unit: str | u.Unit, equivalencies=()
+) -> Callable[[Any, attr.Attribute, Any], None]:
+    """Attr validator to check physical type."""
+    utype = is_unit(unit)
+    if not utype:
+        # must be a physical type. This errors with ValueError if unit is not
+        # really a physical type.
+        u.get_physical_type(unit)
+
+    def _check_type(self: Any, att: attr.Attribute, val: Any):
+        if not isinstance(val, u.Quantity):
+            raise TypeError(f"{att.name} must be an astropy Quantity!")
+
+        if utype and not val.unit.is_equivalent(unit, equivalencies):
+            raise u.UnitConversionError(
+                f"{att.name} not convertible to {unit}. Got {val.unit}"
+            )
+
+        if not utype and val.unit.physical_type != unit:
+            raise u.UnitConversionError(
+                f"{att.name} must have physical type of '{unit}'. "
+                f"Got '{val.unit.physical_type}'"
+            )
+
+    return _check_type
 
 
 def unit_convert_or_apply(
@@ -96,18 +134,10 @@ class FrequencyRange:
         Bin input frequencies into bins of this size.
     """
 
-    _f: np.ndarray = attr.ib(converter=np.array)
-    _f_low: float = attr.ib(converter=attr.converters.optional(float), kw_only=True)
-    _f_high: float = attr.ib(converter=attr.converters.optional(float), kw_only=True)
+    _f: np.ndarray = attr.ib(converter=np.array, eq=attr.cmp_using(eq=np.array_equal))
+    _f_low: float = attr.ib(0, converter=float, kw_only=True)
+    _f_high: float = attr.ib(np.inf, converter=float, kw_only=True)
     bin_size: int = attr.ib(default=1, converter=int, kw_only=True)
-
-    @_f_low.default
-    def _flow_default(self):
-        return self._f.min()
-
-    @_f_high.default
-    def _fhigh_default(self):
-        return self._f.max()
 
     @bin_size.validator
     def _bin_size_validator(self, att, val):

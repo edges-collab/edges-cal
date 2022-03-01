@@ -237,7 +237,7 @@ def test_calibration_init(cal_data: Path, tmpdir: Path):
 
     cal = cc.Calibration(tmpdir / "calfile.h5")
 
-    assert np.allclose(cal.lna_s11(), calobs.lna.s11_model(calobs.freq.freq))
+    assert np.allclose(cal.lna_s11(), calobs.receiver.s11_model(calobs.freq.freq))
     assert np.allclose(cal.C1(), calobs.C1())
     assert np.allclose(cal.C2(), calobs.C2())
     assert np.allclose(cal.Tunc(), calobs.Tunc())

@@ -150,6 +150,86 @@ def gamma_embed(
     return s11 + (s12s21 * gamma / (1 - s22 * gamma))
 
 
+def get_sparams(
+    gamma_open_intr: np.ndarray | float,
+    gamma_short_intr: np.ndarray | float,
+    gamma_match_intr: np.ndarray | float,
+    gamma_open_meas: np.ndarray,
+    gamma_short_meas: np.ndarray,
+    gamma_match_meas: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Obtain network S-parameters from OSL standards and intrinsic reflections of DUT.
+
+    See Eq. 3 of Monsalve et al., 2016.
+
+    Parameters
+    ----------
+    gamma_open_intr
+        The intrinsic reflection of the open standard
+        (assumed as true) as a function of frequency.
+    gamma_shrt_intr
+        The intrinsic reflection of the short standard
+        (assumed as true) as a function of frequency.
+    gamma_load_intr
+        The intrinsic reflection of the load standard
+        (assumed as true) as a function of frequency.
+    gamma_open_meas
+        The reflection of the open standard
+        measured at port 1 as a function of frequency.
+    gamma_shrt_meas
+        The reflection of the short standard
+        measured at port 1 as a function of frequency.
+    gamma_load_meas
+        The reflection of the load standard
+        measured at port 1 as a function of frequency.
+
+    Returns
+    -------
+    s11
+        The S11 of the network.
+    s12s21
+        The product `S12*S21` of the network
+    s22
+        The S22 of the network.
+    """
+    gamma_open_intr = gamma_open_intr * np.ones_like(gamma_open_meas)
+    gamma_short_intr = gamma_short_intr * np.ones_like(gamma_open_meas)
+    gamma_match_intr = gamma_match_intr * np.ones_like(gamma_open_meas)
+
+    s11 = np.zeros(len(gamma_open_intr)) + 0j  # 0j added to make array complex
+    s12s21 = np.zeros(len(gamma_open_intr)) + 0j
+    s22 = np.zeros(len(gamma_open_intr)) + 0j
+
+    for i in range(len(gamma_open_intr)):
+        b = np.array([gamma_open_meas[i], gamma_short_meas[i], gamma_match_meas[i]])
+        A = np.array(
+            [
+                [
+                    1,
+                    complex(gamma_open_intr[i]),
+                    complex(gamma_open_intr[i] * gamma_open_meas[i]),
+                ],
+                [
+                    1,
+                    complex(gamma_short_intr[i]),
+                    complex(gamma_short_intr[i] * gamma_short_meas[i]),
+                ],
+                [
+                    1,
+                    complex(gamma_match_intr[i]),
+                    complex(gamma_match_intr[i] * gamma_match_meas[i]),
+                ],
+            ]
+        )
+        x = np.linalg.lstsq(A, b, rcond=None)[0]
+
+        s11[i] = x[0]
+        s12s21[i] = x[1] + x[0] * x[2]
+        s22[i] = x[2]
+
+    return s11, s12s21, s22
+
+
 def de_embed(
     gamma_open_intr: np.ndarray | float,
     gamma_short_intr: np.ndarray | float,
@@ -198,42 +278,14 @@ def de_embed(
     s22
         The S22 of the network.
     """
-    # This only works with 1D arrays, where each point in the array is
-    # a value at a given frequency
-    gamma_open_intr = gamma_open_intr * np.ones_like(gamma_open_meas)
-    gamma_short_intr = gamma_short_intr * np.ones_like(gamma_open_meas)
-    gamma_match_intr = gamma_match_intr * np.ones_like(gamma_open_meas)
-
-    s11 = np.zeros(len(gamma_open_intr)) + 0j  # 0j added to make array complex
-    s12s21 = np.zeros(len(gamma_open_intr)) + 0j
-    s22 = np.zeros(len(gamma_open_intr)) + 0j
-
-    for i in range(len(gamma_open_intr)):
-        b = np.array([gamma_open_meas[i], gamma_short_meas[i], gamma_match_meas[i]])
-        A = np.array(
-            [
-                [
-                    1,
-                    complex(gamma_open_intr[i]),
-                    complex(gamma_open_intr[i] * gamma_open_meas[i]),
-                ],
-                [
-                    1,
-                    complex(gamma_short_intr[i]),
-                    complex(gamma_short_intr[i] * gamma_short_meas[i]),
-                ],
-                [
-                    1,
-                    complex(gamma_match_intr[i]),
-                    complex(gamma_match_intr[i] * gamma_match_meas[i]),
-                ],
-            ]
-        )
-        x = np.linalg.lstsq(A, b, rcond=None)[0]
-
-        s11[i] = x[0]
-        s12s21[i] = x[1] + x[0] * x[2]
-        s22[i] = x[2]
+    s11, s12s21, s22 = get_sparams(
+        gamma_open_intr,
+        gamma_short_intr,
+        gamma_match_intr,
+        gamma_open_meas,
+        gamma_short_meas,
+        gamma_match_meas,
+    )
 
     gamma = gamma_de_embed(s11, s12s21, s22, gamma_ref)
 

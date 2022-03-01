@@ -1,4 +1,5 @@
 import numpy as np
+from edges_io import io
 from pathlib import Path
 
 from edges_cal import CalibrationObservation
@@ -6,7 +7,8 @@ from edges_cal.simulate import simulate_q_from_calobs, simulate_qant_from_calobs
 
 
 def test_simulate_q(cal_data: Path):
-    obs = CalibrationObservation(cal_data)
+    io_obs = io.CalibrationObservation(cal_data)
+    obs = CalibrationObservation.from_io(io_obs)
 
     q = simulate_q_from_calobs(obs, "open")
     qhot = simulate_q_from_calobs(obs, "hot_load", freq=obs.freq.freq)
@@ -21,7 +23,9 @@ def test_simulate_q(cal_data: Path):
 
 
 def test_simulate_qant(cal_data: Path):
-    obs = CalibrationObservation(cal_data)
+    io_obs = io.CalibrationObservation(cal_data)
+    obs = CalibrationObservation.from_io(io_obs)
+
     q = simulate_qant_from_calobs(
         obs,
         ant_s11=np.zeros(obs.freq.n),

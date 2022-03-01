@@ -17,6 +17,7 @@ rst-roles =
   method
   func
   attr
+  mod
 exclude =
     devel/*
 per-file-ignores =
