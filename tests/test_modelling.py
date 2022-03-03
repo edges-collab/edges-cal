@@ -4,7 +4,6 @@ import numpy as np
 import yaml
 from typing import Type
 
-from edges_cal import cal_coefficients as cc
 from edges_cal import modelling as mdl
 
 
@@ -173,25 +172,18 @@ def test_composite_model():
     )
 
 
-def test_noise_waves(cal_data, tmpdir):
-    cache = tmpdir / "cal-coeff-cache"
-    calobs = cc.CalibrationObservation(
-        cal_data,
-        load_kwargs={"cache_dir": cache},
-        cterms=5,
-        wterms=5,
-        compile_from_def=False,
-    )
-    nw = mdl.NoiseWaves.from_calobs(calobs)
+def test_noise_waves(calobs):
+    clb = calobs.clone(cterms=5, wterms=5)
+    nw = mdl.NoiseWaves.from_calobs(clb)
 
     assert isinstance(nw.linear_model, mdl.FixedLinearModel)
     assert isinstance(nw.linear_model.model, mdl.CompositeModel)
 
     assert "ambient" in nw.src_names
-    assert len(nw.get_noise_wave("tunc", src="ambient")) == calobs.freq.n
+    assert len(nw.get_noise_wave("tunc", src="ambient")) == clb.freq.n
     assert len(nw.get_full_model("hot_load")) == calobs.freq.n
-    assert nw.with_params_from_calobs(calobs) == nw
-    assert len(nw.get_data_from_calobs(calobs)) == 4 * calobs.freq.n
+    assert nw.with_params_from_calobs(clb) == nw
+    assert len(nw.get_data_from_calobs(clb)) == 4 * calobs.freq.n
 
     c2 = calobs.to_calfile()
     nw2 = mdl.NoiseWaves.from_calobs(c2)

@@ -1,3 +1,4 @@
+import json
 from click.testing import CliRunner
 from pathlib import Path
 
@@ -16,14 +17,17 @@ def test_run(data_path: Path, tmpdir: Path):
             str(data_path / "Receiver01_25C_2019_11_26_040_to_200MHz"),
             "--out",
             str(outdir),
-            "--cache-dir",
-            str(outdir),
+            "--global-config",
+            json.dumps({"cal": {"cache-dir": str(outdir)}}),
             "--plot",
             "--simulators",
             "AntSim2",
         ],
     )
 
+    if result.exit_code:
+        print(result.exception)
+    print(result.output)
     assert result.exit_code == 0
 
 
@@ -36,13 +40,12 @@ def test_report(data_path: Path, tmpdir: Path):
     result = runner.invoke(
         report,
         [
-            str(data_path / "Receiver01_25C_2019_11_26_040_to_200MHz"),
-            "--config",
             str(data_path / "settings.yaml"),
+            str(data_path / "Receiver01_25C_2019_11_26_040_to_200MHz"),
             "--out",
             str(outdir),
-            "--cache-dir",
-            str(outdir),
+            "--global-config",
+            json.dumps({"cal": {"cache-dir": str(outdir)}}),
             "--no-pdf",
         ],
         catch_exceptions=False,
@@ -60,16 +63,14 @@ def test_compare(data_path: Path, tmpdir: Path):
     result = runner.invoke(
         compare,
         [
-            str(data_path / "Receiver01_25C_2019_11_26_040_to_200MHz"),
-            str(data_path / "Receiver01_25C_2019_11_26_040_to_200MHz"),
-            "--config",
             str(data_path / "settings.yaml"),
-            "--config-cmp",
+            str(data_path / "Receiver01_25C_2019_11_26_040_to_200MHz"),
             str(data_path / "settings.yaml"),
+            str(data_path / "Receiver01_25C_2019_11_26_040_to_200MHz"),
             "--out",
             str(outdir),
-            "--cache-dir",
-            str(outdir),
+            "--global-config",
+            json.dumps({"cal": {"cache-dir": str(outdir)}}),
             "--no-pdf",
         ],
         catch_exceptions=False,

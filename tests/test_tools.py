@@ -1,6 +1,7 @@
 import pytest
 
 import numpy as np
+from astropy import units as u
 
 from edges_cal import tools
 
@@ -44,4 +45,4 @@ def test_bin_array_2d():
 
 def test_bad_bin_size():
     with pytest.raises(ValueError, match="Cannot use bin_size < 1"):
-        tools.FrequencyRange(np.linspace(0, 1, 100), bin_size=0)
+        tools.FrequencyRange(np.linspace(0, 1, 100) * u.MHz, bin_size=0)

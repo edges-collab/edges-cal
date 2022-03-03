@@ -2,9 +2,11 @@ import pytest
 
 import numpy as np
 from astropy import units as u
+from edges_io import io
 
 from edges_cal import modelling as mdl
 from edges_cal import reflection_coefficient as rc
+from edges_cal import s11
 
 
 def test_gamma_shift_zero():
@@ -160,3 +162,35 @@ def test_calkit_quantities_open_trivial():
     assert std.lossy_characteristic_impedance(freq=1 * u.GHz) == 50 * u.Ohm
     assert std.gl(freq=1 * u.GHz) == 0.0
     assert std.reflection_coefficient(1 * u.GHz) == -1j
+
+
+def test_s1p_freq(cal_data):
+
+    vna = s11.VNAReading.from_s1p(cal_data / "S11/ReceiverReading01/Match01.s1p")
+    assert vna.freq.n > 0
+    assert np.all(vna.freq.freq > 20.0 * u.MHz)
+    assert np.all(vna.freq.freq < 210.0 * u.MHz)
+
+
+def test_receiver(cal_data):
+    ioobj = io.S11Dir(cal_data / "S11")
+
+    rcv = s11.Receiver.from_io(
+        device=ioobj.receiver_reading[0], f_low=50 * u.MHz, f_high=100 * u.MHz
+    )
+    assert rcv.n_terms == 37
+    assert np.iscomplexobj(rcv.calibrated_s11_raw)
+    assert np.all(np.abs(rcv.calibrated_s11_raw) < 1)
+    assert len(np.unique(rcv.calibrated_s11_raw)) > 25
+
+    s11mdl = rcv.s11_model(rcv.freq.freq.to_value("MHz"))
+    assert np.iscomplexobj(s11mdl)
+    assert np.all(np.abs(s11mdl) <= 1)
+    assert len(np.unique(s11mdl)) > 25
+
+
+def test_even_nterms_s11(cal_data):
+    fl = io.S11Dir(cal_data / "S11").ambient[0]
+
+    with pytest.raises(ValueError, match="n_terms must be odd"):
+        s11.LoadPlusSwitchS11.from_io(fl, n_terms=40)

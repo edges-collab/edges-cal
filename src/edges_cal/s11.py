@@ -18,7 +18,6 @@ import attr
 import matplotlib.pyplot as plt
 import numpy as np
 from abc import ABCMeta, abstractmethod
-from astropy import units
 from astropy import units as un
 from cached_property import cached_property
 from edges_io import io
@@ -31,6 +30,7 @@ from .modelling import (
     ComplexMagPhaseModel,
     ComplexRealImagModel,
     Model,
+    Modelable,
     Polynomial,
     UnitTransform,
     get_mdl,
@@ -76,9 +76,7 @@ class VNAReading:
     _freq: tp.FreqType = attr.ib(
         validator=vld_unit("frequency"), eq=attr.cmp_using(eq=np.array_equal)
     )
-    _s11: np.ndarray = attr.ib(
-        validator=np.iscomplex, eq=attr.cmp_using(eq=np.array_equal)
-    )
+    _s11: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
     f_low: tp.FreqType = attr.ib(
         default=0 * un.MHz, validator=vld_unit("frequency"), kw_only=True
     )
@@ -88,6 +86,9 @@ class VNAReading:
 
     @_s11.validator
     def _s11_vld(self, att, val):
+        if not np.iscomplexobj(val):
+            raise ValueError("s11 must be a complex quantity")
+
         if val.shape != self._freq.shape:
             raise ValueError(
                 "freq and s11 must have the same length! "
@@ -97,9 +98,7 @@ class VNAReading:
     @cached_property
     def freq(self) -> FrequencyRange:
         """The frequencies of the S11 measurement."""
-        return FrequencyRange(
-            self._freq.to_value("MHz"), f_low=self.f_low, f_high=self.f_high
-        )
+        return FrequencyRange(self._freq, f_low=self.f_low, f_high=self.f_high)
 
     @cached_property
     def s11(self) -> np.ndarray:
@@ -121,8 +120,7 @@ class VNAReading:
         `s11`. This includes `f_low` and `f_high`.
         """
         s1p = _s1p_converter(s1p)
-
-        return cls(s1p.freq * un.Hz, s1p.s11, **kwargs)
+        return cls(s1p.freq, s1p.s11, **kwargs)
 
 
 @attr.s(kw_only=True)
@@ -197,23 +195,13 @@ class _S11Base(metaclass=ABCMeta):
         smooth and interpolate the data). Must be odd.
     """
 
-    default_nterms = {
-        "ambient": 37,
-        "hot_load": 37,
-        "open": 105,
-        "short": 105,
-        "AntSim2": 55,
-        "AntSim3": 55,
-        "AntSim4": 55,
-        "AntSim1": 55,
-        "lna": 37,
-    }
+    _default_nterms = 55
 
     _complex_model_type_default = ComplexMagPhaseModel
     _model_type_default = "fourier"
 
-    n_terms: tuple[int, int, int] = attr.ib(55, converter=_tuplify)
-    model_type: tp.Modelable = attr.ib()
+    n_terms: int = attr.ib(converter=int)
+    model_type: Modelable = attr.ib()
     complex_model_type: type[ComplexMagPhaseModel] | type[
         ComplexRealImagModel
     ] = attr.ib()
@@ -226,12 +214,15 @@ class _S11Base(metaclass=ABCMeta):
     def _cmt_default(self):
         return self._complex_model_type_default
 
+    @n_terms.default
+    def _nt_default(self):
+        return int(self._default_nterms)
+
     @n_terms.validator
     def _nt_vld(self, att, val):
         if not (isinstance(val, int) and val % 2):
             raise ValueError(
-                f"n_terms must be odd for S11 models. For {self.device_name} got "
-                f"n_terms={val}."
+                f"n_terms must be odd for S11 models. For {self} got " f"n_terms={val}."
             )
 
     @property
@@ -249,9 +240,9 @@ class _S11Base(metaclass=ABCMeta):
         self,
         raw_s11: np.ndarray,
         *,
-        freq: np.ndarray | None = None,
+        freq: tp.FreqType | None = None,
         n_terms: int | None = None,
-        model_type: tp.Modelable | None = None,
+        model_type: Modelable | None = None,
     ):
         """Generate a callable model for the S11.
 
@@ -278,9 +269,11 @@ class _S11Base(metaclass=ABCMeta):
         model_type = get_mdl(model_type or self.model_type)
         model = model_type(
             n_terms=n_terms,
-            transform=UnitTransform(range=[self.freq.min, self.freq.max]),
+            transform=UnitTransform(
+                range=[self.freq.min.to_value("MHz"), self.freq.max.to_value("MHz")]
+            ),
         )
-        emodel = model.at(x=freq)
+        emodel = model.at(x=freq.to_value("MHz"))
 
         cmodel = self.complex_model_type(emodel, emodel)
 
@@ -321,7 +314,7 @@ class _S11Base(metaclass=ABCMeta):
         ax[-1].set_xlabel("Frequency [MHz]")
 
         corr = self.calibrated_s11_raw
-        model = self.s11_model(self.freq.freq)
+        model = self.s11_model(self.freq.freq.to_value("MHz"))
 
         ax[0].plot(
             self.freq.freq, 20 * np.log10(np.abs(model)), color=color_abs, label=label
@@ -347,13 +340,15 @@ class _S11Base(metaclass=ABCMeta):
         if ylabels:
             ax[3].set_ylabel(r"$\Delta \angle S_{11}$")
 
+        lname = (
+            self.load_name if hasattr(self, "load_name") else self.__class__.__name__
+        )
+
         if title is None:
-            title = f"{self.device_name} Reflection Coefficient Models"
+            title = f"{lname} Reflection Coefficient Models"
 
         if title:
-            fig.suptitle(
-                f"{self.device_name} Reflection Coefficient Models", fontsize=14
-            )
+            fig.suptitle(f"{lname} Reflection Coefficient Models", fontsize=14)
         if label:
             ax[0].legend()
 
@@ -365,13 +360,21 @@ class _UncorrectedS11(_S11Base):
     standards: StandardsReadings = attr.ib(
         validator=attr.validators.instance_of(StandardsReadings)
     )
-    calkit: rc.Calkit = attr.ib(validator=attr.validators.instance_of(rc.Calkit))
+    calkit: rc.Calkit = attr.ib(
+        default=rc.AGILENT_85033E, validator=attr.validators.instance_of(rc.Calkit)
+    )
 
-    def __getattr__(self, item):
-        if item in self.standards:
-            return self.standards[item]
+    @property
+    def open(self):
+        return self.standards.open
 
-        raise AttributeError(f"{item} does not exist in {self.__class__.__name__}!")
+    @property
+    def short(self):
+        return self.standards.short
+
+    @property
+    def match(self):
+        return self.standards.match
 
     @property
     def freq(self):
@@ -392,6 +395,7 @@ class Receiver(_UncorrectedS11):
         All other arguments passed to :class:`SwitchCorrection`.
     """
 
+    _default_nterms = 37
     receiver_reading: VNAReading = attr.ib()
     calkit: rc.Calkit = attr.ib(
         default=rc.get_calkit(rc.AGILENT_85033E, resistance_of_match=50.009 * un.Ohm),
@@ -399,11 +403,9 @@ class Receiver(_UncorrectedS11):
     )
 
     @classmethod
-    def from_path(
+    def from_io(
         cls,
-        path: str | Path,
-        repeat_num: int | None = attr.NOTHING,
-        run_num: int = 1,
+        device: io.ReceiverReading,
         f_low=0.0 * un.MHz,
         f_high=np.inf * un.MHz,
         **kwargs,
@@ -427,17 +429,10 @@ class Receiver(_UncorrectedS11):
         receiver
             The Receiver object.
         """
-        path = Path(path)
-        device = io.ReceiverReading(
-            path=path / "S11" / f"ReceiverReading{run_num:02}",
-            repeat_num=repeat_num,
-            fix=False,
-        )
-
         return cls(
             standards=StandardsReadings.from_io(device, f_low=f_low, f_high=f_high),
-            receiver_reading=VNAReading(
-                device.childen["receiverreading"], f_low=f_low, f_high=f_high
+            receiver_reading=VNAReading.from_s1p(
+                device.children["receiverreading"], f_low=f_low, f_high=f_high
             ),
             **kwargs,
         )
@@ -447,9 +442,9 @@ class Receiver(_UncorrectedS11):
         """Measured S11 of of the Receiver."""
         # Correction at switch
         return rc.de_embed(
-            self.calkit.open.reflection_coefficient(self.freq.freq * un.MHz),
-            self.calkit.short.reflection_coefficient(self.freq.freq * un.MHz),
-            self.calkit.match.reflection_coefficient(self.freq.freq * un.MHz),
+            self.calkit.open.reflection_coefficient(self.freq.freq),
+            self.calkit.short.reflection_coefficient(self.freq.freq),
+            self.calkit.match.reflection_coefficient(self.freq.freq),
             self.open.s11,
             self.short.s11,
             self.match.s11,
@@ -458,7 +453,7 @@ class Receiver(_UncorrectedS11):
 
 
 @attr.s
-class AveragedReceiver:
+class AveragedReceiver(_S11Base):
     measurements: Sequence[Receiver] = attr.ib(
         validator=attr.validators.deep_iterable(attr.validators.instance_of(Receiver))
     )
@@ -469,20 +464,35 @@ class AveragedReceiver:
         # Correction at switch
         return np.mean([m.calibrated_s11_raw for m in self.measurements], axis=0)
 
-    @cached_property
-    def s11_model(self) -> callable:
-        """The S11 model."""
-        return self.get_s11_model(self.calibrated_s11_raw)
+    @property
+    def freq(self) -> FrequencyRange:
+        """Frequencies of the measurement."""
+        return self.measurements[0].freq
+
+    @property
+    def calkit(self) -> rc.Calkit:
+        """The calkit used for calibrating the S11 measurements."""
+        return self.measurements[0].calkit
 
 
 @attr.s
 class InternalSwitch:
-    corrections: dict[str, np.ndarray] = attr.ib()
-    freq: np.ndarray = attr.ib()
+    corrections: dict[str, np.ndarray] = attr.ib(
+        eq=attr.cmp_using(eq=lambda x, y: all(np.array_equal(x[k], y[k]) for k in x))
+    )
+    _freq: tp.FreqType = attr.ib(validator=vld_unit("frequency"))
+    f_low: tp.FreqType = attr.ib(40 * un.MHz, validator=vld_unit("frequency"))
+    f_high: tp.FreqType = attr.ib(np.inf * un.MHz, validator=vld_unit("frequency"))
     model: Model = attr.ib()
+
     n_terms: tuple[int, int, int] | int = attr.ib(default=(7, 7, 7), converter=_tuplify)
     resistance: float | None = attr.ib(default=None)
     _calkit: rc.Calkit = attr.ib(default=rc.AGILENT_85033E)
+
+    @property
+    def freq(self):
+        """Frequencies of the measurement."""
+        return FrequencyRange(self._freq, f_low=self.f_low, f_high=self.f_high)
 
     @corrections.validator
     def _corr_vld(self, att, val):
@@ -507,7 +517,7 @@ class InternalSwitch:
     def _mdl_default(self):
         return Polynomial(
             n_terms=7,
-            transform=UnitTransform(range=(self.freq.min(), self.freq.max())),
+            transform=UnitTransform(range=(self.freq.min.value, self.freq.max.value)),
         )
 
     @classmethod
@@ -519,7 +529,7 @@ class InternalSwitch:
     @cached_property
     def fixed_model(self):
         """The input model fixed to evaluate at the given frequencies."""
-        return self.model.at(x=self.freq)
+        return self.model.at(x=self.freq.freq.value)
 
     @n_terms.validator
     def _n_terms_val(self, att, val):
@@ -588,18 +598,103 @@ class InternalSwitch:
     def _de_embedded_reflections(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Get de-embedded reflection parameters for the internal switch."""
         return rc.get_sparams(
-            self.calkit.open.reflection_coefficient(self.freq * units.MHz),
-            self.calkit.short.reflection_coefficient(self.freq * units.MHz),
-            self.calkit.match.reflection_coefficient(self.freq * units.MHz),
-            self.corrections["open"],
-            self.corrections["short"],
-            self.corrections["match"],
+            self.calkit.open.reflection_coefficient(self.freq.freq),
+            self.calkit.short.reflection_coefficient(self.freq.freq),
+            self.calkit.match.reflection_coefficient(self.freq.freq),
+            self.corrections["open"][self.freq.mask],
+            self.corrections["short"][self.freq.mask],
+            self.corrections["match"][self.freq.mask],
         )
 
     def _get_reflection_model(self, kind: str) -> Model:
         # 'kind' should be 's11', 's12' or 's22'
         data = getattr(self, f"{kind}_data")
-        return getattr(self, f"_{kind}_model").fit(xdata=self.freq, ydata=data)
+        return getattr(self, f"_{kind}_model").fit(
+            xdata=self.freq.freq.value, ydata=data
+        )
+
+
+@attr.s
+class AveragedInternalSwitch(_S11Base):
+    measurements: Sequence[InternalSwitch] = attr.ib(
+        validator=attr.validators.deep_iterable(
+            attr.validators.instance_of(InternalSwitch)
+        )
+    )
+
+    def _get_mean(self, kind):
+        return np.mean([getattr(x, kind) for x in self.measurements], axis=0)
+
+    @property
+    def s11_data(self) -> np.ndarray:
+        """Raw data S11."""
+        return self._get_mean("s11_data")
+
+    @property
+    def s12_data(self) -> np.ndarray:
+        """Raw data S12S21."""
+        return self._get_mean("s12_data")
+
+    @property
+    def s22_data(self) -> np.ndarray:
+        """Raw data S22."""
+        return self._get_mean("s22_data")
+
+    @cached_property
+    def s11_model(self) -> Callable:
+        """The fitted S11 model."""
+        return self._get_reflection_model("s11")
+
+    @cached_property
+    def s12_model(self) -> Callable:
+        """The fitted S12 model."""
+        return self._get_reflection_model("s12")
+
+    @cached_property
+    def s22_model(self) -> Callable:
+        """The fitted S22 model."""
+        return self._get_reflection_model("s22")
+
+    @cached_property
+    def _s11_model(self):
+        """The input unfit S11 model."""
+        model = self.measurements[0].model.with_nterms(
+            n_terms=self.measurements[0].n_terms[0]
+        )
+        return ComplexRealImagModel(real=model, imag=model)
+
+    @cached_property
+    def _s12_model(self):
+        """The input unfit S12 model."""
+        model = self.measurements[0].model.with_nterms(
+            n_terms=self.measurements[0].n_terms[1]
+        )
+        return ComplexRealImagModel(real=model, imag=model)
+
+    @cached_property
+    def _s22_model(self):
+        """The input unfit S22 model."""
+        model = self.measurements[0].model.with_nterms(
+            n_terms=self.measurements[0].n_terms[2]
+        )
+        return ComplexRealImagModel(real=model, imag=model)
+
+    def _get_reflection_model(self, kind: str) -> Model:
+        # 'kind' should be 's11', 's12' or 's22'
+        data = getattr(self, f"{kind}_data")
+        return getattr(self, f"_{kind}_model").fit(
+            xdata=self.freq.freq.value, ydata=data
+        )
+
+    @property
+    def freq(self) -> FrequencyRange:
+        """Frequencies of the measurement."""
+        return self.measurements[0].freq
+
+    @property
+    def calkit(self):
+        """The calkit used to calibrate the S11 measurements."""
+        return self.measurements[0].calkit
 
 
 @attr.s(kw_only=True, frozen=True)
@@ -618,6 +713,11 @@ class LoadPlusSwitchS11(_UncorrectedS11):
     ----------------
     Passed through to :class:`_S11Base`.
     """
+
+    external_match: VNAReading = attr.ib(
+        validator=attr.validators.instance_of(VNAReading)
+    )
+    load_name: str = attr.ib()
 
     @classmethod
     def from_io(
@@ -642,8 +742,22 @@ class LoadPlusSwitchS11(_UncorrectedS11):
         s11 : :class:`LoadPlusSwitchS11`
             The S11 of the load + internal switch.
         """
+        default_nterms = {
+            "ambient": 37,
+            "hot_load": 37,
+            "open": 105,
+            "short": 105,
+        }
+
+        if "n_terms" not in kwargs:
+            kwargs["n_terms"] = default_nterms.get(load_io.load_name, 55)
+
         return cls(
             standards=StandardsReadings.from_io(load_io, f_low=f_low, f_high=f_high),
+            external_match=VNAReading.from_s1p(
+                load_io.children["external"], f_low=f_low, f_high=f_high
+            ),
+            load_name=load_io.load_name,
             **kwargs,
         )
 
@@ -657,23 +771,43 @@ class LoadPlusSwitchS11(_UncorrectedS11):
             self.open.s11,
             self.short.s11,
             self.match.s11,
-            self.external.s11,
+            self.external_match.s11,
         )[0]
 
-    @cached_property
-    def corrected_s11(self) -> np.ndarray:
-        """The measured S11 of the load, corrected for the internal switch."""
-        return rc.gamma_de_embed(
-            self.internal_switch.s11_model(self.freq.freq),
-            self.internal_switch.s12_model(self.freq.freq),
-            self.internal_switch.s22_model(self.freq.freq),
-            self.calibrated_s11_raw,
+
+@attr.s
+class AveragedLoadPlusSwitchS11(_S11Base):
+    measurements: Sequence[LoadPlusSwitchS11] = attr.ib(
+        validator=attr.validators.deep_iterable(
+            attr.validators.instance_of(LoadPlusSwitchS11)
         )
+    )
+
+    @cached_property
+    def calibrated_s11_raw(self):
+        """The measured S11 of the load, calculated from raw internal standards."""
+        return np.mean([x.calibrated_s11_raw for x in self.measurements], axis=0)
+
+    @property
+    def freq(self) -> FrequencyRange:
+        """Frequencies of the measurement."""
+        return self.measurements[0].freq
+
+    @property
+    def calkit(self):
+        """The calkit used to calibrate the measurements."""
+        return self.measurements[0].calkit
+
+    @property
+    def load_name(self) -> str:
+        """The name of the load."""
+        return self.measurements[0].load_name
 
 
+@attr.s
 class LoadS11(_S11Base):
-    load_s11: LoadPlusSwitchS11 = attr.ib(type=LoadPlusSwitchS11)
-    internal_switch: InternalSwitch = attr.ib(type=InternalSwitch)
+    load_s11: LoadPlusSwitchS11 = attr.ib()
+    internal_switch: InternalSwitch = attr.ib()
 
     @internal_switch.validator
     def _isw_vld(self, att, val):
@@ -683,13 +817,18 @@ class LoadS11(_S11Base):
                 "used for the load."
             )
 
+    @property
+    def load_name(self) -> str:
+        """The name of the load."""
+        return self.load_s11.load_name
+
     @cached_property
     def calibrated_s11_raw(self):
         """The calibrated S11 at raw frequencies (with noise)."""
         return rc.gamma_de_embed(
-            self.internal_switch.s11_model(self.freq.freq),
-            self.internal_switch.s12_model(self.freq.freq),
-            self.internal_switch.s22_model(self.freq.freq),
+            self.internal_switch.s11_model(self.freq.freq.to_value("MHz")),
+            self.internal_switch.s12_model(self.freq.freq.to_value("MHz")),
+            self.internal_switch.s22_model(self.freq.freq.to_value("MHz")),
             self.load_s11.calibrated_s11_raw,
         )
 
@@ -700,17 +839,42 @@ class LoadS11(_S11Base):
         load_name: str,
         internal_switch_kwargs=None,
         load_kw=None,
+        f_low: un.Quantity = 40 * un.MHz,
+        f_high: un.Quantity = np.inf * un.MHz,
     ) -> LoadS11:
         """Instantiate from an :class:`edges_io.io.S11Dir` object."""
-        internal_switch = InternalSwitch.from_io(
-            s11_io.children["switchingstate"], **(internal_switch_kwargs or {})
+        internal_switch_kwargs = internal_switch_kwargs or {}
+        internal_switch_kwargs["f_low"] = f_low
+        internal_switch_kwargs["f_high"] = f_high
+
+        load_kw = load_kw or {}
+        load_kw["f_low"] = f_low
+        load_kw["f_high"] = f_high
+
+        load_kw["calkit"] = internal_switch_kwargs.get("calkit", None)
+
+        sws = []
+        for ss in s11_io.switching_state:
+            sws.append(InternalSwitch.from_io(ss, **internal_switch_kwargs))
+
+        internal_switch = AveragedInternalSwitch(sws)
+
+        load_s11 = AveragedLoadPlusSwitchS11(
+            [
+                LoadPlusSwitchS11.from_io(xx, **load_kw)
+                for xx in getattr(s11_io, load_name)
+            ],
         )
+
         return cls(
-            load_s11=LoadPlusSwitchS11.from_io(
-                s11_io.children[load_name], **(load_kw or {})
-            ),
+            load_s11=load_s11,
             internal_switch=internal_switch,
         )
+
+    @property
+    def freq(self):
+        """Frequencies of the measurement."""
+        return self.load_s11.freq
 
 
 def _read_data_and_corrections(switching_state: io.SwitchingState):

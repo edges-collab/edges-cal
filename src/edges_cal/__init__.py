@@ -10,8 +10,7 @@ finally:
 
 from pathlib import Path
 
-DATA_PATH = Path(__file__).parent / "data"
-
+from . import plot
 from .cal_coefficients import (  # noqa: E402
     Calibration,
     CalibrationObservation,
@@ -19,3 +18,5 @@ from .cal_coefficients import (  # noqa: E402
 )
 from .s11 import InternalSwitch, LoadS11, Receiver  # noqa: E402
 from .tools import FrequencyRange  # noqa: E402
+
+DATA_PATH = Path(__file__).parent / "data"

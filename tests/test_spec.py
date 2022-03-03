@@ -1,15 +1,42 @@
 """
 Test spectrum reading.
 """
+import numpy as np
+from astropy import units as u
 from edges_io.io import CalibrationObservation
-from pathlib import Path
 
 from edges_cal import LoadSpectrum
 
 
-def test_read(data_path: Path, tmpdir: Path):
+def test_read(io_obs: CalibrationObservation):
+    for load in ["ambient", "hot_load", "open", "short"]:
+        spec = LoadSpectrum.from_io(io_obs, load, f_high=100 * u.MHz, f_low=50 * u.MHz)
 
-    obj = CalibrationObservation(data_path / "Receiver01_25C_2019_11_26_040_to_200MHz")
-    spec = LoadSpectrum.from_load_name(obj, "ambient", cache_dir=tmpdir)
+        print(spec.averaged_Q.shape)
+        print(np.where(np.isnan(spec.averaged_Q)))
 
-    assert spec.averaged_Q.ndim == 1
+        mask = ~np.isnan(spec.averaged_Q)
+        assert np.sum(~mask) < 100
+        assert spec.averaged_Q.ndim == 1
+
+        assert np.all(~np.isnan(spec.variance_Q[mask]))
+        assert np.all(spec.averaged_spectrum[mask] > spec.averaged_Q[mask])
+        assert ~np.isinf(spec.temp_ave)
+        assert ~np.isnan(spec.temp_ave)
+
+
+def test_equality(io_obs: CalibrationObservation):
+    spec1 = LoadSpectrum.from_io(
+        io_obs, "ambient", f_high=100 * u.MHz, f_low=50 * u.MHz
+    )
+    spec2 = LoadSpectrum.from_io(
+        io_obs, "ambient", f_high=100 * u.MHz, f_low=50 * u.MHz
+    )
+
+    assert spec1 == spec2
+    assert spec1.metadata["hash"] == spec2.metadata["hash"]
+
+    spec3 = LoadSpectrum.from_io(
+        io_obs, "ambient", f_high=100 * u.MHz, f_low=60 * u.MHz
+    )
+    assert spec3.metadata["hash"] != spec2.metadata["hash"]

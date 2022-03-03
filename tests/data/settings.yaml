@@ -2,7 +2,11 @@
 # All parameters here are passed directly to the instantiator of `CalibrationObservation`,
 # so check the docs there for more parameters.
 
-f_low: 40
-f_high: 190
+f_low: !astropy.units.Quantity
+    unit: &id001 !astropy.units.Unit {unit: MHz}
+    value: 50.0
+f_high: !astropy.units.Quantity
+    unit: *id001
+    value: 100.0
 cterms: 10
 wterms: 12

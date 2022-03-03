@@ -8,7 +8,7 @@ from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
 from copy import copy
 from edges_io.h5 import register_h5type
-from typing import Sequence
+from typing import Sequence, Type, Union
 
 from . import receiver_calibration_func as rcf
 from .simulate import simulate_q_from_calobs
@@ -1010,7 +1010,7 @@ class NoiseWaves:
         """Generate input data to fit from a calibration observation."""
         data = []
         for src in self.src_names:
-            load = calobs._loads[src]
+            load = calobs.loads[src]
             if tns is None:
                 _tns = calobs.C1() * calobs.t_load_ns
             else:
@@ -1029,17 +1029,17 @@ class NoiseWaves:
     def from_calobs(cls, calobs, cterms=None, wterms=None, sources=None) -> NoiseWaves:
         """Initialize a noise wave model from a calibration observation."""
         if sources is None:
-            sources = tuple(calobs._loads.keys())
+            sources = calobs.load_names
 
-        loads = {src: load for src, load in calobs._loads.items() if src in sources}
-        freq = calobs.freq.freq
+        loads = {src: load for src, load in calobs.loads.items() if src in sources}
+        freq = calobs.freq.freq.to_value("MHz")
 
         gamma_src = {name: source.s11_model(freq) for name, source in loads.items()}
 
         try:
-            lna_s11 = calobs.lna.s11_model(freq)
+            lna_s11 = calobs.receiver.s11_model(freq)
         except AttributeError:
-            lna_s11 = calobs.lna_s11(freq)
+            lna_s11 = calobs.receiver_s11(freq)
 
         nw_model = cls(
             freq=freq,
@@ -1234,3 +1234,5 @@ yaml.FullLoader.add_constructor("!Model", _model_yaml_constructor)
 
 yaml.add_multi_representer(Model, _model_yaml_representer)
 yaml.add_multi_representer(ModelTransform, _transform_yaml_representer)
+
+Modelable = Union[str, Type[Model]]
