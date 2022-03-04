@@ -452,6 +452,13 @@ class Receiver(_UncorrectedS11):
         )[0]
 
 
+def clone_averaged_s11(obj, **kwargs):
+    """Clone an Averaged S11 object, with new parameters set across its measurements."""
+    return attr.evolve(
+        obj, measurements=[attr.evolve(m, **kwargs) for m in obj.measurements]
+    )
+
+
 @attr.s
 class AveragedReceiver(_S11Base):
     measurements: Sequence[Receiver] = attr.ib(
@@ -473,6 +480,10 @@ class AveragedReceiver(_S11Base):
     def calkit(self) -> rc.Calkit:
         """The calkit used for calibrating the S11 measurements."""
         return self.measurements[0].calkit
+
+    def clone(self, **kwargs):
+        """Return new AveragedReceiver with updated parameters."""
+        return clone_averaged_s11(self, **kwargs)
 
 
 @attr.s

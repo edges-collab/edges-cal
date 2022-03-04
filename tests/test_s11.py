@@ -298,3 +298,11 @@ def test_init_load_s11():
         ValueError, match="calkit used for the internal switch must match"
     ):
         s11.LoadS11(load_s11=load_s11, internal_switch=internal_switch)
+
+
+def test_receiver_clone(calobs):
+    assert calobs.receiver.clone() == calobs.receiver
+    ck = rc.get_calkit(rc.AGILENT_85033E, resistance_of_match=49.0)
+    new = calobs.receiver.clone(calkit=ck)
+
+    assert all(m.calkit == ck for m in new.measurements)

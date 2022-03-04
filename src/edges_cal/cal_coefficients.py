@@ -23,7 +23,7 @@ from functools import partial
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from . import __version__
 from . import modelling as mdl
@@ -660,6 +660,18 @@ class Load:
         """Frequencies of the spectrum."""
         return self.spectrum.freq
 
+    def with_calkit(self, calkit):
+        """Return a new Load with updated calkit."""
+        loads11 = s11.clone_averaged_s11(self.reflections.load_s11, calkit=calkit)
+        isw = s11.clone_averaged_s11(self.reflections.internal_switch, calkit=calkit)
+
+        return attr.evolve(
+            self,
+            reflections=attr.evolve(
+                self.reflections, load_s11=loads11, internal_switch=isw
+            ),
+        )
+
 
 @attr.s
 class CalibrationObservation:
@@ -834,6 +846,20 @@ class CalibrationObservation:
             return self.loads[name]
 
         raise AttributeError(f"{name} does not exist in CalibrationObservation!")
+
+    def with_load_calkit(self, calkit, loads: Sequence[str] = None):
+        """Return a new observation with loads having given calkit."""
+        if loads is None:
+            loads = self.load_names
+        elif isinstance(loads, str):
+            loads = [loads]
+
+        loads = {
+            name: load.with_calkit(calkit) if name in loads else load
+            for name, load in self.loads.items()
+        }
+
+        return attr.evolve(self, loads=loads)
 
     @safe_property
     def t_load(self) -> float:
