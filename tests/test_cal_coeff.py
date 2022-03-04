@@ -128,6 +128,20 @@ def test_basic_s11_properties(calobs):
 def test_inject(calobs):
     new = calobs.inject(
         lna_s11=calobs.receiver_s11 * 2,
+        source_s11s={
+            name: calobs.s11_correction_models[name] * 2 for name in calobs.loads
+        },
+        c1=calobs.C1() * 2,
+        c2=calobs.C2() * 2,
+        t_unc=calobs.Tunc() * 2,
+        t_cos=calobs.Tcos() * 2,
+        t_sin=calobs.Tsin() * 2,
+        averaged_spectra={
+            name: load.averaged_spectrum * 2 for name, load in calobs.loads.items()
+        },
+        thermistor_temp_ave={
+            name: load.temp_ave * 2 for name, load in calobs.loads.items()
+        },
     )
 
     np.testing.assert_allclose(new.receiver_s11, 2 * calobs.receiver_s11)
@@ -135,3 +149,76 @@ def test_inject(calobs):
         new.get_linear_coefficients("open")[0],
         calobs.get_linear_coefficients("open")[0],
     )
+
+    for name, tmp in new.source_thermistor_temps.items():
+        assert np.allclose(tmp, 2 * calobs.source_thermistor_temps[name])
+
+    assert np.allclose(new.C1(), 2 * calobs.C1())
+    assert np.allclose(new.C2(), 2 * calobs.C2())
+    assert np.allclose(new.Tunc(), 2 * calobs.Tunc())
+    assert np.allclose(new.Tcos(), 2 * calobs.Tcos())
+    assert np.allclose(new.Tsin(), 2 * calobs.Tsin())
+
+
+def test_calibrate_with_q(calobs):
+    assert np.allclose(
+        calobs.calibrate("ambient"),
+        calobs.calibrate("ambient", q=calobs.ambient.averaged_Q),
+    )
+    assert np.allclose(
+        calobs.calibrate("ambient"),
+        calobs.calibrate("ambient", temp=calobs.ambient.averaged_spectrum),
+    )
+
+
+def test_load_str_to_load(calobs):
+    assert calobs._load_str_to_load("ambient") == calobs.ambient
+    assert calobs._load_str_to_load(calobs.ambient) == calobs.ambient
+
+    with pytest.raises(AttributeError, match="load must be a Load object"):
+        calobs._load_str_to_load("non-existent")
+
+    with pytest.raises(AssertionError, match="load must be a Load instance"):
+        calobs._load_str_to_load(3)
+
+
+def test_decalibrate(calobs):
+    temp = np.linspace(300, 400, calobs.freq.n)
+    freq = calobs.freq.freq * 1.5
+
+    with pytest.warns(UserWarning, match="The maximum frequency is outside"):
+        calobs.decalibrate(temp=temp, load="ambient", freq=freq)
+
+
+def test_getk_with_freq(calobs):
+    k = calobs.get_K()
+    k2 = calobs.get_K(calobs.freq.freq)
+
+    assert all(np.allclose(k[key], k2[key]) for key in k)
+
+
+def test_plot_caltemp_bin0(calobs):
+    calobs.plot_calibrated_temp("ambient", bins=0)
+
+
+def test_calibration_isw(calobs):
+    clf = calobs.to_calfile()
+
+    f = calobs.freq.freq.to_value("MHz")
+    assert np.allclose(clf.internal_switch_s11(), calobs.internal_switch.s11_model(f))
+    assert np.allclose(clf.internal_switch_s12(), calobs.internal_switch.s12_model(f))
+    assert np.allclose(clf.internal_switch_s22(), calobs.internal_switch.s22_model(f))
+
+    k = clf.get_K()
+    k2 = calobs.get_K()
+
+    for name in k:
+        assert np.allclose(k[name], k2[name])
+
+    cq = clf.calibrate_Q(
+        freq=calobs.freq.freq,
+        q=calobs.ambient.averaged_Q,
+        ant_s11=calobs.ambient.s11_model(f),
+    )
+    cq2 = calobs.calibrate("ambient")
+    assert np.allclose(cq, cq2)

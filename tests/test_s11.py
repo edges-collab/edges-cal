@@ -194,3 +194,107 @@ def test_even_nterms_s11(cal_data):
 
     with pytest.raises(ValueError, match="n_terms must be odd"):
         s11.LoadPlusSwitchS11.from_io(fl, n_terms=40)
+
+
+def test_s1p_converter(io_obs):
+    s1p = io_obs.s11.ambient[0].match
+
+    assert s11._s1p_converter(s1p.path) == s1p
+    assert s11._s1p_converter(s1p) == s1p
+
+    with pytest.raises(TypeError, match="s1p must be a path"):
+        s11._s1p_converter(3)
+
+    assert np.allclose(s11.VNAReading.from_s1p(s1p).s11, s1p.s11)
+
+
+def test_tuplify():
+    assert s11._tuplify((3, 4, 5, 3)) == (3, 4, 5, 3)
+    assert s11._tuplify((3.0, 4.0)) == (3, 4)
+    assert s11._tuplify(3) == (3, 3, 3) == s11._tuplify(3.0)
+
+    with pytest.raises(ValueError):
+        s11._tuplify("hey")
+
+
+def test_bad_s11_input_to_vna():
+    with pytest.raises(ValueError, match="s11 must be a complex quantity"):
+        s11.VNAReading(
+            freq=np.linspace(50, 100, 100) * u.MHz, s11=np.linspace(0, 1, 100)
+        )
+
+    with pytest.raises(ValueError, match="freq and s11 must have the same length"):
+        s11.VNAReading(
+            freq=np.linspace(50, 100, 100) * u.MHz, s11=np.linspace(0, 1, 70) + 0j
+        )
+
+
+def test_different_freqs_in_standards():
+    freq = np.linspace(50, 100, 100) * u.MHz
+    s = np.linspace(0, 1, 100) + 0j
+
+    vna1 = s11.VNAReading(freq=freq, s11=s)
+    vna2 = s11.VNAReading(freq=freq[:80], s11=s[:80])
+
+    with pytest.raises(
+        ValueError, match="short standard does not have same frequencies"
+    ):
+        s11.StandardsReadings(open=vna1, short=vna2, match=vna1)
+
+    with pytest.raises(
+        ValueError, match="match standard does not have same frequencies"
+    ):
+        s11.StandardsReadings(open=vna1, short=vna1, match=vna2)
+
+    sr = s11.StandardsReadings(open=vna1, short=vna1, match=vna1)
+    assert sr.freq == vna1.freq
+
+
+def test_init_internal_switch():
+    s = np.linspace(0, 1, 100) + 0j
+    freq = np.linspace(50, 100, 100) * u.MHz
+
+    with pytest.raises(ValueError, match="'corrections' should have open/short/match"):
+        s11.InternalSwitch(corrections={"open": s}, freq=freq)
+
+    with pytest.raises(ValueError, match="must have same shape as open"):
+        s11.InternalSwitch(
+            corrections={"open": s, "short": s[:80], "match": s}, freq=freq
+        )
+
+    with pytest.raises(ValueError, match="must have same shape as open"):
+        s11.InternalSwitch(
+            corrections={"open": s, "short": s, "match": s[:80]}, freq=freq
+        )
+
+    with pytest.raises(TypeError, match="n_terms must be an integer or tuple of three"):
+        s11.InternalSwitch(
+            corrections={"open": s, "short": s, "match": s},
+            freq=freq,
+            n_terms=(5, 5, 5, 5),
+        )
+
+
+def test_init_load_s11():
+    s = np.linspace(0, 1, 100) + 0j
+    freq = np.linspace(50, 100, 100) * u.MHz
+    vna = s11.VNAReading(s11=s, freq=freq)
+
+    sr = s11.StandardsReadings(open=vna, short=vna, match=vna)
+
+    load_s11 = s11.LoadPlusSwitchS11(
+        standards=sr,
+        external_match=vna,
+        load_name="derp",
+        calkit=rc.get_calkit(rc.AGILENT_85033E, resistance_of_match=49.0),
+    )
+    internal_switch = s11.InternalSwitch(
+        corrections={"open": s, "short": s, "match": s},
+        freq=freq,
+        calkit=rc.get_calkit(rc.AGILENT_85033E, resistance_of_match=51.0),
+    )
+
+    with pytest.raises(
+        ValueError, match="calkit used for the internal switch must match"
+    ):
+        s11.LoadS11(load_s11=load_s11, internal_switch=internal_switch)

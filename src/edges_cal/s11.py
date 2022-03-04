@@ -526,11 +526,6 @@ class InternalSwitch:
         corrections = _read_data_and_corrections(internal_switch)
         return cls(corrections=corrections, freq=internal_switch.freq, **kwargs)
 
-    @cached_property
-    def fixed_model(self):
-        """The input model fixed to evaluate at the given frequencies."""
-        return self.model.at(x=self.freq.freq.value)
-
     @n_terms.validator
     def _n_terms_val(self, att, val):
         if len(val) != 3:

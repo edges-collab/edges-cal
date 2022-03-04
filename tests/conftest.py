@@ -35,7 +35,7 @@ def io_obs(cal_data):
 
 @pytest.fixture(scope="session", autouse=True)
 def set_cache_dir(tmpdir):
-    config["cal"]["cache_dir"] = str(tmpdir)
+    config["cal"]["cache_dir"] = str(tmpdir / "cal-cache")
 
 
 @pytest.fixture(scope="session")

@@ -793,29 +793,25 @@ class CalibrationObservation:
         if "freq_bin_size" not in spectrum_kwargs["default"]:
             spectrum_kwargs["default"]["freq_bin_size"] = freq_bin_size
 
-        try:
-            loads = {
-                source: Load.from_io(
-                    io_obj=io_obj,
-                    load_name=source,
-                    f_low=f_low,
-                    f_high=f_high,
-                    reflection_kwargs={
-                        **s11_kwargs.get("default", {}),
-                        **s11_kwargs.get(source, {}),
-                        **{"internal_switch_kwargs": internal_switch_kwargs},
-                    },
-                    spec_kwargs={
-                        **spectrum_kwargs["default"],
-                        **spectrum_kwargs.get(source, {}),
-                    },
-                    loss_kwargs={"path": semi_rigid_path},
-                )
-                for source in sources
-            }
-
-        except AttributeError as e:
-            raise RuntimeError(str(e)) from e
+        loads = {
+            source: Load.from_io(
+                io_obj=io_obj,
+                load_name=source,
+                f_low=f_low,
+                f_high=f_high,
+                reflection_kwargs={
+                    **s11_kwargs.get("default", {}),
+                    **s11_kwargs.get(source, {}),
+                    **{"internal_switch_kwargs": internal_switch_kwargs},
+                },
+                spec_kwargs={
+                    **spectrum_kwargs["default"],
+                    **spectrum_kwargs.get(source, {}),
+                },
+                loss_kwargs={"path": semi_rigid_path},
+            )
+            for source in sources
+        }
 
         return cls(
             loads=loads,
@@ -1178,7 +1174,7 @@ class CalibrationObservation:
         if isinstance(load, str):
             try:
                 load = self.loads[load]
-            except AttributeError:
+            except (AttributeError, KeyError):
                 raise AttributeError(
                     f"load must be a Load object or a string (one of {self.load_names})"
                 )
@@ -1215,14 +1211,14 @@ class CalibrationObservation:
                 f"({self.freq.freq.min()} - {self.freq.freq.max()} MHz)"
             )
 
-        if freq.min() > self.freq.freq.max():
+        if freq.max() > self.freq.freq.max():
             warnings.warn("The maximum frequency is outside the calibrated range ")
 
         a, b = self.get_linear_coefficients(load)
         return (temp - b) / a
 
     def get_K(
-        self, freq: np.ndarray | None = None
+        self, freq: tp.FreqType | None = None
     ) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """Get the source-S11-dependent factors of Monsalve (2017) Eq. 7."""
         if freq is None:
@@ -1230,7 +1226,8 @@ class CalibrationObservation:
             gamma_ants = self.s11_correction_models
         else:
             gamma_ants = {
-                name: source.s11_model(freq) for name, source in self.loads.items()
+                name: source.s11_model(freq.to_value("MHz"))
+                for name, source in self.loads.items()
             }
 
         lna_s11 = self.receiver.s11_model(freq.to_value("MHz"))
@@ -1297,15 +1294,12 @@ class CalibrationObservation:
 
         temp_ave = self.source_thermistor_temps.get(load.load_name, load.temp_ave)
 
-        if not hasattr(temp_ave, "__len__"):
-            ax.axhline(temp_ave, color="C2", label="Average thermistor temp")
-        else:
-            ax.plot(
-                self.freq.freq,
-                temp_ave,
-                color="C2",
-                label="Average thermistor temp",
-            )
+        ax.plot(
+            self.freq.freq,
+            temp_ave,
+            color="C2",
+            label="Average thermistor temp",
+        )
 
         ax.set_ylim([np.nanmin(freq_ave_cal), np.nanmax(freq_ave_cal)])
         if xlabel:
@@ -1485,6 +1479,10 @@ class CalibrationObservation:
                 grp["temp_ave"] = load.temp_ave
                 grp.attrs["n_integrations"] = load.spectrum.n_integrations
 
+            metadata = fl.create_group("metadata")
+            for name, val in self.metadata.items():
+                metadata.attrs[name] = val
+
     def to_calfile(self):
         """Directly create a :class:`Calibration` object without writing to file."""
         return Calibration.from_calobs(self)
@@ -1610,6 +1608,12 @@ class Calibration:
 
             self.freq = FrequencyRange(fl["frequencies"][...] * un.MHz)
 
+            try:
+                self.metadata = dict(fl["metadata"].attrs)
+            except KeyError:
+                # For backwards compat
+                self.metadata = {}
+
             self.loads = {}
             if "loads" in fl:
                 lg = fl["loads"]
@@ -1621,7 +1625,7 @@ class Calibration:
                         reflections=_LittleS11(
                             s11_model=yaml.load(
                                 grp.attrs["s11_model"], Loader=yaml.FullLoader
-                            ).at(x=self.freq.freq)
+                            ).at(x=self.freq.freq.to_value("MHz"))
                         ),
                         spectrum=_LittleSpectrum(
                             averaged_Q=grp["averaged_Q"][...],
@@ -1716,18 +1720,18 @@ class Calibration:
         return self.Tunc_poly(self.freq.normalize(freq))
 
     def get_K(
-        self, freq: np.ndarray | None = None
+        self, freq: tp.FreqType | None = None
     ) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """Get the source-S11-dependent factors of Monsalve (2017) Eq. 7."""
         if freq is None:
             freq = self.freq.freq
-            gamma_ants = self.s11_correction_models
-        else:
-            gamma_ants = {
-                name: source.s11_model(freq) for name, source in self.loads.items()
-            }
 
-        lna_s11 = self.receiver_s11(freq)
+        gamma_ants = {
+            name: source.s11_model(freq.to_value("MHz"))
+            for name, source in self.loads.items()
+        }
+
+        lna_s11 = self.receiver_s11(freq.to_value("MHz"))
         return {
             name: rcf.get_K(gamma_rec=lna_s11, gamma_ant=gamma_ant)
             for name, gamma_ant in gamma_ants.items()

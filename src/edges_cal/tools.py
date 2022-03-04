@@ -64,9 +64,18 @@ def vld_unit(
 
 
 def unit_convert_or_apply(
-    x: float | units.Quantity, unit: str | units.Unit, in_place: bool = False
+    x: float | units.Quantity,
+    unit: str | units.Unit,
+    in_place: bool = False,
+    warn: bool = False,
 ) -> units.Quantity:
     """Safely convert a given value to a quantity."""
+    if warn and not isinstance(x, units.Quantity):
+        warnings.warn(
+            f"Value passed without units, assuming '{unit}'. "
+            "Consider specifying units for future compatibility."
+        )
+
     return units.Quantity(x, unit, copy=not in_place)
 
 

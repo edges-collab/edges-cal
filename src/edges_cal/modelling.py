@@ -238,10 +238,6 @@ class UnitTransform(ModelTransform):
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
-        if self.range[0] is None:
-            self.range[0] = float(x.min())
-            self.range[1] = float(x.max())
-
         return 2 * self._centre.transform(x) / (self.range[1] - self.range[0])
 
 
@@ -261,10 +257,6 @@ class ZerotooneTransform(ModelTransform):
     """A transform that takes an input range down to (0,1)."""
 
     range: tuple[float, float] = attr.ib(converter=tuple_converter)
-
-    @range.default
-    def _rng_default(self):
-        return [None, None]
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
@@ -355,7 +347,7 @@ class Model(metaclass=ABCMeta):
         x: np.ndarray | None = None,
         basis: np.ndarray | None = None,
         parameters: Sequence | None = None,
-        indices: Sequence | None = None,
+        indices: Sequence[int] | None = None,
     ) -> np.ndarray:
         """Evaluate the model.
 
@@ -372,6 +364,8 @@ class Model(metaclass=ABCMeta):
             A list/array of parameters at which to evaluate the model. Will use the
             instance's parameters if available. If using a subset of the basis
             functions, you can pass a subset of parameters.
+        indices
+            Specifies which parameters/basis functions to use. Default is all of them.
 
         Returns
         -------
@@ -383,6 +377,8 @@ class Model(metaclass=ABCMeta):
 
         if parameters is None:
             parameters = np.asarray(self.parameters)
+        else:
+            parameters = np.asarray(parameters)
 
         indices = np.arange(len(parameters)) if indices is None else np.array(indices)
 
@@ -605,12 +601,19 @@ class CompositeModel:
 
         return _index_map
 
+    def __getitem__(self, item):
+        """Get sub-models as if they were top-level attributes."""
+        if item not in self.models:
+            raise KeyError(f"{item} not one of the models.")
+
+        return self.models[item]
+
     def __getattr__(self, item):
         """Get sub-models as if they were top-level attributes."""
         if item not in self.models:
-            raise AttributeError(f"{item} not one of the models.")
+            raise AttributeError(f"{item} is not one of the models.")
 
-        return self.models[item]
+        return self[item]
 
     def _get_model_param_indx(self, model: str):
         indx = list(self.models.keys()).index(model)
@@ -660,13 +663,13 @@ class CompositeModel:
             mask = np.ones(len(x), dtype=bool)
 
         out = np.zeros_like(x)
-        out[mask] = getattr(self, model).get_basis_term(indx, x[mask]) * extra
+        out[mask] = self[model].get_basis_term(indx, x[mask]) * extra
         return out
 
     def get_basis_term_transformed(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Get the basis function term after coordinate tranformation."""
         model = self._index_map[indx][0]
-        return self.get_basis_term(indx, x=getattr(self, model).transform(x))
+        return self.get_basis_term(indx, x=self[model].transform(x))
 
     def get_basis_terms(self, x: np.ndarray) -> np.ndarray:
         """Get a 2D array of all basis terms at ``x``."""

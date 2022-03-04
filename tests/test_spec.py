@@ -24,6 +24,8 @@ def test_read(io_obs: CalibrationObservation):
         assert ~np.isinf(spec.temp_ave)
         assert ~np.isnan(spec.temp_ave)
 
+        assert np.all(spec.variance_spectrum[mask] > spec.variance_Q[mask])
+
 
 def test_equality(io_obs: CalibrationObservation):
     spec1 = LoadSpectrum.from_io(
