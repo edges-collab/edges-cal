@@ -461,6 +461,7 @@ def clone_averaged_s11(obj, **kwargs):
 
 @attr.s
 class AveragedReceiver(_S11Base):
+    _default_nterms = 37
     measurements: Sequence[Receiver] = attr.ib(
         validator=attr.validators.deep_iterable(attr.validators.instance_of(Receiver))
     )
@@ -789,6 +790,11 @@ class AveragedLoadPlusSwitchS11(_S11Base):
         )
     )
 
+    @property
+    def n_terms(self):
+        """The number of terms to use in the smoothed model."""
+        return self.measurements[0].n_terms
+
     @cached_property
     def calibrated_s11_raw(self):
         """The measured S11 of the load, calculated from raw internal standards."""
@@ -814,6 +820,11 @@ class AveragedLoadPlusSwitchS11(_S11Base):
 class LoadS11(_S11Base):
     load_s11: LoadPlusSwitchS11 = attr.ib()
     internal_switch: InternalSwitch = attr.ib()
+
+    @property
+    def n_terms(self):
+        """The number of terms to use in the smoothed model."""
+        return self.load_s11.n_terms
 
     @internal_switch.validator
     def _isw_vld(self, att, val):
