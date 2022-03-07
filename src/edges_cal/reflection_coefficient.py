@@ -163,7 +163,7 @@ def standard(
     offset_loss = par[2]
 
     if kind in ["open", "short"]:
-        poly = par[3] + par[4] * f + par[5] * f ** 2 + par[6] * f ** 3
+        poly = par[3] + par[4] * f + par[5] * f**2 + par[6] * f**3
 
         if kind == "open":
             impedance_termination = -1j / (2 * np.pi * f * poly)

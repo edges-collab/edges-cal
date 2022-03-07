@@ -694,7 +694,7 @@ class LoadSpectrum:
     @property
     def variance_spectrum(self) -> np.ndarray:
         """Variance of uncalibrated spectrum across time (see averaged_spectrum)."""
-        return self.variance_Q * self.t_load_ns ** 2
+        return self.variance_Q * self.t_load_ns**2
 
     @property
     def ancillary(self) -> list[dict]:
@@ -786,7 +786,7 @@ class LoadSpectrum:
                 flags = np.logical_or(
                     resid > self.rfi_threshold * np.sqrt(varfilt / nsample),
                     var - varfilt
-                    > self.rfi_threshold * np.sqrt(2 * varfilt ** 2 / (nsample - 1)),
+                    > self.rfi_threshold * np.sqrt(2 * varfilt**2 / (nsample - 1)),
                 )
 
                 mean[flags] = np.nan
@@ -2092,7 +2092,7 @@ class CalibrationObservation:
         for name, res in resids.items():
             if smooth > 1:
                 res = convolve(res, Gaussian1DKernel(stddev=smooth), boundary="extend")
-            out[name] = np.sqrt(np.nanmean(res ** 2))
+            out[name] = np.sqrt(np.nanmean(res**2))
         return out
 
     def plot_calibrated_temps(self, bins=64, fig=None, ax=None):

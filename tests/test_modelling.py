@@ -104,11 +104,11 @@ def test_physical_lin():
     )
 
     basis = m.basis
-    assert np.allclose(basis[0], [np.e ** 2.5, 1, np.e ** -2.5])
-    assert np.allclose(basis[1], [-np.e ** 2.5, 0, np.e ** -2.5])
-    assert np.allclose(basis[2], [np.e ** 2.5, 0, np.e ** -2.5])
-    assert np.allclose(basis[3], [np.e ** 4.5, 1, np.e ** -4.5])
-    assert np.allclose(basis[4], [np.e ** 2, 1, np.e ** -2])
+    assert np.allclose(basis[0], [np.e**2.5, 1, np.e**-2.5])
+    assert np.allclose(basis[1], [-np.e**2.5, 0, np.e**-2.5])
+    assert np.allclose(basis[2], [np.e**2.5, 0, np.e**-2.5])
+    assert np.allclose(basis[3], [np.e**4.5, 1, np.e**-4.5])
+    assert np.allclose(basis[4], [np.e**2, 1, np.e**-2])
 
 
 def test_linlog():

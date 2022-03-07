@@ -17,7 +17,7 @@ def simulate_q(
     t_cos: np.ndarray,
     t_sin: np.ndarray,
     t_load: float = 300.0,
-    t_load_ns: float = 400.0
+    t_load_ns: float = 400.0,
 ) -> np.ndarray:
     """Simulate the observed 3-position switch ratio data, Q.
 

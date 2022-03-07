@@ -115,9 +115,9 @@ def noise_wave_param_fit(
     # Matrices A and b
     A = np.zeros((3 * wterms, 2 * len(f_norm)))
     for i in range(wterms):
-        A[i, :] = np.append(K2o * f_norm ** i, K2s * f_norm ** i)
-        A[i + 1 * wterms, :] = np.append(K3o * f_norm ** i, K3s * f_norm ** i)
-        A[i + 2 * wterms, :] = np.append(K4o * f_norm ** i, K4s * f_norm ** i)
+        A[i, :] = np.append(K2o * f_norm**i, K2s * f_norm**i)
+        A[i + 1 * wterms, :] = np.append(K3o * f_norm**i, K3s * f_norm**i)
+        A[i + 2 * wterms, :] = np.append(K4o * f_norm**i, K4s * f_norm**i)
     b = np.append(
         (temp_raw_open - temp_thermistor_open * K1o),
         (temp_raw_short - temp_thermistor_short * K1s),
@@ -272,8 +272,8 @@ def get_K(gamma_rec, gamma_ant, f_ratio=None, alpha=None, gain=None):  # noqa: N
     gant = np.abs(gamma_ant)
     fgant = gant * f_ratio / gain
 
-    K2 = fgant ** 2 * gain
-    K1 = f_ratio ** 2 / gain - K2
+    K2 = fgant**2 * gain
+    K1 = f_ratio**2 / gain - K2
     K3 = fgant * np.cos(alpha)
     K4 = fgant * np.sin(alpha)
 
