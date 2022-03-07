@@ -725,6 +725,7 @@ class CalibrationObservation:
         f_high: tp.FreqType = np.inf * un.MHz,
         sources: tuple[str] = ("ambient", "hot_load", "open", "short"),
         receiver_kwargs: dict[str, Any] | None = None,
+        restrict_s11_model_freqs: bool = True,
         **kwargs,
     ) -> CalibrationObservation:
         """Create the object from an edges-io observation.
@@ -736,6 +737,20 @@ class CalibrationObservation:
         semi_rigid_path : str or Path, optional
             Path to a file containing S11 measurements for the semi rigid cable. Used to
             correct the hot load S11. Found automatically if not given.
+        freq_bin_size
+            The size of each frequency bin (of the spectra) in units of the raw size.
+        spectrum_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`LoadSpectrum`
+            objects. See its documentation for relevant parameters. Parameters specified
+            here are used for _all_ calibrator sources.
+        s11_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`LoadS11`
+            objects. See its documentation for relevant parameters. Parameters specified
+            here are used for _all_ calibrator sources.
+        internal_switch_kwargs
+            Keyword arguments used to instantiate the :class:`~s11.InternalSwitch`
+            objects. See its documentation for relevant parameters. The same internal
+            switch is used to calibrate the S11 for each input source.
         f_low : float
             Minimum frequency to keep for all loads (and their S11's). If for some
             reason different frequency bounds are desired per-load, one can pass in
@@ -744,16 +759,18 @@ class CalibrationObservation:
             Maximum frequency to keep for all loads (and their S11's). If for some
             reason different frequency bounds are desired per-load, one can pass in
             full load objects through ``load_spectra``.
-        spectrum_kwargs : dict
-            Keyword arguments used to instantiate the calibrator :class:`LoadSpectrum`
-            objects. See its documentation for relevant parameters. Parameters specified
-            here are used for _all_ calibrator sources.
-        s11_kwargs : dict
-            Keyword arguments used to instantiate the calibrator :class:`LoadS11`
-            objects. See its documentation for relevant parameters. Parameters specified
-            here are used for _all_ calibrator sources.
-        freq_bin_size
-            The size of each frequency bin (of the spectra) in units of the raw size.
+        sources
+            A sequence of strings specifying which loads to actually use in the
+            calibration. Default is all four standard calibrators.
+        receiver_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`~s11.Receiver`
+            objects. See its documentation for relevant parameters. ``lna_kwargs`` is a
+            deprecated alias.
+        restrict_s11_model_freqs
+            Whether to restrict the S11 modelling (i.e. smoothing) to the given freq
+            range. The final output will be calibrated only between the given freq
+            range, but the S11 models themselves can be fit over a broader set of
+            frequencies.
         """
         if f_high < f_low:
             raise ValueError("f_high must be larger than f_low!")
@@ -789,8 +806,8 @@ class CalibrationObservation:
             rrs.append(
                 s11.Receiver.from_io(
                     device=rr,
-                    f_low=f_low,
-                    f_high=f_high,
+                    f_low=f_low if restrict_s11_model_freqs else 0 * un.MHz,
+                    f_high=f_high if restrict_s11_model_freqs else np.inf * un.MHz,
                     **receiver_kwargs,
                 )
             )
