@@ -11,11 +11,6 @@ def test_simulate_q(calobs: CalibrationObservation):
     assert len(q) == calobs.freq.n == len(qhot)
     assert not np.all(q == qhot)
 
-    obsc = calobs.to_calfile()
-
-    q2 = simulate_q_from_calobs(obsc, "open")
-    np.testing.assert_allclose(q, q2)
-
 
 def test_simulate_qant(calobs: CalibrationObservation):
 

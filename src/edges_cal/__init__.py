@@ -15,8 +15,8 @@ DATA_PATH = Path(__file__).parent / "data"
 
 from . import plot  # noqa: E402
 from .cal_coefficients import (  # noqa: E402
-    Calibration,
     CalibrationObservation,
+    Calibrator,
     LoadSpectrum,
 )
 from .s11 import InternalSwitch, LoadS11, Receiver  # noqa: E402

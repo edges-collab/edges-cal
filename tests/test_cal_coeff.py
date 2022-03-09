@@ -1,5 +1,6 @@
 import pytest
 
+import hickle
 import numpy as np
 from astropy import units as u
 from pathlib import Path
@@ -63,7 +64,7 @@ def test_calibration_init(calobs, tmpdir: Path):
 
     calobs.write(tmpdir / "calfile.h5")
 
-    cal = cc.Calibration(tmpdir / "calfile.h5")
+    cal = cc.Calibrator.from_calfile(tmpdir / "calfile.h5")
 
     assert np.allclose(
         cal.receiver_s11(), calobs.receiver.s11_model(calobs.freq.freq.to_value("MHz"))
@@ -122,7 +123,7 @@ def test_calobs_equivalence(calobs, io_obs):
 
 
 def test_basic_s11_properties(calobs):
-    assert calobs.open.reflections.load_s11.load_name == "open"
+    assert calobs.open.reflections.load_name == "open"
 
 
 def test_inject(calobs):
@@ -202,18 +203,12 @@ def test_plot_caltemp_bin0(calobs):
 
 
 def test_calibration_isw(calobs):
-    clf = calobs.to_calfile()
+    clf = calobs.to_calibrator()
 
     f = calobs.freq.freq.to_value("MHz")
     assert np.allclose(clf.internal_switch_s11(), calobs.internal_switch.s11_model(f))
     assert np.allclose(clf.internal_switch_s12(), calobs.internal_switch.s12_model(f))
     assert np.allclose(clf.internal_switch_s22(), calobs.internal_switch.s22_model(f))
-
-    k = clf.get_K()
-    k2 = calobs.get_K()
-
-    for name in k:
-        assert np.allclose(k[name], k2[name])
 
     cq = clf.calibrate_Q(
         freq=calobs.freq.freq,
@@ -222,3 +217,10 @@ def test_calibration_isw(calobs):
     )
     cq2 = calobs.calibrate("ambient")
     assert np.allclose(cq, cq2)
+
+
+def test_hickle_roundtrip(calobs, tmpdir):
+    hickle.dump(calobs, tmpdir / "tmp_hickle.h5")
+    new = hickle.load(tmpdir / "tmp_hickle.h5")
+
+    assert new == calobs

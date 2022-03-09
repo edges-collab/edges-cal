@@ -179,9 +179,9 @@ def test_receiver(cal_data):
         device=ioobj.receiver_reading[0], f_low=50 * u.MHz, f_high=100 * u.MHz
     )
     assert rcv.n_terms == 37
-    assert np.iscomplexobj(rcv.calibrated_s11_raw)
-    assert np.all(np.abs(rcv.calibrated_s11_raw) < 1)
-    assert len(np.unique(rcv.calibrated_s11_raw)) > 25
+    assert np.iscomplexobj(rcv.raw_s11)
+    assert np.all(np.abs(rcv.raw_s11) < 1)
+    assert len(np.unique(rcv.raw_s11)) > 25
 
     s11mdl = rcv.s11_model(rcv.freq.freq.to_value("MHz"))
     assert np.iscomplexobj(s11mdl)
@@ -190,10 +190,10 @@ def test_receiver(cal_data):
 
 
 def test_even_nterms_s11(cal_data):
-    fl = io.S11Dir(cal_data / "S11").ambient[0]
+    fl = io.S11Dir(cal_data / "S11").receiver_reading
 
     with pytest.raises(ValueError, match="n_terms must be odd"):
-        s11.LoadPlusSwitchS11.from_io(fl, n_terms=40)
+        s11.Receiver.from_io(fl, n_terms=40)
 
 
 def test_s1p_converter(io_obs):
@@ -254,55 +254,19 @@ def test_init_internal_switch():
     s = np.linspace(0, 1, 100) + 0j
     freq = np.linspace(50, 100, 100) * u.MHz
 
-    with pytest.raises(ValueError, match="'corrections' should have open/short/match"):
-        s11.InternalSwitch(corrections={"open": s}, freq=freq)
-
-    with pytest.raises(ValueError, match="must have same shape as open"):
-        s11.InternalSwitch(
-            corrections={"open": s, "short": s[:80], "match": s}, freq=freq
-        )
-
-    with pytest.raises(ValueError, match="must have same shape as open"):
-        s11.InternalSwitch(
-            corrections={"open": s, "short": s, "match": s[:80]}, freq=freq
-        )
-
     with pytest.raises(TypeError, match="n_terms must be an integer or tuple of three"):
         s11.InternalSwitch(
-            corrections={"open": s, "short": s, "match": s},
+            s11_data=s,
+            s12_data=s,
+            s22_data=s,
             freq=freq,
             n_terms=(5, 5, 5, 5),
         )
 
 
-def test_init_load_s11():
-    s = np.linspace(0, 1, 100) + 0j
-    freq = np.linspace(50, 100, 100) * u.MHz
-    vna = s11.VNAReading(s11=s, freq=freq)
-
-    sr = s11.StandardsReadings(open=vna, short=vna, match=vna)
-
-    load_s11 = s11.LoadPlusSwitchS11(
-        standards=sr,
-        external_match=vna,
-        load_name="derp",
-        calkit=rc.get_calkit(rc.AGILENT_85033E, resistance_of_match=49.0),
-    )
-    internal_switch = s11.InternalSwitch(
-        corrections={"open": s, "short": s, "match": s},
-        freq=freq,
-        calkit=rc.get_calkit(rc.AGILENT_85033E, resistance_of_match=51.0),
-    )
-
-    with pytest.raises(
-        ValueError, match="calkit used for the internal switch must match"
-    ):
-        s11.LoadS11(load_s11=load_s11, internal_switch=internal_switch)
-
-
 def test_receiver_clone(calobs):
     assert calobs.receiver.clone() == calobs.receiver
     ck = rc.get_calkit(rc.AGILENT_85033E, resistance_of_match=49.0)
-    new = calobs.receiver.clone(calkit=ck)
+    new = calobs.receiver.with_new_calkit(ck)
 
-    assert all(m.calkit == ck for m in new.measurements)
+    assert not np.allclose(calobs.receiver.raw_s11, new.raw_s11)

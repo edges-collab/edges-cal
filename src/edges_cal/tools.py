@@ -6,6 +6,7 @@ import numpy as np
 import warnings
 from astropy import units
 from astropy import units as u
+from edges_io import h5
 from itertools import product
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -125,6 +126,7 @@ def dct_of_list_to_list_of_dct(dct: dict[str, Sequence]) -> list[dict]:
     return [{k: v for k, v in zip(dct.keys(), p)} for p in prod]
 
 
+@h5.hickleable()
 @attr.s
 class FrequencyRange:
     """

@@ -90,7 +90,7 @@ def simulate_q_from_calobs(
     try:
         receiver_s11 = calobs.receiver.s11_model(freq.to_value("MHz"))
     except AttributeError:
-        receiver_s11 = calobs.receiver_s11(freq.to_value("MHz"))
+        receiver_s11 = calobs.receiver_s11(freq)
 
     if not default_freq:
         temp_ave = calobs.loads[load].get_temp_with_loss(freq)

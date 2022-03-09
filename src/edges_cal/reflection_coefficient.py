@@ -15,6 +15,7 @@ import attr
 import numpy as np
 import warnings
 from astropy import units
+from edges_io import h5
 
 from . import modelling as mdl
 from . import types as tp
@@ -320,6 +321,7 @@ def input_impedance_transmission_line(
     )
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class CalkitStandard:
     """Class representing a calkit standard.
@@ -489,6 +491,7 @@ def CalkitMatch(resistance=50.0 * units.ohm, **kwargs) -> CalkitStandard:  # noq
     return CalkitStandard(resistance=resistance, **kwargs)
 
 
+@h5.hickleable()
 @attr.s(frozen=True)
 class Calkit:
     open: CalkitStandard = attr.ib()

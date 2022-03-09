@@ -8,15 +8,14 @@ from __future__ import annotations
 
 import attr
 import h5py
+import hickle
 import inspect
 import numpy as np
-import tempfile
 import warnings
-import yaml
 from astropy import units as un
 from astropy.convolution import Gaussian1DKernel, convolve
 from astropy.io.misc import yaml as ayaml
-from edges_io import io
+from edges_io import h5, io
 from edges_io import utils as iou
 from edges_io.logging import logger
 from functools import partial
@@ -37,6 +36,7 @@ from .config import config
 from .tools import FrequencyRange, bin_array, get_data_path
 
 
+@h5.hickleable()
 @attr.s(kw_only=True, frozen=True)
 class LoadSpectrum:
     """A class representing a measured spectrum from some Load averaged over time.
@@ -85,6 +85,28 @@ class LoadSpectrum:
                 "f_high": self.freq.max,
             },
         }
+
+    @classmethod
+    def from_h5(cls, path):
+        """Read the contents of a .h5 file into a LoadSpectrum."""
+
+        def read_group(grp):
+            return cls(
+                freq=FrequencyRange(grp[...] * un.MHz),
+                q=grp["Q_mean"][...],
+                variance=grp["Q_var"],
+                n_integrations=grp["n_integrations"],
+                temp_ave=grp["temp_ave"],
+                t_load_ns=grp["t_load_ns"],
+                t_load=grp["t_load"],
+                metadata=dict(grp.attrs),
+            )
+
+        if isinstance(path, (str, Path)):
+            with h5py.File(path, "r") as fl:
+                return read_group(fl)
+        else:
+            return read_group(path)
 
     @classmethod
     def from_io(
@@ -323,6 +345,7 @@ class LoadSpectrum:
         return rcf.temperature_thermistor(ary["load_resistance"])
 
 
+@h5.hickleable()
 @attr.s(kw_only=True)
 class HotLoadCorrection:
     """
@@ -345,9 +368,9 @@ class HotLoadCorrection:
     """
 
     freq: FrequencyRange = attr.ib()
-    raw_s11: np.ndarray = attr.ib()
-    raw_s12s21: np.ndarray = attr.ib()
-    raw_s22: np.ndarray = attr.ib()
+    raw_s11: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
+    raw_s12s21: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
+    raw_s22: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
 
     n_terms: int = attr.ib(default=21, converter=int)
 
@@ -484,6 +507,7 @@ class HotLoadCorrection:
         )
 
 
+@h5.hickleable()
 @attr.s(kw_only=True)
 class Load:
     """Wrapper class containing all relevant information for a given load.
@@ -660,19 +684,28 @@ class Load:
         """Frequencies of the spectrum."""
         return self.spectrum.freq
 
-    def with_calkit(self, calkit):
+    def with_calkit(self, calkit: rc.Calkit):
         """Return a new Load with updated calkit."""
-        loads11 = s11.clone_averaged_s11(self.reflections.load_s11, calkit=calkit)
-        isw = s11.clone_averaged_s11(self.reflections.internal_switch, calkit=calkit)
+        if "calkit" not in self.reflections.metadata:
+            raise RuntimeError(
+                "Cannot clone with new calkit since calkit is unknown for the load"
+            )
+
+        loads11 = [
+            attr.evolve(x, calkit=calkit)
+            for x in self.reflections.metadata["load_s11s"]
+        ]
+        isw = self.reflections.internal_switch.with_new_calkit(calkit)
 
         return attr.evolve(
             self,
-            reflections=attr.evolve(
-                self.reflections, load_s11=loads11, internal_switch=isw
+            reflections=s11.LoadS11.from_load_and_internal_switch(
+                load_s11=loads11, internal_switch=isw, base=self.reflections
             ),
         )
 
 
+@h5.hickleable()
 @attr.s
 class CalibrationObservation:
     """
@@ -792,27 +825,22 @@ class CalibrationObservation:
         f_low = f_low.to("MHz", copy=False)
         f_high = f_high.to("MHz", copy=False)
 
-        rrs = []
-        for rr in io_obj.s11.receiver_reading:
-
-            if "calkit" not in receiver_kwargs:
-                receiver_kwargs["calkit"] = rc.get_calkit(
-                    rc.AGILENT_85033E,
-                    resistance_of_match=io_obj.definition.get("measurements", {})
-                    .get("resistance_f", {})
-                    .get(rr.run_num, 50.0 * un.Ohm),
-                )
-
-            rrs.append(
-                s11.Receiver.from_io(
-                    device=rr,
-                    f_low=f_low if restrict_s11_model_freqs else 0 * un.MHz,
-                    f_high=f_high if restrict_s11_model_freqs else np.inf * un.MHz,
-                    **receiver_kwargs,
-                )
+        if "calkit" not in receiver_kwargs:
+            receiver_kwargs["calkit"] = rc.get_calkit(
+                rc.AGILENT_85033E,
+                resistance_of_match=io_obj.definition.get("measurements", {})
+                .get("resistance_f", {})
+                .get(io_obj.s11.receiver_reading[0].run_num, 50.0 * un.Ohm),
             )
 
-        receiver = s11.AveragedReceiver(rrs)
+        receiver = s11.Receiver.from_io(
+            device=io_obj.s11.receiver_reading,
+            f_low=f_low if restrict_s11_model_freqs else 0 * un.MHz,
+            f_high=f_high if restrict_s11_model_freqs else np.inf * un.MHz,
+            **receiver_kwargs,
+        )
+
+        print(receiver.freq.min, f_low)
         f_low = max(receiver.freq.min, f_low)
         f_high = min(receiver.freq.max, f_high)
 
@@ -1475,10 +1503,9 @@ class CalibrationObservation:
         # build a better system of maintaining metadata in subclasses to be used here.
         with h5py.File(filename, "w") as fl:
             # Write attributes
+
             fl.attrs["cterms"] = self.cterms
             fl.attrs["wterms"] = self.wterms
-            fl.attrs["switch_nterms"] = self.internal_switch.measurements[0].n_terms
-            fl.attrs["switch_model"] = str(self.internal_switch.measurements[0].model)
             fl.attrs["t_load"] = self.open.spectrum.t_load
             fl.attrs["t_load_ns"] = self.open.spectrum.t_load_ns
 
@@ -1488,47 +1515,39 @@ class CalibrationObservation:
             fl["Tcos"] = self.Tcos_poly.coefficients
             fl["Tsin"] = self.Tsin_poly.coefficients
 
-            fmhz = self.freq.freq.to_value("MHz")
-            fl["frequencies"] = fmhz
-            fl["lna_s11_real"] = self.receiver.s11_model(fmhz).real
-            fl["lna_s11_imag"] = self.receiver.s11_model(fmhz).imag
-
-            fl["internal_switch_s11_real"] = np.real(
-                self.internal_switch.s11_model(fmhz)
+            hickle.dump(self.freq, fl.create_group("frequencies"))
+            hickle.dump(
+                self.receiver,
+                fl.create_group("receiver_s11"),
             )
-            fl["internal_switch_s11_imag"] = np.imag(
-                self.internal_switch.s11_model(fmhz)
+            hickle.dump(
+                self.internal_switch,
+                fl.create_group("internal_switch"),
             )
-            fl["internal_switch_s12_real"] = np.real(
-                self.internal_switch.s12_model(fmhz)
-            )
-            fl["internal_switch_s12_imag"] = np.imag(
-                self.internal_switch.s12_model(fmhz)
-            )
-            fl["internal_switch_s22_real"] = np.real(
-                self.internal_switch.s22_model(fmhz)
-            )
-            fl["internal_switch_s22_imag"] = np.imag(
-                self.internal_switch.s22_model(fmhz)
+            hickle.dump(
+                self.metadata,
+                fl.create_group("metadata"),
             )
 
-            load_grp = fl.create_group("loads")
-
-            for name, load in self.loads.items():
-                grp = load_grp.create_group(name)
-                grp.attrs["s11_model"] = yaml.dump(load.s11_model)
-                grp["averaged_Q"] = load.spectrum.averaged_Q
-                grp["variance_Q"] = load.spectrum.variance_Q
-                grp["temp_ave"] = load.temp_ave
-                grp.attrs["n_integrations"] = load.spectrum.n_integrations
-
-            metadata = fl.create_group("metadata")
-            for name, val in self.metadata.items():
-                metadata.attrs[name] = val
-
-    def to_calfile(self):
-        """Directly create a :class:`Calibration` object without writing to file."""
-        return Calibration.from_calobs(self)
+    def to_calibrator(self):
+        """Directly create a :class:`Calibrator` object without writing to file."""
+        return Calibrator(
+            cterms=self.cterms,
+            wterms=self.wterms,
+            t_load=self.t_load,
+            t_load_ns=self.t_load_ns,
+            C1=self.C1_poly,
+            C2=self.C2_poly,
+            Tunc=self.Tunc_poly,
+            Tcos=self.Tcos_poly,
+            Tsin=self.Tsin_poly,
+            freq=self.freq,
+            receiver_s11=self.receiver.s11_model,
+            internal_switch_s11=self.internal_switch.s11_model,
+            internal_switch_s12=self.internal_switch.s12_model,
+            internal_switch_s22=self.internal_switch.s22_model,
+            metadata=self.metadata,
+        )
 
     def inject(
         self,
@@ -1603,182 +1622,164 @@ class CalibrationObservation:
         return cls.from_io(io_obs, **config)
 
 
-@attr.s
-class _LittleS11:
-    s11_model: Callable = attr.ib()
+@h5.hickleable()
+@attr.s(kw_only=True)
+class Calibrator:
+    freq: FrequencyRange = attr.ib()
 
+    cterms: int = attr.ib()
+    wterms: int = attr.ib()
 
-@attr.s
-class _LittleSpectrum:
-    averaged_Q: np.ndarray = attr.ib()
-    variance_Q: np.ndarray = attr.ib()
-    n_integrations: int = attr.ib()
+    _C1: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _C2: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _Tunc: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _Tcos: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _Tsin: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _receiver_s11: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _internal_switch_s11: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _internal_switch_s12: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _internal_switch_s22: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    t_load: float = attr.ib(300)
+    t_load_ns: float = attr.ib(350)
+    metadata: dict = attr.ib(default=attr.Factory(dict))
 
+    def __attrs_post_init__(self):
+        """Initialize properties of the class."""
+        for key in ["C1", "C2", "Tunc", "Tcos", "Tsin"]:
+            setattr(self, key, partial(self._call_func, key=key, norm=True))
+        for key in [
+            "receiver_s11",
+            "internal_switch_s11",
+            "internal_switch_s12",
+            "internal_switch_s22",
+        ]:
+            setattr(self, key, partial(self._call_func, key=key, norm=False))
 
-@attr.s
-class _LittleLoad:
-    reflections: _LittleS11 = attr.ib()
-    spectrum: _LittleSpectrum = attr.ib()
-    temp_ave: np.ndarray = attr.ib()
+    def _call_func(self, freq: tp.FreqType | None = None, *, key=None, norm=False):
+        if freq is None:
+            freq = self.freq.freq
 
-    def s11_model(self, freq):
-        return self.reflections.s11_model(freq)
+        if not hasattr(freq, "unit"):
+            raise ValueError("freq must have units of frequency")
 
+        if norm:
+            freq = self.freq.normalize(freq)
+        else:
+            freq = freq.to_value("MHz")
 
-class Calibration:
-    def __init__(self, filename: str | Path):
-        """
-        A class defining an interface to a HDF5 file containing calibration information.
-
-        Parameters
-        ----------
-        filename : str or Path
-            The path to the calibration file.
-        """
-        self.calfile = Path(filename)
-
-        with h5py.File(filename, "r") as fl:
-            self.cterms = int(fl.attrs["cterms"])
-            self.wterms = int(fl.attrs["wterms"])
-            self.t_load = fl.attrs.get("t_load", 300)
-            self.t_load_ns = fl.attrs.get("t_load_ns", 400)
-
-            self.C1_poly = np.poly1d(fl["C1"][...])
-            self.C2_poly = np.poly1d(fl["C2"][...])
-            self.Tcos_poly = np.poly1d(fl["Tcos"][...])
-            self.Tsin_poly = np.poly1d(fl["Tsin"][...])
-            self.Tunc_poly = np.poly1d(fl["Tunc"][...])
-
-            self.freq = FrequencyRange(fl["frequencies"][...] * un.MHz)
-
-            try:
-                self.metadata = dict(fl["metadata"].attrs)
-            except KeyError:
-                # For backwards compat
-                self.metadata = {}
-
-            self.loads = {}
-            if "loads" in fl:
-                lg = fl["loads"]
-
-                self.load_names = list(lg.keys())
-
-                for name, grp in lg.items():
-                    self.loads[name] = _LittleLoad(
-                        reflections=_LittleS11(
-                            s11_model=yaml.load(
-                                grp.attrs["s11_model"], Loader=yaml.FullLoader
-                            ).at(x=self.freq.freq.to_value("MHz"))
-                        ),
-                        spectrum=_LittleSpectrum(
-                            averaged_Q=grp["averaged_Q"][...],
-                            variance_Q=grp["variance_Q"][...],
-                            n_integrations=grp.attrs["n_integrations"],
-                        ),
-                        temp_ave=grp["temp_ave"][...],
-                    )
-                    setattr(self, name, self.loads[name])
-
-            self._lna_s11_rl = Spline(self.freq.freq, fl["lna_s11_real"][...])
-            self._lna_s11_im = Spline(self.freq.freq, fl["lna_s11_imag"][...])
-
-            self._intsw_s11_rl = Spline(
-                self.freq.freq, fl["internal_switch_s11_real"][...]
-            )
-            self._intsw_s11_im = Spline(
-                self.freq.freq, fl["internal_switch_s11_imag"][...]
-            )
-            self._intsw_s12_rl = Spline(
-                self.freq.freq, fl["internal_switch_s12_real"][...]
-            )
-            self._intsw_s12_im = Spline(
-                self.freq.freq, fl["internal_switch_s12_imag"][...]
-            )
-            self._intsw_s22_rl = Spline(
-                self.freq.freq, fl["internal_switch_s22_real"][...]
-            )
-            self._intsw_s22_im = Spline(
-                self.freq.freq, fl["internal_switch_s22_imag"][...]
-            )
+        return getattr(self, "_" + key)(freq)
 
     @classmethod
-    def from_calobs(cls, calobs: CalibrationObservation) -> Calibration:
+    def from_calobs_file(cls, path: tp.PathLike) -> Calibrator:
+        """Generate from calobs file."""
+        calobs = hickle.load(path)
+        return calobs.to_calibrator()
+
+    @classmethod
+    def from_calfile(cls, path: tp.PathLike) -> Calibrator:
+        """Generate from calfile."""
+        with h5py.File(path, "r") as fl:
+            cterms = fl.attrs["cterms"]
+            wterms = fl.attrs["wterms"]
+            t_load = fl.attrs["t_load"]
+            t_load_ns = fl.attrs["t_load_ns"]
+
+            C1 = np.poly1d(fl["C1"])
+            C2 = np.poly1d(fl["C2"])
+            Tunc = np.poly1d(fl["Tunc"])
+            Tcos = np.poly1d(fl["Tcos"])
+            Tsin = np.poly1d(fl["Tsin"])
+
+            freq = hickle.load(fl["frequencies"])
+            receiver_s11 = hickle.load(fl["receiver_s11"])
+            internal_switch = hickle.load(fl["internal_switch"])
+            metadata = hickle.load(fl["metadata"])
+
+        return cls(
+            cterms=cterms,
+            wterms=wterms,
+            t_load=t_load,
+            t_load_ns=t_load_ns,
+            C1=C1,
+            C2=C2,
+            Tunc=Tunc,
+            Tcos=Tcos,
+            Tsin=Tsin,
+            freq=freq,
+            receiver_s11=receiver_s11.s11_model,
+            internal_switch_s11=internal_switch.s11_model,
+            internal_switch_s12=internal_switch.s12_model,
+            internal_switch_s22=internal_switch.s22_model,
+            metadata=metadata,
+        )
+
+    @classmethod
+    def from_old_calfile(cls, path: tp.PathLike) -> Calibrator:
+        """Read from older calfiles."""
+        with h5py.File(path, "r") as fl:
+            cterms = int(fl.attrs["cterms"])
+            wterms = int(fl.attrs["wterms"])
+            t_load = fl.attrs.get("t_load", 300)
+            t_load_ns = fl.attrs.get("t_load_ns", 400)
+
+            C1_poly = np.poly1d(fl["C1"][...])
+            C2_poly = np.poly1d(fl["C2"][...])
+            Tcos_poly = np.poly1d(fl["Tcos"][...])
+            Tsin_poly = np.poly1d(fl["Tsin"][...])
+            Tunc_poly = np.poly1d(fl["Tunc"][...])
+
+            freq = FrequencyRange(fl["frequencies"][...] * un.MHz)
+
+            try:
+                metadata = dict(fl["metadata"].attrs)
+            except KeyError:
+                # For backwards compat
+                metadata = {}
+
+            _lna_s11_rl = Spline(freq.freq.to_value("MHz"), fl["lna_s11_real"][...])
+            _lna_s11_im = Spline(freq.freq.to_value("MHz"), fl["lna_s11_imag"][...])
+
+            _intsw_s11_rl = Spline(
+                freq.freq.to_value("MHz"), fl["internal_switch_s11_real"][...]
+            )
+            _intsw_s11_im = Spline(
+                freq.freq.to_value("MHz"), fl["internal_switch_s11_imag"][...]
+            )
+            _intsw_s12_rl = Spline(
+                freq.freq.to_value("MHz"), fl["internal_switch_s12_real"][...]
+            )
+            _intsw_s12_im = Spline(
+                freq.freq.to_value("MHz"), fl["internal_switch_s12_imag"][...]
+            )
+            _intsw_s22_rl = Spline(
+                freq.freq.to_value("MHz"), fl["internal_switch_s22_real"][...]
+            )
+            _intsw_s22_im = Spline(
+                freq.freq.to_value("MHz"), fl["internal_switch_s22_imag"][...]
+            )
+
+        return cls(
+            C1=C1_poly,
+            C2=C2_poly,
+            Tunc=Tunc_poly,
+            Tcos=Tcos_poly,
+            Tsin=Tsin_poly,
+            freq=freq,
+            receiver_s11=lambda x: _lna_s11_rl(x) + 1j * _lna_s11_im(x),
+            internal_switch_s11=lambda x: _intsw_s11_rl(x) + 1j * _intsw_s11_im(x),
+            internal_switch_s12=lambda x: _intsw_s12_rl(x) + 1j * _intsw_s12_im(x),
+            internal_switch_s22=lambda x: _intsw_s22_rl(x) + 1j * _intsw_s22_im(x),
+            t_load=t_load,
+            t_load_ns=t_load_ns,
+            c_terms=cterms,
+            w_terms=wterms,
+            metadata=metadata,
+        )
+
+    @classmethod
+    def from_calobs(cls, calobs: CalibrationObservation) -> Calibrator:
         """Generate a :class:`Calibration` from an in-memory observation."""
-        tmp = tempfile.mktemp()
-        calobs.write(tmp)
-        return cls(tmp)
-
-    def receiver_s11(self, freq=None):
-        """Get the LNA S11 at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self._lna_s11_rl(freq) + 1j * self._lna_s11_im(freq)
-
-    def internal_switch_s11(self, freq=None):
-        """Get the S11 of the internal switch at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self._intsw_s11_rl(freq) + 1j * self._intsw_s11_im(freq)
-
-    def internal_switch_s12(self, freq=None):
-        """Get the S12 of the internal switch at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self._intsw_s12_rl(freq) + 1j * self._intsw_s12_im(freq)
-
-    def internal_switch_s22(self, freq=None):
-        """Get the S22 of the internal switch at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self._intsw_s22_rl(freq) + 1j * self._intsw_s22_im(freq)
-
-    def C1(self, freq=None):
-        """Evaluate the Scale polynomial at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self.C1_poly(self.freq.normalize(freq))
-
-    def C2(self, freq=None):
-        """Evaluate the Offset polynomial at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self.C2_poly(self.freq.normalize(freq))
-
-    def Tcos(self, freq=None):
-        """Evaluate the cos temperature polynomial at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self.Tcos_poly(self.freq.normalize(freq))
-
-    def Tsin(self, freq=None):
-        """Evaluate the sin temperature polynomial at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self.Tsin_poly(self.freq.normalize(freq))
-
-    def Tunc(self, freq=None):
-        """Evaluate the uncorrelated temperature polynomial at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self.Tunc_poly(self.freq.normalize(freq))
-
-    def get_K(
-        self, freq: tp.FreqType | None = None
-    ) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
-        """Get the source-S11-dependent factors of Monsalve (2017) Eq. 7."""
-        if freq is None:
-            freq = self.freq.freq
-
-        gamma_ants = {
-            name: source.s11_model(freq.to_value("MHz"))
-            for name, source in self.loads.items()
-        }
-
-        lna_s11 = self.receiver_s11(freq.to_value("MHz"))
-        return {
-            name: rcf.get_K(gamma_rec=lna_s11, gamma_ant=gamma_ant)
-            for name, gamma_ant in gamma_ants.items()
-        }
+        return calobs.to_calibrator()
 
     def _linear_coefficients(self, freq, ant_s11):
         return rcf.get_linear_coefficients(

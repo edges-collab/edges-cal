@@ -7,6 +7,7 @@ import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
 from copy import copy
+from edges_io import h5
 from edges_io.h5 import register_h5type
 from typing import Sequence, Type, Union
 
@@ -18,6 +19,7 @@ F_CENTER = 75.0
 _MODELS = {}
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class FixedLinearModel(yaml.YAMLObject):
     """
@@ -167,6 +169,7 @@ def _transform_yaml_representer(
     return dumper.represent_mapping(f"!{tr.__class__.__name__}", dct)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class ModelTransform(metaclass=ABCMeta):
     _models = {}
@@ -195,6 +198,7 @@ class ModelTransform(metaclass=ABCMeta):
         return self.transform(x)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class IdentityTransform(ModelTransform):
     def transform(self, x: np.ndarray) -> np.ndarray:
@@ -202,6 +206,7 @@ class IdentityTransform(ModelTransform):
         return x
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class ScaleTransform(ModelTransform):
     scale: float = attr.ib(converter=float)
@@ -216,6 +221,7 @@ def tuple_converter(x):
     return tuple(float(xx) for xx in x)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class CentreTransform(ModelTransform):
     range: tuple[float, float] = attr.ib(converter=tuple_converter)
@@ -226,6 +232,7 @@ class CentreTransform(ModelTransform):
         return x - self.range[0] - (self.range[1] - self.range[0]) / 2 + self.centre
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class UnitTransform(ModelTransform):
     """A transform that takes the input range down to -1 to 1."""
@@ -241,6 +248,7 @@ class UnitTransform(ModelTransform):
         return 2 * self._centre.transform(x) / (self.range[1] - self.range[0])
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class LogTransform(ModelTransform):
     """A transform that takes the logarithm of the input."""
@@ -252,6 +260,7 @@ class LogTransform(ModelTransform):
         return np.log(x)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class ZerotooneTransform(ModelTransform):
     """A transform that takes an input range down to (0,1)."""
@@ -263,6 +272,7 @@ class ZerotooneTransform(ModelTransform):
         return (x - self.range[0]) / (self.range[1] - self.range[0])
 
 
+@h5.hickleable()
 @register_h5type
 @attr.s(frozen=True, kw_only=True)
 class Model(metaclass=ABCMeta):
@@ -427,6 +437,7 @@ def get_mdl_inst(model: str | Model | type[Model], **kwargs) -> Model:
     return get_mdl(model)(**kwargs)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class Foreground(Model, is_meta=True):
     """
@@ -451,6 +462,7 @@ class Foreground(Model, is_meta=True):
         return ScaleTransform(scale=self.f_center)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class PhysicalLin(Foreground):
     """Foreground model using a linearized physical model of the foregrounds."""
@@ -473,6 +485,7 @@ class PhysicalLin(Foreground):
             raise ValueError("too many terms supplied!")
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class Polynomial(Model):
     r"""A polynomial foreground model.
@@ -502,6 +515,7 @@ class Polynomial(Model):
         return x ** (indx + self.offset)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class EdgesPoly(Polynomial):
     """
@@ -518,6 +532,7 @@ class EdgesPoly(Polynomial):
     offset: float = attr.ib(default=-2.5, converter=float)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class LinLog(Foreground):
     beta: float = attr.ib(default=-2.5, converter=float)
@@ -537,6 +552,7 @@ class LinLog(Foreground):
         return term * x ** self.beta
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class Fourier(Model):
     """A Fourier-basis model."""
@@ -557,6 +573,7 @@ class Fourier(Model):
             return np.sin(self._period_fac * ((indx + 1) // 2) * x)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class FourierDay(Model):
     """A Fourier-basis model with period of 24 (hours)."""
@@ -570,6 +587,7 @@ class FourierDay(Model):
         return self._fourier.get_basis_term(indx, x)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class CompositeModel:
     models: dict[str, Model] = attr.ib()
@@ -747,6 +765,7 @@ class CompositeModel:
         return self.at(x=xdata).fit(ydata, weights=weights)
 
 
+@h5.hickleable()
 @attr.s(frozen=True)
 class ComplexRealImagModel(yaml.YAMLObject):
     """A composite model that is specifically for complex functions in real/imag."""
@@ -820,6 +839,7 @@ class ComplexRealImagModel(yaml.YAMLObject):
         return attr.evolve(self, real=real, imag=imag)
 
 
+@h5.hickleable()
 @attr.s(frozen=True)
 class ComplexMagPhaseModel(yaml.YAMLObject):
     """A composite model that is specifically for complex functions in mag/phase."""
@@ -896,6 +916,7 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
         return attr.evolve(self, mag=mag, phs=phs)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class NoiseWaves:
     freq: np.ndarray = attr.ib()
@@ -1061,6 +1082,7 @@ class NoiseWaves:
         return self.linear_model(**kwargs)
 
 
+@h5.hickleable()
 @attr.s(frozen=True)
 class ModelFit:
     """A class representing a fit of model to data.
