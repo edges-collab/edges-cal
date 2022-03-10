@@ -28,6 +28,7 @@ from . import types as tp
 from .modelling import (
     ComplexMagPhaseModel,
     ComplexRealImagModel,
+    Fourier,
     Model,
     Modelable,
     Polynomial,
@@ -239,9 +240,10 @@ class S11Model:
 
     @n_terms.validator
     def _nt_vld(self, att, val):
-        if not (isinstance(val, int) and val % 2):
+        if self.model_type == Fourier and val % 2:
             raise ValueError(
-                f"n_terms must be odd for S11 models. For {self} got " f"n_terms={val}."
+                f"n_terms must be odd for Fourier models. For {self} got "
+                f"n_terms={val}."
             )
 
     def clone(self, **kwargs):
