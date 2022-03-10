@@ -641,7 +641,7 @@ class InternalSwitch:
         # 'kind' should be 's11', 's12' or 's22'
         data = getattr(self, f"{kind}_data")
         return getattr(self, f"_{kind}_model").fit(
-            xdata=self.freq.freq.value, ydata=data
+            xdata=self.freq.freq.to_value("MHz"), ydata=data
         )
 
 
