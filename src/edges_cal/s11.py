@@ -289,7 +289,9 @@ class S11Model:
 
         cmodel = self.complex_model_type(emodel, emodel)
 
-        return cmodel.fit(ydata=raw_s11 * np.exp(1j * self.model_delay * freq))
+        return cmodel.fit(
+            ydata=raw_s11 * np.exp(1j * self.model_delay * freq).to_value("")
+        )
 
     @cached_property
     def _s11_model(self) -> callable:
