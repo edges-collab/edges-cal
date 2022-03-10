@@ -841,7 +841,6 @@ class CalibrationObservation:
             **receiver_kwargs,
         )
 
-        print(receiver.freq.min, f_low)
         f_low = max(receiver.freq.min, f_low)
         f_high = min(receiver.freq.max, f_high)
 
