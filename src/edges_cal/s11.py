@@ -758,7 +758,9 @@ class LoadS11(S11Model):
         }
 
         if "n_terms" not in kwargs:
-            kwargs["n_terms"] = default_nterms.get(load_s11[0].load_name, 55)
+            kwargs["n_terms"] = default_nterms.get(
+                load_s11[0].load_name, cls._default_nterms
+            )
 
         s11s = []
         for load in load_s11:
