@@ -41,7 +41,7 @@ from .tools import FrequencyRange, vld_unit
 def _s1p_converter(s1p: tp.PathLike | io.S1P) -> io.S1P:
     try:
         s1p = Path(s1p)
-        return io.S1P(s1p)
+        return io.S1P(s1p, check=False)
     except TypeError as e:
         if isinstance(s1p, io.S1P):
             return s1p
