@@ -520,14 +520,16 @@ class InternalSwitch:
 
         freq = FrequencyRange(internal_switch[0].freq, f_low=f_low, f_high=f_high)
 
+        # TODO: not clear why we use the ideal values of 1,-1,0 instead of the physical
+        # expected values of calkit.match.intrinsic_gamma etc.
         corrections = []
         for isw in internal_switch:
             corrections.append(
                 {
                     kind: rc.de_embed(
-                        calkit.open.intrinsic_gamma,
-                        calkit.short.intrinsic_gamma,
-                        calkit.match.intrinsic_gamma,
+                        1,
+                        -1,
+                        0,
                         isw.open.s11,
                         isw.short.s11,
                         isw.match.s11,
