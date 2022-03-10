@@ -199,22 +199,31 @@ class S11Model:
     _complex_model_type_default = ComplexMagPhaseModel
     _model_type_default = "fourier"
 
-    raw_s11: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
+    _raw_s11: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
     freq: FrequencyRange = attr.ib()
     n_terms: int = attr.ib(converter=int)
     model_type: Modelable = attr.ib()
     complex_model_type: type[ComplexMagPhaseModel] | type[
         ComplexRealImagModel
     ] = attr.ib()
+    model_delay: tp.Time = attr.ib(0 * un.s)
 
     metadata: dict = attr.ib(default=attr.Factory(dict))
 
     @freq.validator
     def _fv(self, att, val):
-        if not val.n == len(self.raw_s11):
+        if val.n != len(self._raw_s11) and len(val._f) != len(self._raw_s11):
             raise ValueError(
-                f"len(freq) != len(raw_s11) [{len(val)},{len(self.raw_s11)}]"
+                f"len(freq) != len(raw_s11) [{len(val)},{len(self._raw_s11)}]"
             )
+
+    @property
+    def raw_s11(self):
+        """The raw S11 measurements at different frequencies."""
+        if len(self._raw_s11) == self.freq.n:
+            return self._raw_s11
+        else:
+            return self._raw_s11[self.freq.mask]
 
     @model_type.default
     def _mdl_type_default(self):
@@ -246,7 +255,7 @@ class S11Model:
         freq: tp.FreqType | None = None,
         n_terms: int | None = None,
         model_type: Modelable | None = None,
-    ):
+    ) -> ComplexMagPhaseModel | ComplexRealImagModel:
         """Generate a callable model for the S11.
 
         This should closely match :method:`s11_correction`.
@@ -280,12 +289,21 @@ class S11Model:
 
         cmodel = self.complex_model_type(emodel, emodel)
 
-        return cmodel.fit(ydata=raw_s11)
+        return cmodel.fit(ydata=raw_s11 * np.exp(1j * self.model_delay * freq))
 
     @cached_property
-    def s11_model(self) -> callable:
+    def _s11_model(self) -> callable:
         """The S11 model."""
         return self.get_s11_model(self.raw_s11)
+
+    def s11_model(self, freq: np.ndarray | tp.FreqType) -> np.ndarray:
+        """Compute the S11 at a specific set of frequencies."""
+        if hasattr(freq, "unit"):
+            freq = freq.to_value("MHz")
+
+        return self._s11_model(freq) * np.exp(
+            -1j * self.model_delay.to_value("microsecond") * freq
+        )
 
     def plot_residuals(
         self,
@@ -635,8 +653,12 @@ class LoadPlusSwitchS11:
 
     Parameters
     ----------
-    internal_switch : :class:`s11.InternalSwitch`
-        The internal switch state corresponding to the load.
+    standards
+        The internal VNA standards readings of the full system (input + internalswitch).
+    external_match
+        The reading of the VNA from the match standard as applied externally.
+    load_name
+        Optional name for the input device.
 
     Other Parameters
     ----------------
@@ -647,7 +669,6 @@ class LoadPlusSwitchS11:
     external_match: VNAReading = attr.ib(
         validator=attr.validators.instance_of(VNAReading)
     )
-    calkit: rc.Calkit = attr.ib(rc.AGILENT_85033E)
     load_name: str | None = attr.ib(None)
 
     @classmethod
@@ -684,10 +705,13 @@ class LoadPlusSwitchS11:
 
     def get_calibrated_s11(self):
         """The measured S11 of the load, calculated from raw internal standards."""
+        # TODO: It's not clear exactly why we use the completely ideal values for the
+        # OSL standards here, instead of their predicted values from physical parameters
+        # eg. calkit.match.intrinsic_gamma.
         return rc.de_embed(
-            self.calkit.open.intrinsic_gamma,
-            self.calkit.short.intrinsic_gamma,
-            0.0,  # TODO: self.calkit.match.intrinsic_gamma, ??
+            1,
+            -1,
+            0.0,
             self.standards.open.s11,
             self.standards.short.s11,
             self.standards.match.s11,
@@ -742,7 +766,8 @@ class LoadS11(S11Model):
             )
             s11s.append(gamma)
 
-        metadata = {"load_s11s": load_s11, "calkit": internal_switch.calkit}
+        metadata = {"load_s11s": load_s11}
+        metadata.update(getattr(internal_switch, "metadata", {}))
 
         if base is None:
             return cls(
@@ -769,8 +794,8 @@ class LoadS11(S11Model):
         load_name: str,
         internal_switch_kwargs=None,
         load_kw=None,
-        f_low: un.Quantity = 40 * un.MHz,
-        f_high: un.Quantity = np.inf * un.MHz,
+        f_low: tp.FreqType = 0 * un.MHz,
+        f_high: tp.FreqType = np.inf * un.MHz,
         **kwargs,
     ) -> LoadS11:
         """Instantiate from an :class:`edges_io.io.S11Dir` object."""
@@ -781,8 +806,6 @@ class LoadS11(S11Model):
         load_kw = load_kw or {}
         load_kw["f_low"] = f_low
         load_kw["f_high"] = f_high
-
-        load_kw["calkit"] = internal_switch_kwargs.get("calkit", None)
 
         internal_switch = InternalSwitch.from_io(
             s11_io.switching_state, **internal_switch_kwargs

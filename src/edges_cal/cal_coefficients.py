@@ -22,6 +22,7 @@ from functools import partial
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
+from types import SimpleNamespace
 from typing import Any, Callable, Sequence
 
 from . import __version__
@@ -1543,9 +1544,7 @@ class CalibrationObservation:
             Tsin=self.Tsin_poly,
             freq=self.freq,
             receiver_s11=self.receiver.s11_model,
-            internal_switch_s11=self.internal_switch.s11_model,
-            internal_switch_s12=self.internal_switch.s12_model,
-            internal_switch_s22=self.internal_switch.s22_model,
+            internal_switch=self.internal_switch,
             metadata=self.metadata,
         )
 
@@ -1636,9 +1635,7 @@ class Calibrator:
     _Tcos: Callable[[np.ndarray], np.ndarray] = attr.ib()
     _Tsin: Callable[[np.ndarray], np.ndarray] = attr.ib()
     _receiver_s11: Callable[[np.ndarray], np.ndarray] = attr.ib()
-    _internal_switch_s11: Callable[[np.ndarray], np.ndarray] = attr.ib()
-    _internal_switch_s12: Callable[[np.ndarray], np.ndarray] = attr.ib()
-    _internal_switch_s22: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    internal_switch = attr.ib()
     t_load: float = attr.ib(300)
     t_load_ns: float = attr.ib(350)
     metadata: dict = attr.ib(default=attr.Factory(dict))
@@ -1649,11 +1646,19 @@ class Calibrator:
             setattr(self, key, partial(self._call_func, key=key, norm=True))
         for key in [
             "receiver_s11",
-            "internal_switch_s11",
-            "internal_switch_s12",
-            "internal_switch_s22",
         ]:
             setattr(self, key, partial(self._call_func, key=key, norm=False))
+
+    @internal_switch.validator
+    def _isw_vld(self, att, val):
+        if isinstance(val, s11.InternalSwitch):
+            return
+
+        for key in ("s11", "s12", "s22"):
+            if not hasattr(val, f"{key}_model") or not callable(
+                getattr(val, f"{key}_model")
+            ):
+                raise ValueError(f"internal_switch must provide {key}_model method")
 
     def _call_func(self, freq: tp.FreqType | None = None, *, key=None, norm=False):
         if freq is None:
@@ -1707,9 +1712,7 @@ class Calibrator:
             Tsin=Tsin,
             freq=freq,
             receiver_s11=receiver_s11.s11_model,
-            internal_switch_s11=internal_switch.s11_model,
-            internal_switch_s12=internal_switch.s12_model,
-            internal_switch_s22=internal_switch.s22_model,
+            internal_switch=internal_switch,
             metadata=metadata,
         )
 
@@ -1739,23 +1742,17 @@ class Calibrator:
             _lna_s11_rl = Spline(freq.freq.to_value("MHz"), fl["lna_s11_real"][...])
             _lna_s11_im = Spline(freq.freq.to_value("MHz"), fl["lna_s11_imag"][...])
 
-            _intsw_s11_rl = Spline(
-                freq.freq.to_value("MHz"), fl["internal_switch_s11_real"][...]
-            )
-            _intsw_s11_im = Spline(
-                freq.freq.to_value("MHz"), fl["internal_switch_s11_imag"][...]
-            )
-            _intsw_s12_rl = Spline(
-                freq.freq.to_value("MHz"), fl["internal_switch_s12_real"][...]
-            )
-            _intsw_s12_im = Spline(
-                freq.freq.to_value("MHz"), fl["internal_switch_s12_imag"][...]
-            )
-            _intsw_s22_rl = Spline(
-                freq.freq.to_value("MHz"), fl["internal_switch_s22_real"][...]
-            )
-            _intsw_s22_im = Spline(
-                freq.freq.to_value("MHz"), fl["internal_switch_s22_imag"][...]
+            _intsw_s11_rl = Spline(freq.freq, fl["internal_switch_s11_real"][...])
+            _intsw_s11_im = Spline(freq.freq, fl["internal_switch_s11_imag"][...])
+            _intsw_s12_rl = Spline(freq.freq, fl["internal_switch_s12_real"][...])
+            _intsw_s12_im = Spline(freq.freq, fl["internal_switch_s12_imag"][...])
+            _intsw_s22_rl = Spline(freq.freq, fl["internal_switch_s22_real"][...])
+            _intsw_s22_im = Spline(freq.freq, fl["internal_switch_s22_imag"][...])
+
+            internal_switch = SimpleNamespace(
+                s11_model=lambda freq: _intsw_s11_rl(freq) + _intsw_s11_im(freq) * 1j,
+                s12_model=lambda freq: _intsw_s12_rl(freq) + _intsw_s12_im(freq) * 1j,
+                s22_model=lambda freq: _intsw_s22_rl(freq) + _intsw_s22_im(freq) * 1j,
             )
 
         return cls(
@@ -1766,13 +1763,11 @@ class Calibrator:
             Tsin=Tsin_poly,
             freq=freq,
             receiver_s11=lambda x: _lna_s11_rl(x) + 1j * _lna_s11_im(x),
-            internal_switch_s11=lambda x: _intsw_s11_rl(x) + 1j * _intsw_s11_im(x),
-            internal_switch_s12=lambda x: _intsw_s12_rl(x) + 1j * _intsw_s12_im(x),
-            internal_switch_s22=lambda x: _intsw_s22_rl(x) + 1j * _intsw_s22_im(x),
+            internal_switch=internal_switch,
             t_load=t_load,
             t_load_ns=t_load_ns,
-            c_terms=cterms,
-            w_terms=wterms,
+            cterms=cterms,
+            wterms=wterms,
             metadata=metadata,
         )
 
