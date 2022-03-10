@@ -500,7 +500,9 @@ class InternalSwitch:
     def _mdl_default(self):
         return Polynomial(
             n_terms=7,
-            transform=UnitTransform(range=(self.freq.min.value, self.freq.max.value)),
+            transform=UnitTransform(
+                range=(self.freq.min.to_value("MHz"), self.freq.max.to_value("MHz"))
+            ),
         )
 
     @classmethod
