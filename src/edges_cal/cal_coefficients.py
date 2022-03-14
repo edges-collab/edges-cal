@@ -2455,8 +2455,7 @@ class CalibrationObservation:
         :class:`CalibrationObservation`
             A new observation object with the injected models.
         """
-        new = copy(self)
-        new.invalidate_cache()
+        new = self.clone()
         new._injected_lna_s11 = lna_s11
         new._injected_source_s11s = source_s11s
         new._injected_c1 = c1
