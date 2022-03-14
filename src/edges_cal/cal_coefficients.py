@@ -14,6 +14,7 @@ import warnings
 import yaml
 from abc import ABCMeta, abstractmethod
 from astropy.convolution import Gaussian1DKernel, convolve
+from datetime import datetime, timedelta
 from edges_io import io
 from edges_io.logging import logger
 from functools import lru_cache
@@ -570,6 +571,9 @@ class LoadSpectrum:
     freq_bin_size
         The size of the frequency bins, in units of their raw size (i.e. default of
         one is to not bin in frequency).
+    temperature_range
+        If set, mask out spectra taken when the thermistor temp is outside the range
+        (i.e. don't include it in the average /variance).
     """
 
     spec_obj: tuple[io.Spectrum] = attr.ib(converter=tuple)
@@ -586,6 +590,7 @@ class LoadSpectrum:
     t_load: float = attr.ib(default=300.0)
     t_load_ns: float = attr.ib(default=400.0)
     freq_bin_size: int = attr.ib(default=1)
+    temperature_range: float | tuple[float, float] | None = attr.ib(None)
 
     @property
     def load_name(self) -> str:
@@ -766,11 +771,48 @@ class LoadSpectrum:
         means = {}
         variances = {}
 
+        if self.temperature_range is not None:
+            # Cut on temperature.
+            if not hasattr(self.temperature_range, "__len__"):
+                median = np.median(self.thermistor_temp)
+                temp_range = (
+                    median - self.temperature_range / 2,
+                    median + self.temperature_range / 2,
+                )
+            else:
+                temp_range = self.temperature_range
+
+            temp_mask = np.zeros(spectra["Q"].shape[1], dtype=bool)
+            for i, c in enumerate(self.get_thermistor_indices()):
+                print(i, c, self.thermistor_temp[c] if not np.isnan(c) else "nan")
+                if np.isnan(c):
+                    temp_mask[i] = False
+                else:
+                    temp_mask[i] = (self.thermistor_temp[c] >= temp_range[0]) & (
+                        self.thermistor_temp[c] < temp_range[1]
+                    )
+
+            if not np.any(temp_mask):
+                raise RuntimeError(
+                    "The temperature range has masked all spectra!"
+                    f"Temperature Range Desired: {temp_range}.\n"
+                    "Temperature Range of Data: "
+                    f"{(self.thermistor_temp.min(), self.thermistor_temp.max())}\n"
+                    f"Time Range of Spectra: "
+                    f"{(self.spectrum_timestamps[0], self.spectrum_timestamps[-1])}\n"
+                    f"Time Range of Thermistor: "
+                    f"{(self.thermistor_timestamps[0], self.thermistor_timestamps[-1])}"
+                )
+
+        else:
+            temp_mask = np.ones(spectra["Q"].shape[1], dtype=bool)
+
         for key, spec in spectra.items():
             # Weird thing where there are zeros in the spectra.
             spec[spec == 0] = np.nan
 
             spec = tools.bin_array(spec.T, size=self.freq_bin_size).T
+            spec[:, ~temp_mask] = np.nan
 
             mean = np.nanmean(spec, axis=1)
             var = np.nanvar(spec, axis=1)
@@ -806,6 +848,44 @@ class LoadSpectrum:
             fl.attrs["n_integrations"] = n_intg
 
         return means, variances, n_intg
+
+    @cached_property
+    def spectrum_ancillary(self) -> dict[str, np.ndarray]:
+        """Ancillary data from the spectrum measurements."""
+        fname = self._get_integrated_filename().with_suffix(".anc.h5")
+        if fname.exists():
+            logger.info("Reading in ancillary spectrum data from .anc.h5 file...")
+            out = {}
+            with h5py.File(fname) as fl:
+                for key in fl.keys():
+                    out[key] = fl[key][...]
+
+        else:
+            anc = [spec_obj.data["time_ancillary"] for spec_obj in self.spec_obj]
+
+            n_times = sum(len(a["times"]) for a in anc)
+
+            index_start_spectra = int((self.ignore_times_percent / 100) * n_times)
+
+            out = {
+                key: np.hstack(tuple(a[key].T for a in anc)).T[index_start_spectra:]
+                for key in anc[0]
+            }
+
+            with h5py.File(fname, "w") as fl:
+                logger.info(f"Saving spectrum ancillary to cache at {fname}")
+                for key, val in out.items():
+                    fl[key] = val
+
+        return out
+
+    @cached_property
+    def spectrum_timestamps(self) -> list[datetime]:
+        """Timestamps from each 3-position switch measurement."""
+        return [
+            datetime.strptime(d, "%Y:%j:%H:%M:%S")
+            for d in self.spectrum_ancillary["times"].astype(str)
+        ]
 
     def get_spectra(self) -> dict:
         """Read all spectra and remove RFI.
@@ -873,12 +953,55 @@ class LoadSpectrum:
 
         return out
 
+    def get_thermistor_indices(self) -> list[int | np.nan]:
+        """Get the index of the closest therm measurement for each spectrum."""
+        closest = []
+        indx = 0
+
+        deltat = self.thermistor_timestamps[1] - self.thermistor_timestamps[0]
+
+        for d in self.spectrum_timestamps:
+            if indx >= len(self.thermistor_timestamps):
+                closest.append(np.nan)
+                continue
+
+            for i, td in enumerate(self.thermistor_timestamps[indx:], start=indx):
+
+                if d - td > timedelta(0) and d - td <= deltat:
+                    closest.append(i)
+                    break
+                if d - td > timedelta(0):
+                    indx += 1
+
+            else:
+                closest.append(np.nan)
+
+        return closest
+
     @cached_property
     def thermistor(self) -> np.ndarray:
         """The thermistor readings."""
         ary = self.resistance_obj.read()[0]
 
         return ary[int((self.ignore_times_percent / 100) * len(ary)) :]
+
+    @cached_property
+    def thermistor_timestamps(self) -> list[datetime]:
+        """Timestamps of all the thermistor measurements."""
+        if "time" in self.thermistor.dtype.names:
+            times = self.thermistor["time"]
+            dates = self.thermistor["date"]
+            times = [
+                datetime.strptime(d + ":" + t, "%m/%d/%Y:%H:%M:%S")
+                for d, t in zip(dates.astype(str), times.astype(str))
+            ]
+        else:
+            times = [
+                datetime.strptime(d.split(".")[0], "%m/%d/%Y %H:%M:%S")
+                for d in self.thermistor["start_time"].astype(str)
+            ]
+
+        return times
 
     @cached_property
     def thermistor_temp(self):
@@ -1444,12 +1567,12 @@ class CalibrationObservation:
     def internal_switch(self) -> s11.InternalSwitch:
         """The internal switch measurements."""
         kwargs = {
-            **self.internal_switch_kwargs,
             **{
-                "resistance": self.io.definition["measurements"]["resistance_m"][
-                    self.io.s11.switching_state.run_num
-                ]
+                "resistance": self.io.definition.get("measurements", {})
+                .get("resistance_m", {})
+                .get(self.io.s11.switching_state.run_num, 50.0)
             },
+            **self.internal_switch_kwargs,
         }
         return s11.InternalSwitch(data=self.io.s11.switching_state, **kwargs)
 
@@ -1561,9 +1684,9 @@ class CalibrationObservation:
             f_low=self.f_low,
             f_high=self.f_high,
             resistance=self.resistance_f
-            or self.io.definition["measurements"]["resistance_f"][
-                self.io.s11.receiver_reading.run_num
-            ],
+            or self.io.definition.get("measurements", {})
+            .get("resistance_f", {})
+            .get(self.io.s11.receiver_reading.run_num, 50),
             **{**self.s11_kwargs, **refl},
         )
 
@@ -1996,6 +2119,10 @@ class CalibrationObservation:
         ax=None,
         xlabel=True,
         ylabel=True,
+        label: str = "",
+        as_residuals: bool = False,
+        load_in_title: bool = False,
+        rms_in_label: bool = True,
     ):
         """
         Make a plot of calibrated temperature for a given source.
@@ -2038,23 +2165,40 @@ class CalibrationObservation:
 
         rms = np.sqrt(np.mean((freq_ave_cal - np.mean(freq_ave_cal)) ** 2))
 
-        ax.plot(
-            self.freq.freq,
-            freq_ave_cal,
-            label=f"Calibrated {load.spectrum.load_name} [RMS = {rms:.3f}]",
-        )
-
         temp_ave = self.source_thermistor_temps.get(load.load_name, load.temp_ave)
 
-        if not hasattr(temp_ave, "__len__"):
-            ax.axhline(temp_ave, color="C2", label="Average thermistor temp")
+        if as_residuals:
+            freq_ave_cal -= temp_ave
+
+        if load_in_title:
+            ax.set_title(load.spectrum.load_name)
+        elif label:
+            label += f" ({load.spectrum.load_name})"
         else:
-            ax.plot(
-                self.freq.freq,
-                temp_ave,
-                color="C2",
-                label="Average thermistor temp",
-            )
+            label = load.spectrum.load_name
+
+        if rms_in_label:
+            if label:
+                label += f" [RMS={rms:.3f}]"
+            else:
+                label = f"RMS={rms:.3f}"
+
+        ax.plot(self.freq.freq, freq_ave_cal, label=label)
+
+        if not as_residuals:
+            if not hasattr(temp_ave, "__len__"):
+                ax.axhline(
+                    temp_ave,
+                    color="C2",
+                    label="Average thermistor temp" if label else None,
+                )
+            else:
+                ax.plot(
+                    self.freq.freq,
+                    temp_ave,
+                    color="C2",
+                    label="Average thermistor temp",
+                )
 
         ax.set_ylim([np.nanmin(freq_ave_cal), np.nanmax(freq_ave_cal)])
         if xlabel:
@@ -2095,7 +2239,7 @@ class CalibrationObservation:
             out[name] = np.sqrt(np.nanmean(res ** 2))
         return out
 
-    def plot_calibrated_temps(self, bins=64, fig=None, ax=None):
+    def plot_calibrated_temps(self, bins=64, fig=None, ax=None, **kwargs):
         """
         Plot all calibrated temperatures in a single figure.
 
@@ -2125,6 +2269,7 @@ class CalibrationObservation:
                 fig=fig,
                 ax=ax[i],
                 xlabel=i == (len(self._sources) - 1),
+                **kwargs,
             )
 
         fig.suptitle("Calibrated Temperatures for Calibration Sources", fontsize=15)
