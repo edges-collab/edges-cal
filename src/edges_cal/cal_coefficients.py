@@ -14,7 +14,6 @@ import warnings
 import yaml
 from abc import ABCMeta, abstractmethod
 from astropy.convolution import Gaussian1DKernel, convolve
-from copy import copy
 from datetime import datetime, timedelta
 from edges_io import io
 from edges_io.logging import logger
@@ -785,6 +784,7 @@ class LoadSpectrum:
 
             temp_mask = np.zeros(spectra["Q"].shape[1], dtype=bool)
             for i, c in enumerate(self.get_thermistor_indices()):
+                print(i, c, self.thermistor_temp[c] if not np.isnan(c) else "nan")
                 if np.isnan(c):
                     temp_mask[i] = False
                 else:
