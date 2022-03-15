@@ -3,6 +3,7 @@
 import pytest
 
 import h5py
+import hickle
 import numpy as np
 from astropy import units as u
 from edges_io import io
@@ -142,6 +143,9 @@ def make_comparison_data(obspath):
 
         for src, load in calobs.loads.items():
             fl[f"{src}_s11"] = load.s11_model(f)
+
+    for src, load in calobs.loads.items():
+        hickle.dump(load.spectrum, f"data/2015-09-data/spectra/{src}.h5")
 
 
 if __name__ == "__main__":
