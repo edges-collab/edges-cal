@@ -1342,6 +1342,10 @@ class Calibrator:
         ]:
             setattr(self, key, partial(self._call_func, key=key, norm=False))
 
+    def clone(self, **kwargs):
+        """Clone the instance with new parameters."""
+        return attr.evolve(self, **kwargs)
+
     @internal_switch.validator
     def _isw_vld(self, att, val):
         if isinstance(val, s11.InternalSwitch):
