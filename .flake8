@@ -21,6 +21,7 @@ rst-roles =
 exclude =
     devel/*
 per-file-ignores =
+    src/edges_cal/spectra.py:N802
     src/edges_cal/cal_coefficients.py:N802
     tests/*:D
     src/edges_cal/__init__.py:F401

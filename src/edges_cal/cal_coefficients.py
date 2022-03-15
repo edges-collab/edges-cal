@@ -9,14 +9,12 @@ from __future__ import annotations
 import attr
 import h5py
 import hickle
-import inspect
 import numpy as np
 import warnings
 from astropy import units as un
 from astropy.convolution import Gaussian1DKernel, convolve
 from astropy.io.misc import yaml as ayaml
 from edges_io import h5, io
-from edges_io import utils as iou
 from edges_io.logging import logger
 from functools import partial
 from matplotlib import pyplot as plt
@@ -25,325 +23,14 @@ from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 from types import SimpleNamespace
 from typing import Any, Callable, Sequence
 
-from . import __version__
 from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
 from . import s11
 from . import types as tp
-from . import xrfi
 from .cached_property import cached_property, safe_property
-from .config import config
+from .spectra import LoadSpectrum
 from .tools import FrequencyRange, bin_array, get_data_path
-
-
-@h5.hickleable()
-@attr.s(kw_only=True, frozen=True)
-class LoadSpectrum:
-    """A class representing a measured spectrum from some Load averaged over time.
-
-    Parameters
-    ----------
-    freq
-        The frequencies associated with the spectrum.
-    q
-        The measured power-ratios of the three-position switch averaged over time.
-    variance
-        The variance of *a single* time-integration as a function of frequency.
-    n_integrations
-        The number of integrations averaged over.
-    temp_ave
-        The average measured physical temperature of the load while taking spectra.
-    t_load_ns
-        The "assumed" temperature of the load + noise source
-    t_load
-        The "assumed" temperature of the load
-    _metadata
-        A dictionary of metadata items associated with the spectrum.
-    """
-
-    freq: FrequencyRange = attr.ib()
-    q: np.ndarray = attr.ib(
-        eq=attr.cmp_using(eq=partial(np.array_equal, equal_nan=True))
-    )
-    variance: np.ndarray | None = attr.ib(
-        eq=attr.cmp_using(eq=partial(np.array_equal, equal_nan=True))
-    )
-    n_integrations: int = attr.ib()
-    temp_ave: float = attr.ib()
-    t_load_ns: float = attr.ib(300, 0)
-    t_load: float = attr.ib(400.0)
-    _metadata: dict[str, Any] = attr.ib(default=attr.Factory(dict))
-
-    @property
-    def metadata(self) -> dict[str, Any]:
-        """Metadata associated with the object."""
-        return {
-            **self._metadata,
-            **{
-                "n_integrations": self.n_integrations,
-                "f_low": self.freq.min,
-                "f_high": self.freq.max,
-            },
-        }
-
-    @classmethod
-    def from_h5(cls, path):
-        """Read the contents of a .h5 file into a LoadSpectrum."""
-
-        def read_group(grp):
-            return cls(
-                freq=FrequencyRange(grp[...] * un.MHz),
-                q=grp["Q_mean"][...],
-                variance=grp["Q_var"],
-                n_integrations=grp["n_integrations"],
-                temp_ave=grp["temp_ave"],
-                t_load_ns=grp["t_load_ns"],
-                t_load=grp["t_load"],
-                metadata=dict(grp.attrs),
-            )
-
-        if isinstance(path, (str, Path)):
-            with h5py.File(path, "r") as fl:
-                return read_group(fl)
-        else:
-            return read_group(path)
-
-    @classmethod
-    def from_io(
-        cls,
-        io_obs: io.CalibrationObservation,
-        load_name: str,
-        f_low=40.0 * un.MHz,
-        f_high=np.inf * un.MHz,
-        freq_bin_size=1,
-        ignore_times_percent: float = 5.0,
-        rfi_threshold: float = 6.0,
-        rfi_kernel_width_freq: int = 16,
-        **kwargs,
-    ):
-        """Instantiate the class from a given load name and directory.
-
-        Parameters
-        ----------
-        load_name : str
-            The load name (one of 'ambient', 'hot_load', 'open' or 'short').
-        direc : str or Path
-            The top-level calibration observation directory.
-        run_num : int
-            The run number to use for the spectra.
-        filetype : str
-            The filetype to look for (acq or h5).
-        kwargs :
-            All other arguments to :class:`LoadSpectrum`.
-
-        Returns
-        -------
-        :class:`LoadSpectrum`.
-        """
-        spec = getattr(io_obs.spectra, load_name)
-        res = getattr(io_obs.resistance, load_name)
-
-        freq = FrequencyRange.from_edges(
-            f_low=f_low, f_high=f_high, bin_size=freq_bin_size
-        )
-
-        sig = inspect.signature(cls.from_io)
-        lc = locals()
-        defining_dict = {
-            p: lc[p] for p in sig.parameters if p not in ["cls", "cache_dir"]
-        }
-
-        hsh = iou.stable_hash(
-            tuple(defining_dict.values()) + (__version__.split(".")[0],)
-        )
-
-        means, variances, n_integ = cls._ave_and_var_spec(
-            spec_obj=spec,
-            load_name=load_name,
-            hsh=hsh,
-            freq=freq,
-            ignore_times_percent=ignore_times_percent,
-            freq_bin_size=freq_bin_size,
-            rfi_threshold=rfi_threshold,
-            rfi_kernel_width_freq=rfi_kernel_width_freq,
-        )
-
-        temperature = cls.get_thermistor_temp(res)
-        temperature = temperature[
-            int((ignore_times_percent / 100) * len(temperature)) :
-        ]
-
-        return cls(
-            freq=freq,
-            q=means["Q"],
-            variance=variances["Q"],
-            n_integrations=n_integ,
-            temp_ave=np.nanmean(temperature),
-            metadata={
-                "spectra_path": spec[0].path,
-                "resistance_path": res.path,
-                "freq_bin_size": freq_bin_size,
-                "ignore_times_percent": ignore_times_percent,
-                "rfi_threshold": rfi_threshold,
-                "rfi_kernel_width_freq": rfi_kernel_width_freq,
-                "hash": hsh,
-            },
-            **kwargs,
-        )
-
-    @property
-    def averaged_Q(self) -> np.ndarray:
-        """Ratio of powers averaged over time.
-
-        Notes
-        -----
-        The formula is
-
-        .. math:: Q = (P_source - P_load)/(P_noise - P_load)
-        """
-        return self.q
-
-    @property
-    def variance_Q(self) -> np.ndarray:
-        """Variance of Q across time (see averaged_Q)."""
-        return self.variance
-
-    @property
-    def averaged_spectrum(self) -> np.ndarray:
-        """T* = T_noise * Q  + T_load."""
-        return self.averaged_Q * self.t_load_ns + self.t_load
-
-    @property
-    def variance_spectrum(self) -> np.ndarray:
-        """Variance of uncalibrated spectrum across time (see averaged_spectrum)."""
-        return self.variance_Q * self.t_load_ns ** 2
-
-    @classmethod
-    def _ave_and_var_spec(
-        cls,
-        spec_obj,
-        load_name,
-        hsh,
-        freq,
-        ignore_times_percent,
-        freq_bin_size,
-        rfi_threshold,
-        rfi_kernel_width_freq,
-    ) -> tuple[dict, dict, int]:
-        """Get the mean and variance of the spectra."""
-        kinds = ["p0", "p1", "p2", "Q"]
-
-        cache_dir = config["cal"]["cache-dir"]
-        if cache_dir is not None:
-            cache_dir = Path(cache_dir)
-            fname = cache_dir / f"{load_name}_{hsh}.h5"
-
-            if fname.exists():
-                logger.info(
-                    f"Reading in previously-created integrated {load_name} spectra..."
-                )
-                means = {}
-                variances = {}
-                n_integrations = 0
-                with h5py.File(fname, "r") as fl:
-                    for kind in kinds:
-                        means[kind] = fl[kind + "_mean"][...]
-                        variances[kind] = fl[kind + "_var"][...]
-                        n_integrations = fl.attrs.get("n_integrations", 0)
-                return means, variances, n_integrations
-
-        logger.info(f"Reducing {load_name} spectra...")
-        spectra = cls._read_spectrum(
-            spec_obj=spec_obj, freq=freq, ignore_times_percent=ignore_times_percent
-        )
-
-        means = {}
-        variances = {}
-
-        for key, spec in spectra.items():
-            # Weird thing where there are zeros in the spectra.
-            spec[spec == 0] = np.nan
-
-            spec = bin_array(spec.T, size=freq_bin_size).T
-
-            mean = np.nanmean(spec, axis=1)
-            var = np.nanvar(spec, axis=1)
-            n_intg = spec.shape[1]
-
-            nsample = np.sum(~np.isnan(spec), axis=1)
-
-            width = max(1, rfi_kernel_width_freq // freq_bin_size)
-
-            varfilt = xrfi.flagged_filter(var, size=2 * width + 1)
-            resid = mean - xrfi.flagged_filter(mean, size=2 * width + 1)
-            flags = np.logical_or(
-                resid > rfi_threshold * np.sqrt(varfilt / nsample),
-                var - varfilt
-                > rfi_threshold * np.sqrt(2 * varfilt ** 2 / (nsample - 1)),
-            )
-
-            mean[flags] = np.nan
-            var[flags] = np.nan
-
-            means[key] = mean
-            variances[key] = var
-
-        if cache_dir is not None:
-            if not cache_dir.exists():
-                cache_dir.mkdir()
-
-            with h5py.File(fname, "w") as fl:
-                logger.info(f"Saving reduced spectra to cache at {fname}")
-                for kind in kinds:
-                    fl[kind + "_mean"] = means[kind]
-                    fl[kind + "_var"] = variances[kind]
-                fl.attrs["n_integrations"] = n_intg
-
-        return means, variances, n_intg
-
-    @classmethod
-    def _read_spectrum(cls, spec_obj, freq, ignore_times_percent) -> dict:
-        """
-        Read the contents of the spectrum files into memory.
-
-        Removes a starting percentage of times, and masks out certain frequencies.
-
-        Returns
-        -------
-        dict :
-            A dictionary of the contents of the file. Usually p0, p1, p2 (un-normalised
-            powers of source, load, and load+noise respectively), and ant_temp (the
-            uncalibrated, but normalised antenna temperature).
-        """
-        data = [o.data for o in spec_obj]
-
-        n_times = sum(len(d["time_ancillary"]["times"]) for d in data)
-        nfreq = np.sum(freq.mask)
-        out = {
-            "p0": np.empty((nfreq, n_times)),
-            "p1": np.empty((nfreq, n_times)),
-            "p2": np.empty((nfreq, n_times)),
-            "Q": np.empty((nfreq, n_times)),
-        }
-
-        index_start_spectra = int((ignore_times_percent / 100) * n_times)
-        for key, val in out.items():
-            nn = 0
-            for d in data:
-                n = len(d["time_ancillary"]["times"])
-                val[:, nn : (nn + n)] = d["spectra"][key][freq.mask]
-                nn += n
-
-            out[key] = val[:, index_start_spectra:]
-
-        return out
-
-    @classmethod
-    def get_thermistor_temp(cls, resistance_obj: io.Resistance):
-        """Obtain the thermistor temp from a resistance object."""
-        ary = resistance_obj.read()[0]
-        return rcf.temperature_thermistor(ary["load_resistance"])
 
 
 @h5.hickleable()
@@ -1315,6 +1002,10 @@ class CalibrationObservation:
         ax=None,
         xlabel=True,
         ylabel=True,
+        label: str = "",
+        as_residuals: bool = False,
+        load_in_title: bool = False,
+        rms_in_label: bool = True,
     ):
         """
         Make a plot of calibrated temperature for a given source.
@@ -1408,7 +1099,7 @@ class CalibrationObservation:
             out[name] = np.sqrt(np.nanmean(res ** 2))
         return out
 
-    def plot_calibrated_temps(self, bins=64, fig=None, ax=None):
+    def plot_calibrated_temps(self, bins=64, fig=None, ax=None, **kwargs):
         """
         Plot all calibrated temperatures in a single figure.
 

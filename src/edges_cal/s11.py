@@ -38,10 +38,10 @@ from .modelling import (
 from .tools import FrequencyRange, vld_unit
 
 
-def _s1p_converter(s1p: tp.PathLike | io.S1P) -> io.S1P:
+def _s1p_converter(s1p: tp.PathLike | io.S1P, check: bool = False) -> io.S1P:
     try:
         s1p = Path(s1p)
-        return io.S1P(s1p, check=False)
+        return io.S1P(s1p, check=check)
     except TypeError as e:
         if isinstance(s1p, io.S1P):
             return s1p
@@ -209,7 +209,7 @@ class S11Model:
     ] = attr.ib()
     model_delay: tp.Time = attr.ib(0 * un.s)
 
-    metadata: dict = attr.ib(default=attr.Factory(dict))
+    metadata: dict = attr.ib(default=attr.Factory(dict), eq=False)
 
     @freq.validator
     def _fv(self, att, val):
@@ -240,7 +240,7 @@ class S11Model:
 
     @n_terms.validator
     def _nt_vld(self, att, val):
-        if self.model_type == Fourier and val % 2:
+        if get_mdl(self.model_type) == Fourier and not val % 2:
             raise ValueError(
                 f"n_terms must be odd for Fourier models. For {self} got "
                 f"n_terms={val}."
@@ -466,7 +466,7 @@ class Receiver(S11Model):
         kwargs = {
             k.name: getattr(self, k.name)
             for k in fields
-            if k.name not in ("raw_s11", "freq", "metadata")
+            if k.name not in ("_raw_s11", "freq", "metadata")
         }
 
         return self.from_io(

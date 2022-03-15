@@ -206,9 +206,15 @@ def test_calibration_isw(calobs):
     clf = calobs.to_calibrator()
 
     f = calobs.freq.freq.to_value("MHz")
-    assert np.allclose(clf.internal_switch_s11(), calobs.internal_switch.s11_model(f))
-    assert np.allclose(clf.internal_switch_s12(), calobs.internal_switch.s12_model(f))
-    assert np.allclose(clf.internal_switch_s22(), calobs.internal_switch.s22_model(f))
+    assert np.allclose(
+        clf.internal_switch.s11_model(f), calobs.internal_switch.s11_model(f)
+    )
+    assert np.allclose(
+        clf.internal_switch.s12_model(f), calobs.internal_switch.s12_model(f)
+    )
+    assert np.allclose(
+        clf.internal_switch.s22_model(f), calobs.internal_switch.s22_model(f)
+    )
 
     cq = clf.calibrate_Q(
         freq=calobs.freq.freq,

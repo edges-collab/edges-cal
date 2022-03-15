@@ -199,7 +199,7 @@ def test_even_nterms_s11(cal_data):
 def test_s1p_converter(io_obs):
     s1p = io_obs.s11.ambient[0].match
 
-    assert s11._s1p_converter(s1p.path) == s1p
+    assert s11._s1p_converter(s1p.path, check=True) == s1p
     assert s11._s1p_converter(s1p) == s1p
 
     with pytest.raises(TypeError, match="s1p must be a path"):

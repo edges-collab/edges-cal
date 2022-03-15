@@ -1,6 +1,8 @@
 """
 Test spectrum reading.
 """
+import pytest
+
 import numpy as np
 from astropy import units as u
 from edges_io.io import CalibrationObservation
@@ -42,3 +44,13 @@ def test_equality(io_obs: CalibrationObservation):
         io_obs, "ambient", f_high=100 * u.MHz, f_low=60 * u.MHz
     )
     assert spec3.metadata["hash"] != spec2.metadata["hash"]
+
+
+def test_temperature_range(io_obs):
+    with pytest.raises(RuntimeError, match="The temperature range has masked"):
+        # Fails only because our test data is awful. spectra and thermistor measurements
+        # don't overlap.
+        LoadSpectrum.from_io(io_obs, "ambient", temperature_range=0.5)
+
+    with pytest.raises(RuntimeError, match="The temperature range has masked"):
+        LoadSpectrum.from_io(io_obs, "ambient", temperature_range=(20, 40))
