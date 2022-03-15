@@ -644,7 +644,10 @@ class CalibrationObservation:
         """
         reflection_kwargs = reflection_kwargs or {}
         spec_kwargs = spec_kwargs or {}
+
         spec_kwargs["freq_bin_size"] = self.freq.bin_size
+        spec_kwargs["t_load"] = self.open.spectrum.t_load
+        spec_kwargs["t_load_ns"] = self.open.spectrum.t_load_ns
 
         return Load.from_io(
             io_obj=io_obj,
