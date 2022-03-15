@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import attr
 import h5py
+import hickle
 import inspect
 import numpy as np
 from astropy import units as un
@@ -16,25 +17,9 @@ from typing import Any, Sequence
 
 from . import __version__
 from . import receiver_calibration_func as rcf
-from . import tools
-from . import types as tp
-from . import xrfi
+from . import tools, xrfi
 from .config import config
 from .tools import FrequencyRange
-
-
-def read_averaged_spectrum(fname: tp.PathLke):
-    """Read averaged spectrum data from a .h5 file."""
-    kinds = ["p0", "p1", "p2", "Q"]
-    means = {}
-    variances = {}
-    n_integrations = 0
-    with h5py.File(fname, "r") as fl:
-        for kind in kinds:
-            means[kind] = fl[kind + "_mean"][...]
-            variances[kind] = fl[kind + "_var"][...]
-            n_integrations = fl.attrs.get("n_integrations", 0)
-    return means, variances, n_integrations
 
 
 def read_spectrum(
@@ -190,17 +175,6 @@ def get_ave_and_var_spec(
     thermistor,
 ) -> tuple[dict, dict, int]:
     """Get the mean and variance of the spectra."""
-    cache_dir = config["cal"]["cache-dir"]
-    if cache_dir is not None:
-        cache_dir = Path(cache_dir)
-        fname = cache_dir / f"{load_name}_{hsh}.h5"
-
-        if fname.exists():
-            logger.info(
-                f"Reading in previously-created integrated {load_name} spectra..."
-            )
-            return read_averaged_spectrum(fname)
-
     logger.info(f"Reducing {load_name} spectra...")
     spectra = read_spectrum(
         spec_obj=spec_obj, freq=freq, ignore_times_percent=ignore_times_percent
@@ -278,17 +252,6 @@ def get_ave_and_var_spec(
         means[key] = mean
         variances[key] = var
 
-    if cache_dir is not None:
-        if not cache_dir.exists():
-            cache_dir.mkdir()
-
-        with h5py.File(fname, "w") as fl:
-            logger.info(f"Saving reduced spectra to cache at {fname}")
-            for kind in ["p0", "p1", "p2", "Q"]:
-                fl[kind + "_mean"] = means[kind]
-                fl[kind + "_var"] = variances[kind]
-            fl.attrs["n_integrations"] = n_intg
-
     return means, variances, n_intg
 
 
@@ -348,7 +311,7 @@ class LoadSpectrum:
 
         def read_group(grp):
             return cls(
-                freq=FrequencyRange(grp[...] * un.MHz),
+                freq=FrequencyRange(grp["frequency"][...] * un.MHz),
                 q=grp["Q_mean"][...],
                 variance=grp["Q_var"],
                 n_integrations=grp["n_integrations"],
@@ -412,6 +375,17 @@ class LoadSpectrum:
             tuple(defining_dict.values()) + (__version__.split(".")[0],)
         )
 
+        cache_dir = config["cal"]["cache-dir"]
+        if cache_dir is not None:
+            cache_dir = Path(cache_dir)
+            fname = cache_dir / f"{load_name}_{hsh}.h5"
+
+            if fname.exists():
+                logger.info(
+                    f"Reading in previously-created integrated {load_name} spectra..."
+                )
+                return hickle.load(fname)
+
         thermistor = ThermistorReadings.from_io(
             res, ignore_times_percent=ignore_times_percent
         )
@@ -430,7 +404,7 @@ class LoadSpectrum:
 
         temperature = thermistor.get_physical_temperature()
 
-        return cls(
+        out = cls(
             freq=freq,
             q=means["Q"],
             variance=variances["Q"],
@@ -448,6 +422,13 @@ class LoadSpectrum:
             },
             **kwargs,
         )
+
+        if cache_dir is not None:
+            if not cache_dir.exists():
+                cache_dir.makedirs()
+            hickle.dump(out, fname)
+
+        return out
 
     @property
     def averaged_Q(self) -> np.ndarray:
