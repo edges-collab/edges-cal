@@ -10,7 +10,6 @@ from edges_io import io
 
 from edges_cal import s11
 from edges_cal.cal_coefficients import CalibrationObservation, HotLoadCorrection, Load
-from edges_cal.spectra import LoadSpectrum
 
 
 @pytest.fixture(scope="module")
@@ -28,7 +27,12 @@ def calobs_2015(data, s11dir):
     f_low = 50 * u.MHz
     f_high = 100 * u.MHz
 
-    receiver = s11.Receiver.from_io(s11dir.receiver_reading, resistance=49.98 * u.ohm)
+    receiver = s11.Receiver.from_io(
+        s11dir.receiver_reading,
+        resistance=49.98 * u.ohm,
+        n_terms=11,
+        model_type="polynomial",
+    )
 
     refl = {}
     for src in ["ambient", "hot_load", "open", "short"]:
@@ -42,7 +46,7 @@ def calobs_2015(data, s11dir):
 
     spec = {}
     for src in refl:
-        spec[src] = LoadSpectrum.from_h5(data / f"spectra/{src}.h5")
+        spec[src] = hickle.load(data / f"spectra/{src}.h5")
 
     loads = {}
     for src in refl:
@@ -63,17 +67,22 @@ def calobs_2015(data, s11dir):
 def test_cal_params(data, calobs_2015, p):
     with h5py.File(data / "reference.h5", "r") as fl:
         f = fl["freq"][...]
-        np.testing.assert_allclose(getattr(calobs_2015, p)(f), fl["c1"][...])
+        np.testing.assert_allclose(
+            getattr(calobs_2015, p)(f * u.MHz), fl[p.lower()][...], rtol=1e-4
+        )
 
 
 def test_receiver(data, calobs_2015):
     with h5py.File(data / "reference.h5", "r") as fl:
         f = fl["freq"][...]
         np.testing.assert_allclose(
-            calobs_2015.receiver.raw_s11, fl["receiver_raw"][...]
+            calobs_2015.receiver.raw_s11, fl["receiver_raw"][...], atol=1e-8, rtol=1e-5
         )
         np.testing.assert_allclose(
-            calobs_2015.receiver.s11_model(f), fl["receiver_modeled"][...]
+            calobs_2015.receiver.s11_model(f),
+            fl["receiver_modeled"][...],
+            atol=1e-8,
+            rtol=1e-5,
         )
 
 
@@ -82,11 +91,16 @@ def test_internal_switch(data, calobs_2015, p):
     with h5py.File(data / "reference.h5", "r") as fl:
         f = fl["freq"][...]
         np.testing.assert_allclose(
-            getattr(calobs_2015.internal_switch, f"{p}_data"), fl[f"isw_raw_{p}"][...]
+            getattr(calobs_2015.internal_switch, f"{p}_data"),
+            fl[f"isw_raw_{p}"][...],
+            atol=1e-8,
+            rtol=1e-5,
         )
         np.testing.assert_allclose(
-            getattr(calobs_2015.internal_switch, f"{p}_model")(f.to_value("MHz")),
+            getattr(calobs_2015.internal_switch, f"{p}_model")(f),
             fl[f"isw_mdl_{p}"][...],
+            atol=1e-8,
+            rtol=1e-5,
         )
 
 
@@ -95,7 +109,10 @@ def test_load_s11(data, calobs_2015, load):
     with h5py.File(data / "reference.h5", "r") as fl:
         f = fl["freq"][...]
         np.testing.assert_allclose(
-            getattr(calobs_2015, load).s11_model(f), fl[f"{load}_s11"][...]
+            getattr(calobs_2015, load).s11_model(f),
+            fl[f"{load}_s11"][...],
+            atol=1e-8,
+            rtol=1e-5,
         )
 
 
