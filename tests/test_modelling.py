@@ -4,7 +4,6 @@ import numpy as np
 import yaml
 from typing import Type
 
-from edges_cal import cal_coefficients as cc
 from edges_cal import modelling as mdl
 
 
@@ -173,29 +172,18 @@ def test_composite_model():
     )
 
 
-def test_noise_waves(cal_data, tmpdir):
-    cache = tmpdir / "cal-coeff-cache"
-    calobs = cc.CalibrationObservation(
-        cal_data,
-        load_kwargs={"cache_dir": cache},
-        cterms=5,
-        wterms=5,
-        compile_from_def=False,
-    )
-    nw = mdl.NoiseWaves.from_calobs(calobs)
+def test_noise_waves(calobs):
+    clb = calobs.clone(cterms=5, wterms=5)
+    nw = mdl.NoiseWaves.from_calobs(clb)
 
     assert isinstance(nw.linear_model, mdl.FixedLinearModel)
     assert isinstance(nw.linear_model.model, mdl.CompositeModel)
 
     assert "ambient" in nw.src_names
-    assert len(nw.get_noise_wave("tunc", src="ambient")) == calobs.freq.n
+    assert len(nw.get_noise_wave("tunc", src="ambient")) == clb.freq.n
     assert len(nw.get_full_model("hot_load")) == calobs.freq.n
-    assert nw.with_params_from_calobs(calobs) == nw
-    assert len(nw.get_data_from_calobs(calobs)) == 4 * calobs.freq.n
-
-    c2 = calobs.to_calfile()
-    nw2 = mdl.NoiseWaves.from_calobs(c2)
-    assert nw.src_names == nw2.src_names
+    assert nw.with_params_from_calobs(clb) == nw
+    assert len(nw.get_data_from_calobs(clb)) == 4 * calobs.freq.n
 
 
 def test_complex_model():
@@ -220,3 +208,86 @@ def test_complex_reim_model():
     fit = cmplx.fit(ydata=data, xdata=x)
     np.testing.assert_allclose(fit.real.parameters, np.arange(5), atol=1e-10)
     np.testing.assert_allclose(fit.imag.parameters, np.arange(5, 11), atol=1e-10)
+
+
+def test_zero_to_one_tfm():
+    t = mdl.ZerotooneTransform(range=(5, 10))
+    x = t.transform(np.linspace(5, 10, 10))
+    assert x.min() == 0
+    assert x.max() == 1
+
+
+def test_model_call():
+    m = mdl.Polynomial(n_terms=5)
+
+    with pytest.raises(ValueError, match="You must supply either x or basis"):
+        m(parameters=[0, 1, 2, 3, 4])
+
+    x = np.linspace(0, 1, 10)
+    assert np.allclose(
+        m(x=x, parameters=[1, 2, 3], indices=[0, 1, 2]),
+        m(x=x, parameters=[1, 2, 3, 4, 5], indices=[0, 1, 2]),
+    )
+
+    assert not np.allclose(
+        m(x=x, parameters=[1, 2, 3], indices=[0, 1, 2]),
+        m(x=x, parameters=[1, 2, 3, 4, 5], indices=[1, 2, 3]),
+    )
+
+
+def test_physical_lin_too_many_terms():
+    pl = mdl.PhysicalLin()
+    with pytest.raises(ValueError, match="too many terms"):
+        pl.get_basis_term(5, np.linspace(0, 1, 10))
+
+
+def test_composite_model_getattr():
+    mdl1 = mdl.PhysicalLin()
+    mdl2 = mdl.Polynomial(n_terms=5)
+
+    cmp = mdl.CompositeModel(models={"lin": mdl1, "pl": mdl2})
+
+    assert cmp["lin"] == mdl1
+
+    with pytest.raises(KeyError):
+        cmp["non-existent"]
+
+
+def test_composite_with_extra():
+    mdl1 = mdl.PhysicalLin(parameters=[0, 1, 2, 3, 4])
+    mdl2 = mdl.Polynomial(n_terms=5, parameters=[0, 1, 2, 3, 4])
+
+    cmp = mdl.CompositeModel(
+        models={"lin": mdl1, "pl": mdl2}, extra_basis={"lin": lambda x: x ** 2}
+    )
+    assert not np.allclose(
+        cmp.get_model("lin", x=np.linspace(10, 20, 10), with_extra=True),
+        cmp.get_model("lin", x=np.linspace(10, 20, 10), with_extra=False),
+    )
+
+
+def test_composite_with_n_terms():
+    mdl1 = mdl.PhysicalLin(parameters=[0, 1, 2, 3, 4])
+    mdl2 = mdl.Polynomial(n_terms=5, parameters=[0, 1, 2, 3, 4])
+
+    cmp = mdl.CompositeModel(
+        models={"lin": mdl1, "pl": mdl2}, extra_basis={"lin": lambda x: x ** 2}
+    )
+
+    new = cmp.with_nterms("pl", n_terms=6, parameters=[0, 1, 2, 3, 4, 5])
+    assert not np.allclose(new(x=np.linspace(1, 2, 10)), cmp(x=np.linspace(1, 2, 10)))
+
+
+def test_complex_at():
+    rl = mdl.Polynomial(parameters=[1, 2, 3])
+
+    x = np.linspace(0, 1, 10)
+    cmplx = mdl.ComplexRealImagModel(real=rl, imag=rl)
+    cmplx_fixed = cmplx.at(x=x)
+
+    y = np.random.random(size=10) + 1j * np.random.random(size=10)
+
+    fit1 = cmplx.fit(y, xdata=x)
+    fit2 = cmplx_fixed.fit(y)
+
+    assert np.allclose(fit1.real.parameters, fit2.real.parameters)

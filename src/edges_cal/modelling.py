@@ -6,8 +6,10 @@ import numpy as np
 import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
+from copy import copy
+from edges_io import h5
 from edges_io.h5 import register_h5type
-from typing import Sequence
+from typing import Sequence, Type, Union
 
 from . import receiver_calibration_func as rcf
 from .simulate import simulate_q_from_calobs
@@ -17,6 +19,7 @@ F_CENTER = 75.0
 _MODELS = {}
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class FixedLinearModel(yaml.YAMLObject):
     """
@@ -166,6 +169,7 @@ def _transform_yaml_representer(
     return dumper.represent_mapping(f"!{tr.__class__.__name__}", dct)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class ModelTransform(metaclass=ABCMeta):
     _models = {}
@@ -194,6 +198,7 @@ class ModelTransform(metaclass=ABCMeta):
         return self.transform(x)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class IdentityTransform(ModelTransform):
     def transform(self, x: np.ndarray) -> np.ndarray:
@@ -201,6 +206,7 @@ class IdentityTransform(ModelTransform):
         return x
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class ScaleTransform(ModelTransform):
     scale: float = attr.ib(converter=float)
@@ -215,6 +221,7 @@ def tuple_converter(x):
     return tuple(float(xx) for xx in x)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class CentreTransform(ModelTransform):
     range: tuple[float, float] = attr.ib(converter=tuple_converter)
@@ -225,6 +232,7 @@ class CentreTransform(ModelTransform):
         return x - self.range[0] - (self.range[1] - self.range[0]) / 2 + self.centre
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class UnitTransform(ModelTransform):
     """A transform that takes the input range down to -1 to 1."""
@@ -237,13 +245,10 @@ class UnitTransform(ModelTransform):
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
-        if self.range[0] is None:
-            self.range[0] = float(x.min())
-            self.range[1] = float(x.max())
-
         return 2 * self._centre.transform(x) / (self.range[1] - self.range[0])
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class LogTransform(ModelTransform):
     """A transform that takes the logarithm of the input."""
@@ -255,21 +260,19 @@ class LogTransform(ModelTransform):
         return np.log(x)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class ZerotooneTransform(ModelTransform):
     """A transform that takes an input range down to (0,1)."""
 
     range: tuple[float, float] = attr.ib(converter=tuple_converter)
 
-    @range.default
-    def _rng_default(self):
-        return [None, None]
-
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return (x - self.range[0]) / (self.range[1] - self.range[0])
 
 
+@h5.hickleable()
 @register_h5type
 @attr.s(frozen=True, kw_only=True)
 class Model(metaclass=ABCMeta):
@@ -281,8 +284,7 @@ class Model(metaclass=ABCMeta):
 
     parameters: Sequence | None = attr.ib(
         default=None,
-        converter=attr.converters.optional(np.asarray),
-        eq=attr.cmp_using(eq=np.array_equal),
+        converter=attr.converters.optional(tuple),
     )
     n_terms: int = attr.ib(converter=attr.converters.optional(int))
     transform: ModelTransform = attr.ib(default=IdentityTransform())
@@ -355,7 +357,7 @@ class Model(metaclass=ABCMeta):
         x: np.ndarray | None = None,
         basis: np.ndarray | None = None,
         parameters: Sequence | None = None,
-        indices: Sequence | None = None,
+        indices: Sequence[int] | None = None,
     ) -> np.ndarray:
         """Evaluate the model.
 
@@ -372,16 +374,21 @@ class Model(metaclass=ABCMeta):
             A list/array of parameters at which to evaluate the model. Will use the
             instance's parameters if available. If using a subset of the basis
             functions, you can pass a subset of parameters.
+        indices
+            Specifies which parameters/basis functions to use. Default is all of them.
 
         Returns
         -------
         model : np.ndarray
             The model evaluated at the input ``x`` or ``basis``.
         """
-        parameters = self.parameters if parameters is None else np.array(parameters)
+        if parameters is None and self.parameters is None:
+            raise ValueError("You must supply parameters to evaluate the model!")
 
         if parameters is None:
-            raise ValueError("You must supply parameters to evaluate the model!")
+            parameters = np.asarray(self.parameters)
+        else:
+            parameters = np.asarray(parameters)
 
         indices = np.arange(len(parameters)) if indices is None else np.array(indices)
 
@@ -430,6 +437,7 @@ def get_mdl_inst(model: str | Model | type[Model], **kwargs) -> Model:
     return get_mdl(model)(**kwargs)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class Foreground(Model, is_meta=True):
     """
@@ -454,6 +462,7 @@ class Foreground(Model, is_meta=True):
         return ScaleTransform(scale=self.f_center)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class PhysicalLin(Foreground):
     """Foreground model using a linearized physical model of the foregrounds."""
@@ -476,6 +485,7 @@ class PhysicalLin(Foreground):
             raise ValueError("too many terms supplied!")
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class Polynomial(Model):
     r"""A polynomial foreground model.
@@ -505,6 +515,7 @@ class Polynomial(Model):
         return x ** (indx + self.offset)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class EdgesPoly(Polynomial):
     """
@@ -521,6 +532,7 @@ class EdgesPoly(Polynomial):
     offset: float = attr.ib(default=-2.5, converter=float)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class LinLog(Foreground):
     beta: float = attr.ib(default=-2.5, converter=float)
@@ -540,6 +552,7 @@ class LinLog(Foreground):
         return term * x ** self.beta
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class Fourier(Model):
     """A Fourier-basis model."""
@@ -560,6 +573,7 @@ class Fourier(Model):
             return np.sin(self._period_fac * ((indx + 1) // 2) * x)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class FourierDay(Model):
     """A Fourier-basis model with period of 24 (hours)."""
@@ -573,6 +587,7 @@ class FourierDay(Model):
         return self._fourier.get_basis_term(indx, x)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class CompositeModel:
     models: dict[str, Model] = attr.ib()
@@ -604,12 +619,19 @@ class CompositeModel:
 
         return _index_map
 
+    def __getitem__(self, item):
+        """Get sub-models as if they were top-level attributes."""
+        if item not in self.models:
+            raise KeyError(f"{item} not one of the models.")
+
+        return self.models[item]
+
     def __getattr__(self, item):
         """Get sub-models as if they were top-level attributes."""
         if item not in self.models:
-            raise AttributeError(f"{item} not one of the models.")
+            raise AttributeError(f"{item} is not one of the models.")
 
-        return self.models[item]
+        return self[item]
 
     def _get_model_param_indx(self, model: str):
         indx = list(self.models.keys()).index(model)
@@ -659,13 +681,13 @@ class CompositeModel:
             mask = np.ones(len(x), dtype=bool)
 
         out = np.zeros_like(x)
-        out[mask] = getattr(self, model).get_basis_term(indx, x[mask]) * extra
+        out[mask] = self[model].get_basis_term(indx, x[mask]) * extra
         return out
 
     def get_basis_term_transformed(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Get the basis function term after coordinate tranformation."""
         model = self._index_map[indx][0]
-        return self.get_basis_term(indx, x=getattr(self, model).transform(x))
+        return self.get_basis_term(indx, x=self[model].transform(x))
 
     def get_basis_terms(self, x: np.ndarray) -> np.ndarray:
         """Get a 2D array of all basis terms at ``x``."""
@@ -743,7 +765,8 @@ class CompositeModel:
         return self.at(x=xdata).fit(ydata, weights=weights)
 
 
-@attr.s(frozen=True, kw_only=True)
+@h5.hickleable()
+@attr.s(frozen=True)
 class ComplexRealImagModel(yaml.YAMLObject):
     """A composite model that is specifically for complex functions in real/imag."""
 
@@ -816,7 +839,8 @@ class ComplexRealImagModel(yaml.YAMLObject):
         return attr.evolve(self, real=real, imag=imag)
 
 
-@attr.s(frozen=True, kw_only=True)
+@h5.hickleable()
+@attr.s(frozen=True)
 class ComplexMagPhaseModel(yaml.YAMLObject):
     """A composite model that is specifically for complex functions in mag/phase."""
 
@@ -892,6 +916,7 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
         return attr.evolve(self, mag=mag, phs=phs)
 
 
+@h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
 class NoiseWaves:
     freq: np.ndarray = attr.ib()
@@ -1009,7 +1034,7 @@ class NoiseWaves:
         """Generate input data to fit from a calibration observation."""
         data = []
         for src in self.src_names:
-            load = calobs._loads[src]
+            load = calobs.loads[src]
             if tns is None:
                 _tns = calobs.C1() * calobs.t_load_ns
             else:
@@ -1028,17 +1053,17 @@ class NoiseWaves:
     def from_calobs(cls, calobs, cterms=None, wterms=None, sources=None) -> NoiseWaves:
         """Initialize a noise wave model from a calibration observation."""
         if sources is None:
-            sources = tuple(calobs._loads.keys())
+            sources = calobs.load_names
 
-        loads = {src: load for src, load in calobs._loads.items() if src in sources}
-        freq = calobs.freq.freq
+        loads = {src: load for src, load in calobs.loads.items() if src in sources}
+        freq = calobs.freq.freq.to_value("MHz")
 
         gamma_src = {name: source.s11_model(freq) for name, source in loads.items()}
 
         try:
-            lna_s11 = calobs.lna.s11_model(freq)
+            lna_s11 = calobs.receiver.s11_model(freq)
         except AttributeError:
-            lna_s11 = calobs.lna_s11(freq)
+            lna_s11 = calobs.receiver_s11(freq)
 
         nw_model = cls(
             freq=freq,
@@ -1057,6 +1082,7 @@ class NoiseWaves:
         return self.linear_model(**kwargs)
 
 
+@h5.hickleable()
 @attr.s(frozen=True)
 class ModelFit:
     """A class representing a fit of model to data.
@@ -1157,7 +1183,7 @@ class ModelFit:
         """The best-fit model parameters."""
         # Parameters need to be copied into this object, otherwise a new fit on the
         # parent model will change the model_parameters of this fit!
-        return as_readonly(self.fit.model.parameters)
+        return copy(self.fit.model.parameters)
 
     def evaluate(self, x: np.ndarray | None = None) -> np.ndarray:
         """Evaluate the best-fit model.
@@ -1224,7 +1250,7 @@ def _model_yaml_representer(
     model_dct = attr.asdict(model, recurse=False)
     model_dct.update(model=model.__class__.__name__.lower())
     if model_dct["parameters"] is not None:
-        model_dct["parameters"] = model_dct["parameters"].tolist()
+        model_dct["parameters"] = tuple(float(x) for x in model_dct["parameters"])
 
     return dumper.represent_mapping("!Model", model_dct)
 
@@ -1233,3 +1259,5 @@ yaml.FullLoader.add_constructor("!Model", _model_yaml_constructor)
 
 yaml.add_multi_representer(Model, _model_yaml_representer)
 yaml.add_multi_representer(ModelTransform, _transform_yaml_representer)
+
+Modelable = Union[str, Type[Model]]

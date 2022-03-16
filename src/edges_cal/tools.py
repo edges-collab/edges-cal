@@ -4,23 +4,87 @@ from __future__ import annotations
 import attr
 import numpy as np
 import warnings
+from astropy import units
+from astropy import units as u
+from edges_io import h5
 from itertools import product
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Callable, Sequence
 
 from . import DATA_PATH
+from . import types as tp
 from .cached_property import cached_property
 
 
 def get_data_path(pth: str | Path) -> Path:
     """Impute the global data path to a given input in place of a colon."""
     if isinstance(pth, str):
-        if pth.startswith(":"):
-            return DATA_PATH / pth[1:]
-        else:
-            return Path(pth)
+        return DATA_PATH / pth[1:] if pth.startswith(":") else Path(pth)
     else:
         return pth
+
+
+def is_unit(unit: str) -> bool:
+    """Whether the given input is a recognized unit."""
+    if isinstance(unit, u.Unit):
+        return True
+
+    try:
+        u.Unit(unit)
+        return True
+    except ValueError:
+        return False
+
+
+def vld_unit(
+    unit: str | u.Unit, equivalencies=()
+) -> Callable[[Any, attr.Attribute, Any], None]:
+    """Attr validator to check physical type."""
+    utype = is_unit(unit)
+    if not utype:
+        # must be a physical type. This errors with ValueError if unit is not
+        # really a physical type.
+        u.get_physical_type(unit)
+
+    def _check_type(self: Any, att: attr.Attribute, val: Any):
+        if not isinstance(val, u.Quantity):
+            raise TypeError(f"{att.name} must be an astropy Quantity!")
+
+        if utype and not val.unit.is_equivalent(unit, equivalencies):
+            raise u.UnitConversionError(
+                f"{att.name} not convertible to {unit}. Got {val.unit}"
+            )
+
+        if not utype and val.unit.physical_type != unit:
+            raise u.UnitConversionError(
+                f"{att.name} must have physical type of '{unit}'. "
+                f"Got '{val.unit.physical_type}'"
+            )
+
+    return _check_type
+
+
+def unit_convert_or_apply(
+    x: float | units.Quantity,
+    unit: str | units.Unit,
+    in_place: bool = False,
+    warn: bool = False,
+) -> units.Quantity:
+    """Safely convert a given value to a quantity."""
+    if warn and not isinstance(x, units.Quantity):
+        warnings.warn(
+            f"Value passed without units, assuming '{unit}'. "
+            "Consider specifying units for future compatibility."
+        )
+
+    return units.Quantity(x, unit, copy=not in_place)
+
+
+def unit_converter(
+    unit: str | units.Unit,
+) -> Callable[[float | units.Quantity], units.Quantity]:
+    """Return a function that will convert values to a given quantity."""
+    return lambda x: unit_convert_or_apply(x, unit)
 
 
 def as_readonly(x: np.ndarray) -> np.ndarray:
@@ -62,6 +126,7 @@ def dct_of_list_to_list_of_dct(dct: dict[str, Sequence]) -> list[dict]:
     return [{k: v for k, v in zip(dct.keys(), p)} for p in prod]
 
 
+@h5.hickleable()
 @attr.s
 class FrequencyRange:
     """
@@ -81,18 +146,16 @@ class FrequencyRange:
         Bin input frequencies into bins of this size.
     """
 
-    _f: np.ndarray = attr.ib(converter=np.array)
-    _f_low: float = attr.ib(converter=attr.converters.optional(float), kw_only=True)
-    _f_high: float = attr.ib(converter=attr.converters.optional(float), kw_only=True)
+    _f: tp.FreqType = attr.ib(
+        eq=attr.cmp_using(eq=np.array_equal), validator=vld_unit("frequency")
+    )
+    _f_low: tp.FreqType = attr.ib(
+        0 * u.MHz, validator=vld_unit("frequency"), kw_only=True
+    )
+    _f_high: float = attr.ib(
+        np.inf * u.MHz, validator=vld_unit("frequency"), kw_only=True
+    )
     bin_size: int = attr.ib(default=1, converter=int, kw_only=True)
-
-    @_f_low.default
-    def _flow_default(self):
-        return self._f.min()
-
-    @_f_high.default
-    def _fhigh_default(self):
-        return self._f.max()
 
     @bin_size.validator
     def _bin_size_validator(self, att, val):
@@ -106,7 +169,7 @@ class FrequencyRange:
 
     @_f.validator
     def _f_validator(self, att, val):
-        if np.any(val < 0):
+        if np.any(val < 0 * u.MHz):
             raise ValueError("Cannot have negative input frequencies!")
         if val.ndim > 1:
             raise ValueError("Frequency array must be 1D!")
@@ -155,7 +218,10 @@ class FrequencyRange:
     @cached_property
     def freq(self):
         """The frequency array."""
-        return bin_array(self.freq_full[self.mask], self.bin_size)
+        return (
+            bin_array(self.freq_full[self.mask].value, self.bin_size)
+            * self.freq_full.unit
+        )
 
     @cached_property
     def range(self):
@@ -172,7 +238,7 @@ class FrequencyRange:
         """The frequency array re-centred so that it extends from -1 to 1."""
         return self.normalize(self.freq)
 
-    def normalize(self, f):
+    def normalize(self, f) -> np.ndarray:
         """
         Normalise a set of frequencies.
 
@@ -188,7 +254,7 @@ class FrequencyRange:
         array_like, shape [f,]
             The normalized frequencies.
         """
-        return 2 * (f - self.center) / self.range
+        return (2 * (f - self.center) / self.range).value
 
     def denormalize(self, f):
         """
@@ -210,7 +276,7 @@ class FrequencyRange:
 
     @classmethod
     def from_edges(
-        cls, n_channels: int = 16384 * 2, max_freq: float = 200.0, **kwargs
+        cls, n_channels: int = 16384 * 2, max_freq: float = 200.0 * u.MHz, **kwargs
     ) -> FrequencyRange:
         """Construct a :class:`FrequencyRange` object with underlying EDGES freqs.
 
@@ -239,7 +305,6 @@ class FrequencyRange:
 
         """
         n_channels = int(n_channels)
-        max_freq = float(max_freq)
 
         if n_channels < 100:
             raise ValueError("Shouldn't have less than 100 channels for EDGES!")
@@ -248,7 +313,7 @@ class FrequencyRange:
 
         # The final frequency here will be slightly less than 200 MHz. 200 MHz
         # corresponds to the centre of the N+1 bin, which doesn't actually exist.
-        f = np.arange(0, max_freq, df)
+        f = np.arange(0, max_freq.value, df.value) * max_freq.unit
 
         return cls(f=f, **kwargs)
 
@@ -258,8 +323,8 @@ class FrequencyRange:
 
     def with_new_mask(self, **kwargs):
         """Make a new read-only frequency range object with the same freqs."""
-        f = as_readonly(self.freq_full)
-        return attr.evolve(self, f=f, **kwargs)
+        f = as_readonly(self.freq_full.value)
+        return attr.evolve(self, f=f * self.freq_full.unit, **kwargs)
 
 
 def bin_array(x: np.ndarray, size: int = 1) -> np.ndarray:

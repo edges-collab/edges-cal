@@ -9,7 +9,7 @@ from . import receiver_calibration_func as rcf
 def simulate_q(
     *,
     load_s11: np.ndarray,
-    lna_s11: np.ndarray,
+    receiver_s11: np.ndarray,
     load_temp: float | np.ndarray,
     scale: np.ndarray,
     offset: np.ndarray,
@@ -26,7 +26,7 @@ def simulate_q(
     load_s11 : np.ndarray
         The S11 of the input load (antenna, or calibration source) as a function of
         frequency.
-    lna_s11 : np.ndarray
+    receiver_s11 : np.ndarray
         The S11 of the internal LNA.
     load_temp
         The (calibrated) temperature of the input load.
@@ -52,7 +52,7 @@ def simulate_q(
     """
     a, b = rcf.get_linear_coefficients(
         gamma_ant=load_s11,
-        gamma_rec=lna_s11,
+        gamma_rec=receiver_s11,
         sca=scale,
         off=offset,
         t_unc=t_unc,
@@ -88,25 +88,18 @@ def simulate_q_from_calobs(
 
     C1 = scale_model(freq) if scale_model is not None else calobs.C1(freq)
     try:
-        lna_s11 = calobs.lna.s11_model(freq)
+        receiver_s11 = calobs.receiver.s11_model(freq.to_value("MHz"))
     except AttributeError:
-        lna_s11 = calobs.lna_s11(freq)
+        receiver_s11 = calobs.receiver_s11(freq)
 
-    if not default_freq and load == "hot_load":
-        gain = calobs.hot_load.hot_load_correction.power_gain(
-            freq, calobs.hot_load.reflections
-        )
-        # temperature
-        temp_ave = (
-            gain * calobs.hot_load.spectrum.temp_ave
-            + (1 - gain) * calobs.hot_load.ambient.temp_ave
-        )
+    if not default_freq:
+        temp_ave = calobs.loads[load].get_temp_with_loss(freq)
     else:
-        temp_ave = calobs._loads[load].temp_ave
+        temp_ave = calobs.loads[load].temp_ave
 
     return simulate_q(
-        load_s11=calobs._loads[load].reflections.s11_model(freq),
-        lna_s11=lna_s11,
+        load_s11=calobs.loads[load].reflections.s11_model(freq.to_value("MHz")),
+        receiver_s11=receiver_s11,
         load_temp=temp_ave,
         scale=C1,
         offset=calobs.C2(freq),
@@ -152,11 +145,13 @@ def simulate_qant_from_calobs(
     ant_temp = loss * ant_temp / bm_corr + (1 - loss) * t_amb
 
     lna_s11 = (
-        calobs.lna_s11(freq) if callable(calobs.lna_s11) else calobs.lna.s11_model(freq)
+        calobs.receiver_s11(freq.to_value("MHz"))
+        if callable(calobs.receiver_s11)
+        else calobs.receiver.s11_model(freq.to_value("MHz"))
     )
     return simulate_q(
         load_s11=ant_s11,
-        lna_s11=lna_s11,
+        receiver_s11=lna_s11,
         load_temp=ant_temp,
         scale=scale,
         offset=calobs.C2(freq),

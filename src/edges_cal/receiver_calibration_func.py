@@ -340,8 +340,12 @@ def get_calibration_quantities_iterative(
     fmask = f_norm[mask]
     gamma_ant = {key: value[mask] for key, value in gamma_ant.items()}
     temp_raw = {key: value[mask] for key, value in temp_raw.items()}
+    temp_ant = {
+        key: (value[mask] if hasattr(value, "__len__") else value)
+        for key, value in temp_ant.items()
+    }
     gamma_rec = gamma_rec[mask]
-    temp_ant_hot = temp_ant["hot_load"][mask]
+    temp_ant_hot = temp_ant["hot_load"]
 
     # Get F and alpha for each load (Eqs. 3 and 4)
     F = {k: get_F(gamma_rec, v) for k, v in gamma_ant.items()}

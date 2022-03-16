@@ -1,172 +1,34 @@
 import pytest
 
-import h5py
-import logging
+import hickle
 import numpy as np
-from edges_io import io
+from astropy import units as u
 from pathlib import Path
 
 from edges_cal import cal_coefficients as cc
 
 
-def test_vna_from_file(data_path):
-    s1p = cc.S1P(
-        data_path
-        / "Receiver01_25C_2019_11_26_040_to_200MHz/S11/Ambient01/External01.s1p"
-    )
-    assert hasattr(s1p, "s1p")
+def test_load_from_io(io_obs, tmpdir: Path):
+    load = cc.Load.from_io(io_obs, load_name="hot_load", ambient_temperature=300.0)
 
-
-def test_vna_from_s1p(data_path):
-    s1p = io.S1P(
-        data_path
-        / "Receiver01_25C_2019_11_26_040_to_200MHz/S11/Ambient01/External01.s1p"
-    )
-    s1p = cc.S1P(s1p)
-    assert hasattr(s1p, "s1p")
-
-
-def test_vna_bad_input():
-    with pytest.raises(TypeError):
-        cc.S1P(3)
-
-
-def test_even_nterms_s11(cal_data):
-    s11 = cc.LoadS11.from_path("ambient", cal_data, n_terms=40)
-
-    with pytest.raises(ValueError):
-        s11.n_terms
-
-
-def test_lna_from_path(cal_data):
-    lna = cc.LNA.from_path(cal_data)
-    assert lna.repeat_num == 1
-
-
-def test_1d_rfi_removal(cal_data, tmpdir, caplog):
-    cache = tmpdir / "cal-coeff-cache"
-    calobs = cc.CalibrationObservation(
-        cal_data,
-        load_kwargs={"rfi_removal": "1D", "cache_dir": cache},
-        compile_from_def=False,
-        include_previous=False,
-    )
-
-    assert calobs.ambient.spectrum.averaged_Q.ndim == 1
-    assert calobs.ambient.spectrum.averaged_p0.ndim == 1
-    assert calobs.ambient.spectrum.averaged_p1.ndim == 1
-    assert calobs.ambient.spectrum.averaged_p2.ndim == 1
-
-    assert calobs.ambient.spectrum.variance_Q.ndim == 1
-    assert calobs.ambient.spectrum.variance_p0.ndim == 1
-    assert calobs.ambient.spectrum.variance_p1.ndim == 1
-    assert calobs.ambient.spectrum.variance_p2.ndim == 1
-
-    assert calobs.ambient.spectrum.variance_spectrum.ndim == 1
-    assert isinstance(calobs.ambient.spectrum.ancillary, list)
-    assert isinstance(calobs.ambient.spectrum.ancillary[0], dict)
-
-    calobs2 = cc.CalibrationObservation(
-        cal_data,
-        load_kwargs={"rfi_removal": "1D", "cache_dir": cache},
-        compile_from_def=False,
-        include_previous=False,
-    )
-
-    print(list(cache.glob("*")))
-    # Access an averaged quantity
-
-    caplog.set_level(logging.INFO)
-    prev_level = cc.logger.getEffectiveLevel()
-    cc.logger.setLevel(logging.INFO)
-    assert np.allclose(
-        calobs.ambient.spectrum.averaged_Q, calobs2.ambient.spectrum.averaged_Q
-    )
-    assert "Reading in previously-created integrated ambient" in caplog.text
-    cc.logger.setLevel(prev_level)
-
-
-def test_spec_write(cal_data: Path, tmpdir: Path):
-    spec = cc.LoadSpectrum.from_load_name("ambient", cal_data, cache_dir=tmpdir)
-
-    spec.write(tmpdir)
-
-    with h5py.File(tmpdir / "ambient_averaged_spectrum.h5", "r") as fl:
-        mask = ~np.isnan(spec.averaged_spectrum)
-        assert np.allclose(
-            fl["averaged_raw_spectrum"][...][mask], spec.averaged_spectrum[mask]
-        )
-
-
-def test_load_from_path(cal_data: Path, tmpdir: Path):
-    cache = tmpdir / "cal-coeff-cache"
-
-    load = cc.Load.from_path(
-        cal_data, load_name="hot_load", spec_kwargs={"cache_dir": cache}
-    )
-
-    assert load.spectrum.load_name == "hot_load"
+    assert load.load_name == "hot_load"
     mask = ~np.isnan(load.averaged_Q)
     assert np.all(load.averaged_Q[mask] == load.spectrum.averaged_Q[mask])
 
 
-def test_calobs_bad_input(cal_data: Path):
-    with pytest.raises(TypeError):
-        cc.CalibrationObservation(cal_data, load_spectra={"ambient": "derp"})
-
+def test_calobs_bad_input(io_obs):
     with pytest.raises(ValueError):
-        cc.CalibrationObservation(cal_data, f_low=100, f_high=40)
+        cc.CalibrationObservation.from_io(io_obs, f_low=100 * u.MHz, f_high=40 * u.MHz)
 
 
-def test_new_load(cal_data: Path):
-    calobs = cc.CalibrationObservation(cal_data, compile_from_def=False)
-
-    new_open = calobs.new_load("open", spec_kwargs={"ignore_times_percent": 50.0})
-    assert len(new_open.spectrum.thermistor_temp) < len(
-        calobs.open.spectrum.thermistor_temp
+def test_new_load(calobs, io_obs):
+    new_open = calobs.new_load(
+        "open", io_obs, spec_kwargs={"ignore_times_percent": 50.0}
     )
+    assert new_open.spectrum.temp_ave != calobs.open.spectrum.temp_ave
 
 
-@pytest.mark.skip("too slow...")
-def test_2d_rfi_removal(cal_data, tmpdir, caplog):
-    cache = tmpdir / "cal-coeff-cache-new"
-
-    calobs = cc.CalibrationObservation(
-        cal_data,
-        load_kwargs={
-            "rfi_removal": "2D",
-            "cache_dir": cache,
-            "rfi_kernel_width_time": 2,
-            "rfi_kernel_width_freq": 2,
-        },
-        compile_from_def=False,
-    )
-
-    assert calobs.ambient.spectrum.averaged_Q.ndim == 1
-    assert calobs.ambient.spectrum.averaged_p0.ndim == 1
-    assert calobs.ambient.spectrum.averaged_p1.ndim == 1
-    assert calobs.ambient.spectrum.averaged_p2.ndim == 1
-
-    assert calobs.ambient.spectrum.variance_Q.ndim == 1
-    assert calobs.ambient.spectrum.variance_p0.ndim == 1
-    assert calobs.ambient.spectrum.variance_p1.ndim == 1
-    assert calobs.ambient.spectrum.variance_p2.ndim == 1
-
-    assert calobs.ambient.spectrum.variance_spectrum.ndim == 1
-    assert isinstance(calobs.ambient.spectrum.ancillary, list)
-    assert isinstance(calobs.ambient.spectrum.ancillary[0], dict)
-
-
-def test_bad_fminmax(cal_data: Path):
-    with pytest.raises(ValueError):
-        cc.CalibrationObservation(cal_data, f_low=100, f_high=50)
-
-
-def test_cal_uncal_round_trip(cal_data: Path, tmpdir: Path):
-    cache = tmpdir / "cal-coeff-cache"
-    calobs = cc.CalibrationObservation(
-        cal_data, load_kwargs={"cache_dir": cache}, compile_from_def=False
-    )
+def test_cal_uncal_round_trip(calobs):
 
     tcal = calobs.calibrate("ambient")
     raw = calobs.decalibrate(tcal, "ambient")
@@ -174,15 +36,10 @@ def test_cal_uncal_round_trip(cal_data: Path, tmpdir: Path):
     assert np.allclose(raw[mask], calobs.ambient.averaged_spectrum[mask])
 
     with pytest.warns(UserWarning):
-        calobs.decalibrate(tcal, "ambient", freq=np.linspace(30, 120, 50))
+        calobs.decalibrate(tcal, "ambient", freq=np.linspace(30, 120, 50) * u.MHz)
 
 
-def test_load_resids(cal_data: Path, tmpdir: Path):
-    cache = tmpdir / "cal-coeff-cache"
-    calobs = cc.CalibrationObservation(
-        cal_data, load_kwargs={"cache_dir": cache}, compile_from_def=False
-    )
-
+def test_load_resids(calobs):
     cal = calobs.calibrate("ambient")
 
     out = calobs.get_load_residuals()
@@ -190,54 +47,28 @@ def test_load_resids(cal_data: Path, tmpdir: Path):
     assert np.allclose(out["ambient"][mask], cal[mask] - calobs.ambient.temp_ave)
 
 
-def test_rms(cal_data: Path, tmpdir: Path):
-    cache = tmpdir / "cal-coeff-cache"
-    calobs = cc.CalibrationObservation(
-        cal_data, load_kwargs={"cache_dir": cache}, compile_from_def=False
-    )
-
+def test_rms(calobs):
     rms = calobs.get_rms()
     assert isinstance(rms, dict)
     assert isinstance(rms["ambient"], float)
 
 
-def test_write_coefficients(cal_data: Path, tmpdir: Path):
-    cache = tmpdir / "cal-coeff-cache"
-    calobs = cc.CalibrationObservation(
-        cal_data, load_kwargs={"cache_dir": cache}, compile_from_def=False
-    )
+def test_update(calobs):
+    c2 = calobs.clone(wterms=10)
 
-    calobs.write_coefficients(tmpdir)
-
-    assert any(
-        path.name.startswith("calibration_parameters") for path in tmpdir.glob("*")
-    )
+    assert len(c2.Tcos_poly) > len(calobs.Tcos_poly)
+    assert len(c2.Tcos_poly) == 9
 
 
-def test_update(cal_data: Path, tmpdir: Path):
-    cache = tmpdir / "cal-coeff-cache"
-    calobs = cc.CalibrationObservation(
-        cal_data, load_kwargs={"cache_dir": cache}, wterms=5, compile_from_def=False
-    )
-
-    assert len(calobs.Tcos_poly) == 4
-
-    c2 = calobs.clone(wterms=7)
-
-    assert len(c2.Tcos_poly) == 6
-
-
-def test_calibration_init(cal_data: Path, tmpdir: Path):
-    cache = tmpdir / "cal-coeff-cache"
-    calobs = cc.CalibrationObservation(
-        cal_data, load_kwargs={"cache_dir": cache}, cterms=5, compile_from_def=False
-    )
+def test_calibration_init(calobs, tmpdir: Path):
 
     calobs.write(tmpdir / "calfile.h5")
 
-    cal = cc.Calibration(tmpdir / "calfile.h5")
+    cal = cc.Calibrator.from_calfile(tmpdir / "calfile.h5")
 
-    assert np.allclose(cal.lna_s11(), calobs.lna.s11_model(calobs.freq.freq))
+    assert np.allclose(
+        cal.receiver_s11(), calobs.receiver.s11_model(calobs.freq.freq.to_value("MHz"))
+    )
     assert np.allclose(cal.C1(), calobs.C1())
     assert np.allclose(cal.C2(), calobs.C2())
     assert np.allclose(cal.Tunc(), calobs.Tunc())
@@ -245,7 +76,7 @@ def test_calibration_init(cal_data: Path, tmpdir: Path):
     assert np.allclose(cal.Tsin(), calobs.Tsin())
 
     temp = calobs.ambient.averaged_spectrum
-    s11 = calobs.ambient.reflections.s11_model(calobs.freq.freq)
+    s11 = calobs.ambient.reflections.s11_model(calobs.freq.freq.to_value("MHz"))
     cal_temp = cal.calibrate_temp(calobs.freq.freq, temp, s11)
     mask = ~np.isnan(cal_temp)
     assert np.allclose(cal_temp[mask], calobs.calibrate("ambient")[mask])
@@ -255,62 +86,147 @@ def test_calibration_init(cal_data: Path, tmpdir: Path):
         cal.decalibrate_temp(calobs.freq.freq, cal_temp, s11)[mask], temp[mask]
     )
 
-    with h5py.File(tmpdir / "calfile.h5", "a") as fl:
-        fl.attrs["switch_path"] = "/doesnt/exist"
 
-
-def test_term_sweep(cal_data: Path, tmpdir: Path):
-    cache = tmpdir / "cal-coeff-cache"
-    calobs = cc.CalibrationObservation(
-        cal_data,
-        load_kwargs={"cache_dir": cache},
+def test_term_sweep(io_obs):
+    print("Making it")
+    calobs = cc.CalibrationObservation.from_io(
+        io_obs,
         cterms=5,
         wterms=7,
-        f_low=60,
-        f_high=80,
+        f_low=60 * u.MHz,
+        f_high=80 * u.MHz,
     )
+    print("Made")
 
     calobs_opt = cc.perform_term_sweep(
         calobs,
         max_cterms=6,
         max_wterms=8,
-        explore_run_nums=True,
-        explore_repeat_nums=True,
-        direc=tmpdir,
     )
 
     assert isinstance(calobs_opt, cc.CalibrationObservation)
 
 
 def test_2017_semi_rigid():
-    hlc = cc.HotLoadCorrection(path=":semi_rigid_s_parameters_2017.txt")
-    assert hlc.s12_model(hlc.freq.freq).dtype == complex
+    hlc = cc.HotLoadCorrection.from_file(path=":semi_rigid_s_parameters_2017.txt")
+    assert hlc.s12s21_model(hlc.freq.freq.to_value("MHz")).dtype == complex
 
 
-def test_calobs_equivalence(cal_data):
-    calobs1 = cc.CalibrationObservation(cal_data, compile_from_def=True)
-    calobs2 = cc.CalibrationObservation(cal_data, compile_from_def=True)
-
-    assert calobs1.open == calobs2.open
-    assert calobs1.open.spectrum == calobs2.open.spectrum
-    assert hash(calobs1.open.spectrum) == hash(calobs2.open.spectrum)
-
-
-def test_basic_s11_properties(cal_data):
-    calobs = cc.CalibrationObservation(cal_data, compile_from_def=False)
-
-    assert calobs.open.reflections.match.load_name == "Match"
-    assert calobs.open.reflections.match.repeat_num == 1
-
-
-def test_inject(cal_data):
-    calobs = cc.CalibrationObservation(cal_data, compile_from_def=False)
-    new = calobs.inject(
-        lna_s11=calobs.lna_s11 * 2,
+def test_calobs_equivalence(calobs, io_obs):
+    calobs1 = cc.CalibrationObservation.from_io(
+        io_obs, f_low=50 * u.MHz, f_high=100 * u.MHz
     )
 
-    np.testing.assert_allclose(new.lna_s11, 2 * calobs.lna_s11)
+    assert calobs1.open.spectrum == calobs.open.spectrum
+    assert calobs1.open.reflections == calobs.open.reflections
+    assert calobs1.open == calobs.open
+
+
+def test_basic_s11_properties(calobs):
+    assert calobs.open.reflections.load_name == "open"
+
+
+def test_inject(calobs):
+    new = calobs.inject(
+        lna_s11=calobs.receiver_s11 * 2,
+        source_s11s={
+            name: calobs.s11_correction_models[name] * 2 for name in calobs.loads
+        },
+        c1=calobs.C1() * 2,
+        c2=calobs.C2() * 2,
+        t_unc=calobs.Tunc() * 2,
+        t_cos=calobs.Tcos() * 2,
+        t_sin=calobs.Tsin() * 2,
+        averaged_spectra={
+            name: load.averaged_spectrum * 2 for name, load in calobs.loads.items()
+        },
+        thermistor_temp_ave={
+            name: load.temp_ave * 2 for name, load in calobs.loads.items()
+        },
+    )
+
+    np.testing.assert_allclose(new.receiver_s11, 2 * calobs.receiver_s11)
     assert not np.allclose(
         new.get_linear_coefficients("open")[0],
         calobs.get_linear_coefficients("open")[0],
     )
+
+    for name, tmp in new.source_thermistor_temps.items():
+        assert np.allclose(tmp, 2 * calobs.source_thermistor_temps[name])
+
+    assert np.allclose(new.C1(), 2 * calobs.C1())
+    assert np.allclose(new.C2(), 2 * calobs.C2())
+    assert np.allclose(new.Tunc(), 2 * calobs.Tunc())
+    assert np.allclose(new.Tcos(), 2 * calobs.Tcos())
+    assert np.allclose(new.Tsin(), 2 * calobs.Tsin())
+
+
+def test_calibrate_with_q(calobs):
+    assert np.allclose(
+        calobs.calibrate("ambient"),
+        calobs.calibrate("ambient", q=calobs.ambient.averaged_Q),
+    )
+    assert np.allclose(
+        calobs.calibrate("ambient"),
+        calobs.calibrate("ambient", temp=calobs.ambient.averaged_spectrum),
+    )
+
+
+def test_load_str_to_load(calobs):
+    assert calobs._load_str_to_load("ambient") == calobs.ambient
+    assert calobs._load_str_to_load(calobs.ambient) == calobs.ambient
+
+    with pytest.raises(AttributeError, match="load must be a Load object"):
+        calobs._load_str_to_load("non-existent")
+
+    with pytest.raises(AssertionError, match="load must be a Load instance"):
+        calobs._load_str_to_load(3)
+
+
+def test_decalibrate(calobs):
+    temp = np.linspace(300, 400, calobs.freq.n)
+    freq = calobs.freq.freq * 1.5
+
+    with pytest.warns(UserWarning, match="The maximum frequency is outside"):
+        calobs.decalibrate(temp=temp, load="ambient", freq=freq)
+
+
+def test_getk_with_freq(calobs):
+    k = calobs.get_K()
+    k2 = calobs.get_K(calobs.freq.freq)
+
+    assert all(np.allclose(k[key], k2[key]) for key in k)
+
+
+def test_plot_caltemp_bin0(calobs):
+    calobs.plot_calibrated_temp("ambient", bins=0)
+
+
+def test_calibration_isw(calobs):
+    clf = calobs.to_calibrator()
+
+    f = calobs.freq.freq.to_value("MHz")
+    assert np.allclose(
+        clf.internal_switch.s11_model(f), calobs.internal_switch.s11_model(f)
+    )
+    assert np.allclose(
+        clf.internal_switch.s12_model(f), calobs.internal_switch.s12_model(f)
+    )
+    assert np.allclose(
+        clf.internal_switch.s22_model(f), calobs.internal_switch.s22_model(f)
+    )
+
+    cq = clf.calibrate_Q(
+        freq=calobs.freq.freq,
+        q=calobs.ambient.averaged_Q,
+        ant_s11=calobs.ambient.s11_model(f),
+    )
+    cq2 = calobs.calibrate("ambient")
+    assert np.allclose(cq, cq2)
+
+
+def test_hickle_roundtrip(calobs, tmpdir):
+    hickle.dump(calobs, tmpdir / "tmp_hickle.h5")
+    new = hickle.load(tmpdir / "tmp_hickle.h5")
+
+    assert new == calobs

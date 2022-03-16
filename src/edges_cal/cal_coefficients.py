@@ -8,1074 +8,32 @@ from __future__ import annotations
 
 import attr
 import h5py
+import hickle
 import numpy as np
-import tempfile
 import warnings
-import yaml
-from abc import ABCMeta, abstractmethod
+from astropy import units as un
 from astropy.convolution import Gaussian1DKernel, convolve
-from datetime import datetime, timedelta
-from edges_io import io
+from astropy.io.misc import yaml as ayaml
+from edges_io import h5, io
 from edges_io.logging import logger
-from functools import lru_cache
+from functools import partial
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
-from typing import Any, Callable, Literal
+from types import SimpleNamespace
+from typing import Any, Callable, Sequence
 
 from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
-from . import s11_correction as s11
-from . import tools
+from . import s11
 from . import types as tp
-from . import xrfi
 from .cached_property import cached_property, safe_property
-from .tools import FrequencyRange, get_data_path
+from .spectra import LoadSpectrum
+from .tools import FrequencyRange, bin_array, get_data_path
 
 
-def _s1p_converter(s1p: tp.PathLike | io.S1P) -> io.S1P:
-    try:
-        s1p = Path(s1p)
-        return io.S1P(s1p)
-    except TypeError:
-        if isinstance(s1p, io.S1P):
-            return s1p
-        else:
-            raise TypeError("s1p must be a path to an s1p file, or an io.S1P object")
-
-
-@attr.s(frozen=True)
-class S1P:
-    """
-    An object representing the measurements of a VNA.
-
-    The measurements are read in via a .s1p file
-
-    Parameters
-    ----------
-    s1p
-        The path to a valid .s1p file containing VNA measurements, or an S1P
-        object of such a type.
-    f_low, f_high
-        The minimum/maximum frequency to keep.
-    switchval
-        The standard value of the switch for the component.
-    """
-
-    s1p: tp.PathLike | io.S1P = attr.ib(converter=_s1p_converter)
-    f_low: float | None = attr.ib(
-        default=None, converter=attr.converters.optional(float), kw_only=True
-    )
-    f_high: float | None = attr.ib(
-        default=None, converter=attr.converters.optional(float), kw_only=True
-    )
-    _switchval: int | None = attr.ib(
-        default=None, kw_only=True, converter=attr.converters.optional(int)
-    )
-
-    @property
-    def load_name(self) -> str:
-        """The name of the load whose S11 this is."""
-        return self.s1p.kind
-
-    @property
-    def repeat_num(self) -> int:
-        """The repeat number of this S11 measurement."""
-        return int(self.s1p.repeat_num)
-
-    @cached_property
-    def freq(self) -> FrequencyRange:
-        """The frequencies of the S11 measurement."""
-        kwargs = {}
-        if self.f_low is not None:
-            kwargs["f_low"] = self.f_low
-        if self.f_high is not None:
-            kwargs["f_high"] = self.f_high
-
-        return FrequencyRange(self.s1p.freq, **kwargs)
-
-    @cached_property
-    def s11(self) -> np.ndarray:
-        """The S11 measurement."""
-        return self.s1p.s11[self.freq.mask]
-
-    @cached_property
-    def switchval(self):
-        """The standard value of the switch for the component."""
-        if self._switchval is not None:
-            return self._switchval * np.ones(self.freq.n)
-        else:
-            return None
-
-
-# For backwards compatibility
-VNA = S1P
-
-
-@attr.s(kw_only=True, frozen=True)
-class _S11Base(metaclass=ABCMeta):
-    """
-    A class containing the S11 measurements (and corrections) for a load/interface.
-
-    Parameters
-    ----------
-    load_s11 : :class:`io._S11SubDir`
-        An instance of the basic ``io`` S11 folder.
-    f_low : float
-        Minimum frequency to use. Default is all frequencies.
-    f_high : float
-        Maximum frequency to use. Default is all frequencies.
-    resistance : float
-        The resistance of the switch (in Ohms).
-    n_terms : int
-        The number of terms to use in fitting a model to the S11 (used to both
-        smooth and interpolate the data). Must be odd.
-    """
-
-    default_nterms = {
-        "ambient": 37,
-        "hot_load": 37,
-        "open": 105,
-        "short": 105,
-        "AntSim2": 55,
-        "AntSim3": 55,
-        "AntSim4": 55,
-        "AntSim1": 55,
-        "lna": 37,
-    }
-    _switchvals = {"open": 1, "short": -1, "match": 0}
-
-    load_s11: io._S11SubDir | io.ReceiverReading = attr.ib()
-    f_low: float | None = attr.ib(default=None)
-    f_high: float | None = attr.ib(default=None)
-    _n_terms: int | None = attr.ib(
-        default=None, converter=attr.converters.optional(int)
-    )
-    model_type: tp.Modelable = attr.ib(default="fourier")
-
-    @property
-    def base_path(self) -> Path:
-        """The path to the S11 measurements."""
-        return self.load_s11.path
-
-    @cached_property
-    def load_name(self) -> str | None:
-        try:
-            return getattr(self.load_s11, "load_name")
-        except AttributeError:
-            return None
-
-    @property
-    def run_num(self) -> int:
-        """The run number of the S11 measurement."""
-        return self.load_s11.run_num
-
-    @cached_property
-    def _standards(self) -> dict[str, S1P]:
-        return {
-            name.lower(): S1P(
-                s1p=self.load_s11.children[name.lower()],
-                f_low=self.f_low,
-                f_high=self.f_high,
-                switchval=self._switchvals.get(name.lower()),
-            )
-            for name in self.load_s11.STANDARD_NAMES
-        }
-
-    def __getattr__(self, item):
-        if item in self._standards:
-            return self._standards[item]
-
-        raise AttributeError(f"{item} does not exist in {self.__class__.__name__}!")
-
-    @property
-    def freq(self) -> FrequencyRange:
-        """The frequencies at which the internal standards were measured."""
-        return self.open.freq
-
-    @cached_property
-    def n_terms(self):
-        """Number of terms to use (by default) in modelling the S11.
-
-        Raises
-        ------
-        ValueError
-            If n_terms is even.
-        """
-        res = self._n_terms or self.default_nterms.get(self.load_name, None)
-        if not (isinstance(res, int) and res % 2):
-            raise ValueError(
-                f"n_terms must be odd for S11 models. For {self.load_name} got "
-                f"n_terms={res}."
-            )
-        return res
-
-    @classmethod
-    @abstractmethod
-    def from_path(cls, **kwargs):
-        pass  # pragma: no cover
-
-    @cached_property
-    @abstractmethod
-    def measured_load_s11_raw(self):
-        pass  # pragma: no cover
-
-    @cached_property
-    def corrected_load_s11(self) -> np.ndarray:
-        """The measured S11 of the load, corrected for internal switch."""
-        return self.measured_load_s11_raw
-
-    @lru_cache
-    def get_corrected_s11_model(
-        self,
-        n_terms: int | None = None,
-        model_type: tp.Modelable | None = None,
-    ):
-        """Generate a callable model for the S11 correction.
-
-        This should closely match :method:`s11_correction`.
-
-        Parameters
-        ----------
-        n_terms : int
-            Number of terms used in the fourier-based model. Not necessary if
-            `load_name` is specified in the class.
-
-        Returns
-        -------
-        callable :
-            A function of one argument, f, which should be a frequency in the same units
-            as `self.freq.freq`.
-
-        Raises
-        ------
-        ValueError
-            If n_terms is not an integer, or not odd.
-        """
-        n_terms = n_terms or self.n_terms
-        model_type = mdl.get_mdl(model_type or self.model_type)
-        model = model_type(
-            n_terms=n_terms,
-            transform=mdl.UnitTransform(range=[self.freq.min, self.freq.max]),
-        )
-        emodel = model.at(x=self.freq.freq)
-
-        cmodel = mdl.ComplexMagPhaseModel(mag=emodel, phs=emodel)
-
-        s11_correction = self.corrected_load_s11
-
-        return cmodel.fit(ydata=s11_correction)
-
-    @cached_property
-    def s11_model(self) -> callable:
-        """The S11 model."""
-        return self.get_corrected_s11_model()
-
-    def plot_residuals(
-        self,
-        fig=None,
-        ax=None,
-        color_abs="C0",
-        color_diff="g",
-        label=None,
-        title=None,
-        decade_ticks=True,
-        ylabels=True,
-    ) -> plt.Figure:
-        """
-        Make a plot of the residuals of the S11 model and the correction data.
-
-        Residuals obtained  via :func:`get_corrected_s11_model`
-
-        Returns
-        -------
-        fig :
-            Matplotlib Figure handle.
-        """
-        if fig is None or ax is None or len(ax) != 4:
-            fig, ax = plt.subplots(
-                4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="w"
-            )
-
-        if decade_ticks:
-            for axx in ax:
-                axx.xaxis.set_ticks(
-                    [50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180],
-                    minor=[],
-                )
-                axx.grid(True)
-        ax[-1].set_xlabel("Frequency [MHz]")
-
-        corr = self.corrected_load_s11
-        model = self.s11_model(self.freq.freq)
-
-        ax[0].plot(
-            self.freq.freq, 20 * np.log10(np.abs(model)), color=color_abs, label=label
-        )
-        if ylabels:
-            ax[0].set_ylabel(r"$|S_{11}|$")
-
-        ax[1].plot(self.freq.freq, np.abs(model) - np.abs(corr), color_diff)
-        if ylabels:
-            ax[1].set_ylabel(r"$\Delta  |S_{11}|$")
-
-        ax[2].plot(
-            self.freq.freq, np.unwrap(np.angle(model)) * 180 / np.pi, color=color_abs
-        )
-        if ylabels:
-            ax[2].set_ylabel(r"$\angle S_{11}$")
-
-        ax[3].plot(
-            self.freq.freq,
-            np.unwrap(np.angle(model)) - np.unwrap(np.angle(corr)),
-            color_diff,
-        )
-        if ylabels:
-            ax[3].set_ylabel(r"$\Delta \angle S_{11}$")
-
-        if title is None:
-            title = f"{self.load_name} Reflection Coefficient Models"
-
-        if title:
-            fig.suptitle(f"{self.load_name} Reflection Coefficient Models", fontsize=14)
-        if label:
-            ax[0].legend()
-
-        return fig
-
-
-@attr.s(kw_only=True, frozen=True)
-class LoadS11(_S11Base):
-    """S11 for a lab calibration load.
-
-    Parameters
-    ----------
-    internal_switch : :class:`s11.InternalSwitch`
-        The internal switch state corresponding to the load.
-
-    Other Parameters
-    ----------------
-    Passed through to :class:`_S11Base`.
-    """
-
-    internal_switch: s11.InternalSwitch = attr.ib()
-
-    @classmethod
-    def from_path(
-        cls,
-        load_name: str,
-        path: tp.PathLike,
-        run_num_load: int = 1,
-        run_num_switch: int = 1,
-        repeat_num_load: int = attr.NOTHING,
-        repeat_num_switch: int = attr.NOTHING,
-        resistance: float = 50.166,
-        model_internal_switch: mdl.Model = attr.NOTHING,
-        **kwargs,
-    ):
-        """
-        Create a new object from a given path and load name.
-
-        Parameters
-        ----------
-        load_name : str
-            The name of the load to create.
-        path : str or Path
-            The path to the overall calibration observation.
-        run_num_load : int
-            The run to use (default is last run available).
-        run_num_switch : int
-            The run to use for the switch S11 (default is last run available).
-        kwargs
-            All other arguments are passed through to the constructor of
-            :class:`LoadS11`.
-
-        Returns
-        -------
-        s11 : :class:`LoadS11`
-            The S11 of the load.
-        """
-        antsim = load_name.startswith("AntSim")
-        path = Path(path)
-
-        if not antsim:
-            load_name = io.LOAD_ALIASES[load_name]
-
-        s11_load_dir = (io.AntSimS11 if antsim else io.LoadS11)(
-            path / "S11" / f"{load_name}{run_num_load:02}", repeat_num=repeat_num_load
-        )
-
-        internal_switch = s11.InternalSwitch(
-            data=io.SwitchingState(
-                path / "S11" / f"SwitchingState{run_num_switch:02}",
-                repeat_num=repeat_num_switch,
-            ),
-            resistance=resistance,
-            model=model_internal_switch,
-        )
-        return cls(load_s11=s11_load_dir, internal_switch=internal_switch, **kwargs)
-
-    @cached_property
-    def measured_load_s11_raw(self):
-        """The measured S11 of the load, calculated from raw internal standards."""
-        return rc.de_embed(
-            self.open.switchval,
-            self.short.switchval,
-            self.match.switchval,
-            self.open.s11,
-            self.short.s11,
-            self.match.s11,
-            self.external.s11,
-        )[0]
-
-    @cached_property
-    def corrected_load_s11(self) -> np.ndarray:
-        """The measured S11 of the load, corrected for the internal switch."""
-        return rc.gamma_de_embed(
-            self.internal_switch.s11_model(self.freq.freq),
-            self.internal_switch.s12_model(self.freq.freq),
-            self.internal_switch.s22_model(self.freq.freq),
-            self.measured_load_s11_raw,
-        )
-
-
-@attr.s
-class LNA(_S11Base):
-    """A special case of :class:`SwitchCorrection` for the LNA.
-
-    Parameters
-    ----------
-    load_s11
-        The Receiver Reading S11 measurements.
-    resistance
-        The resistance of the receiver.
-    kwargs
-        All other arguments passed to :class:`SwitchCorrection`.
-    """
-
-    load_s11: io.ReceiverReading = attr.ib()
-    resistance: float = attr.ib(default=50.009, kw_only=True)
-
-    @cached_property
-    def load_name(self) -> str:
-        """The name of the load."""
-        return "lna"
-
-    @property
-    def repeat_num(self) -> int:
-        """The repeat num used for the LNA measurement."""
-        return self.load_s11.repeat_num
-
-    @classmethod
-    def from_path(
-        cls,
-        path: str | Path,
-        repeat_num: int | None = attr.NOTHING,
-        run_num: int = 1,
-        **kwargs,
-    ):
-        """
-        Create an instance from a given path.
-
-        Parameters
-        ----------
-        path : str or Path
-            Path to overall Calibration Observation.
-        run_num_load : int
-            The run to use for the LNA (default latest available).
-        run_num_switch : int
-            The run to use for the switching state (default lastest available).
-        kwargs
-            All other arguments passed through to :class:`SwitchCorrection`.
-
-        Returns
-        -------
-        lna : :class:`LNA`
-            The LNA object.
-        """
-        path = Path(path)
-        load_s11 = io.ReceiverReading(
-            path=path / "S11" / f"ReceiverReading{run_num:02}",
-            repeat_num=repeat_num,
-            fix=False,
-        )
-
-        return cls(load_s11=load_s11, **kwargs)
-
-    @cached_property
-    def external(self):
-        """VNA S11 measurements for the load."""
-        return S1P(
-            self.load_s11.children["receiverreading"],
-            f_low=self.freq.freq.min(),
-            f_high=self.freq.freq.max(),
-        )
-
-    @cached_property
-    def measured_load_s11_raw(self):
-        """Measured S11 of of the LNA."""
-        # Models of standards
-        oa, sa, la = rc.agilent_85033E(
-            self.freq.freq, self.resistance, match_delay=True
-        )
-
-        # Correction at switch
-        return rc.de_embed(
-            oa, sa, la, self.open.s11, self.short.s11, self.match.s11, self.external.s11
-        )[0]
-
-
-@attr.s(kw_only=True, frozen=True)
-class LoadSpectrum:
-    """A class representing a measured spectrum from some Load.
-
-    Parameters
-    ----------
-    spec_obj : :class:`io.Spectrum`
-        The base Spectrum object defining the on-disk spectra.
-    resistance_obj : :class:`io.Resistance`
-        The base Resistance object defining the on-disk resistance measurements.
-    switch_correction : :class:`SwitchCorrection`
-        A `SwitchCorrection` for this particular load. If not given, will be
-        constructed automatically.
-    f_low : float
-        Minimum frequency to keep.
-    f_high : float
-        Maximum frequency to keep.
-    ignore_times_percent : float
-        Must be between 0 and 100. Number of time-samples in a file to reject
-        from the start of the file.
-    rfi_removal : str
-        Either '1D', '2D' or '1D2D'. If given, will perform median and mean-filtered
-        xRFI over either the
-        2D waterfall, or integrated 1D spectrum. The latter is usually reasonable
-        for calibration sources, while the former is good for field data. "1D2D"
-        is a hybrid approach in which the variance per-frequency is determined
-        from the 2D data, but filtering occurs only over frequency.
-    rfi_kernel_width_time : int
-        The kernel width for the detrending of data for
-        RFI removal in the time dimension (only used if `rfi_removal` is "2D").
-    rfi_kernel_width_freq : int
-        The kernel width for the detrending of data for
-        RFI removal in the frequency dimension.
-    rfi_threshold : float
-        The threshold (in equivalent standard deviation units) above which to
-        flag data as RFI.
-    cache_dir : str or Path
-        An alternative directory in which to load/save cached reduced files.
-    t_load
-        Fiducial guess for the temperature of the internal load.
-    t_load_ns
-        Fiducial guess for the temperature of the internal load + noise source.
-    freq_bin_size
-        The size of the frequency bins, in units of their raw size (i.e. default of
-        one is to not bin in frequency).
-    temperature_range
-        If set, mask out spectra taken when the thermistor temp is outside the range
-        (i.e. don't include it in the average /variance).
-    """
-
-    spec_obj: tuple[io.Spectrum] = attr.ib(converter=tuple)
-    resistance_obj: io.Resistance = attr.ib()
-    switch_correction: LoadS11 | None = attr.ib(default=None)
-    f_low: float = attr.ib(default=40.0)
-    f_high: float | None = attr.ib(default=None)
-    ignore_times_percent: float = attr.ib(default=5.0)
-    rfi_removal: Literal["1D", "2D", "1D2D", False, None] = attr.ib(default="1D2D")
-    rfi_kernel_width_time: int = attr.ib(default=16, converter=int)
-    rfi_kernel_width_freq: int = attr.ib(default=16, converter=int)
-    rfi_threshold: float = attr.ib(default=6.0, converter=float)
-    cache_dir: str | Path = attr.ib(default=".", converter=Path)
-    t_load: float = attr.ib(default=300.0)
-    t_load_ns: float = attr.ib(default=400.0)
-    freq_bin_size: int = attr.ib(default=1)
-    temperature_range: float | tuple[float, float] | None = attr.ib(None)
-
-    @property
-    def load_name(self) -> str:
-        """The name of the load."""
-        return self.spec_obj[0].load_name
-
-    @resistance_obj.validator
-    def _resistance_validator(self, att, val):
-        assert (
-            self.spec_obj[0].load_name == val.load_name
-        ), "spec and resistance load_name must be the same"
-
-    @property
-    def spec_files(self) -> tuple[Path]:
-        """The tuple of files that are combined into this spectrum."""
-        return tuple(spec_obj.path for spec_obj in self.spec_obj)
-
-    @property
-    def resistance_file(self) -> Path:
-        """The path to the file holding resistance measurements."""
-        return self.resistance_obj.path
-
-    @property
-    def run_num(self) -> int:
-        """The run number used."""
-        return self.spec_obj[0].run_num
-
-    @cached_property
-    def freq(self) -> FrequencyRange:
-        """Frequencies of observation."""
-        f_high = self.f_high or attr.NOTHING
-        return FrequencyRange.from_edges(
-            f_low=self.f_low, f_high=f_high, bin_size=self.freq_bin_size
-        )
-
-    @classmethod
-    def from_load_name(
-        cls,
-        load_name: str,
-        direc: str | Path,
-        run_num: int | None = None,
-        filetype: str | None = None,
-        **kwargs,
-    ):
-        """Instantiate the class from a given load name and directory.
-
-        Parameters
-        ----------
-        load_name : str
-            The load name (one of 'ambient', 'hot_load', 'open' or 'short').
-        direc : str or Path
-            The top-level calibration observation directory.
-        run_num : int
-            The run number to use for the spectra.
-        filetype : str
-            The filetype to look for (acq or h5).
-        kwargs :
-            All other arguments to :class:`LoadSpectrum`.
-
-        Returns
-        -------
-        :class:`LoadSpectrum`.
-        """
-        direc = Path(direc)
-
-        spec = io.Spectrum.from_load(
-            load=load_name, direc=direc / "Spectra", run_num=run_num, filetype=filetype
-        )
-        res = io.Resistance.from_load(
-            load=load_name,
-            direc=direc / "Resistance",
-            run_num=run_num,
-            filetype=filetype,
-        )
-        return cls(spec_obj=spec, resistance_obj=res, **kwargs)
-
-    @cached_property
-    def averaged_Q(self) -> np.ndarray:
-        """Ratio of powers averaged over time.
-
-        Notes
-        -----
-        The formula is
-
-        .. math:: Q = (P_source - P_load)/(P_noise - P_load)
-        """
-        spec = self._ave_and_var_spec[0]["Q"]
-
-        if self.rfi_removal == "1D":
-            flags, _ = xrfi.xrfi_medfilt(
-                spec, threshold=self.rfi_threshold, kf=self.rfi_kernel_width_freq
-            )
-            spec[flags] = np.nan
-        return spec
-
-    @property
-    def variance_Q(self) -> np.ndarray:
-        """Variance of Q across time (see averaged_Q)."""
-        return self._ave_and_var_spec[1]["Q"]
-
-    @property
-    def averaged_spectrum(self) -> np.ndarray:
-        """T* = T_noise * Q  + T_load."""
-        return self.averaged_Q * self.t_load_ns + self.t_load
-
-    @property
-    def variance_spectrum(self) -> np.ndarray:
-        """Variance of uncalibrated spectrum across time (see averaged_spectrum)."""
-        return self.variance_Q * self.t_load_ns ** 2
-
-    @property
-    def ancillary(self) -> list[dict]:
-        """Ancillary measurement data."""
-        return [d.data["meta"] for d in self.spec_obj]
-
-    @property
-    def averaged_p0(self) -> np.ndarray:
-        """Power of the load, averaged over time."""
-        return self._ave_and_var_spec[0]["p0"]
-
-    @property
-    def averaged_p1(self) -> np.ndarray:
-        """Power of the noise-source, averaged over time."""
-        return self._ave_and_var_spec[0]["p1"]
-
-    @property
-    def averaged_p2(self) -> np.ndarray:
-        """Power of the load plus noise-source, averaged over time."""
-        return self._ave_and_var_spec[0]["p2"]
-
-    @property
-    def variance_p0(self) -> np.ndarray:
-        """Variance of the load, averaged over time."""
-        return self._ave_and_var_spec[1]["p0"]
-
-    @property
-    def variance_p1(self) -> np.ndarray:
-        """Variance of the noise-source, averaged over time."""
-        return self._ave_and_var_spec[1]["p1"]
-
-    @property
-    def variance_p2(self) -> np.ndarray:
-        """Variance of the load plus noise-source, averaged over time."""
-        return self._ave_and_var_spec[1]["p2"]
-
-    @property
-    def n_integrations(self) -> int:
-        """The number of integrations recorded for the spectrum (after ignoring)."""
-        return self._ave_and_var_spec[2]
-
-    def _get_integrated_filename(self):
-        """Determine a unique filename for the reduced data of this instance."""
-        return self.cache_dir / f"{self.load_name}_{hash(self)}.h5"
-
-    @cached_property
-    def _ave_and_var_spec(self) -> tuple[dict, dict, int]:
-        """Get the mean and variance of the spectra."""
-        fname = self._get_integrated_filename()
-
-        kinds = ["p0", "p1", "p2", "Q"]
-        if fname.exists():
-            logger.info(
-                f"Reading in previously-created integrated {self.load_name} spectra..."
-            )
-            means = {}
-            variances = {}
-            n_integrations = 0
-            with h5py.File(fname, "r") as fl:
-                for kind in kinds:
-                    means[kind] = fl[kind + "_mean"][...]
-                    variances[kind] = fl[kind + "_var"][...]
-                    n_integrations = fl.attrs.get("n_integrations", 0)
-            return means, variances, n_integrations
-
-        logger.info(f"Reducing {self.load_name} spectra...")
-        spectra = self.get_spectra()
-
-        means = {}
-        variances = {}
-
-        if self.temperature_range is not None:
-            # Cut on temperature.
-            if not hasattr(self.temperature_range, "__len__"):
-                median = np.median(self.thermistor_temp)
-                temp_range = (
-                    median - self.temperature_range / 2,
-                    median + self.temperature_range / 2,
-                )
-            else:
-                temp_range = self.temperature_range
-
-            temp_mask = np.zeros(spectra["Q"].shape[1], dtype=bool)
-            for i, c in enumerate(self.get_thermistor_indices()):
-                print(i, c, self.thermistor_temp[c] if not np.isnan(c) else "nan")
-                if np.isnan(c):
-                    temp_mask[i] = False
-                else:
-                    temp_mask[i] = (self.thermistor_temp[c] >= temp_range[0]) & (
-                        self.thermistor_temp[c] < temp_range[1]
-                    )
-
-            if not np.any(temp_mask):
-                raise RuntimeError(
-                    "The temperature range has masked all spectra!"
-                    f"Temperature Range Desired: {temp_range}.\n"
-                    "Temperature Range of Data: "
-                    f"{(self.thermistor_temp.min(), self.thermistor_temp.max())}\n"
-                    f"Time Range of Spectra: "
-                    f"{(self.spectrum_timestamps[0], self.spectrum_timestamps[-1])}\n"
-                    f"Time Range of Thermistor: "
-                    f"{(self.thermistor_timestamps[0], self.thermistor_timestamps[-1])}"
-                )
-
-        else:
-            temp_mask = np.ones(spectra["Q"].shape[1], dtype=bool)
-
-        for key, spec in spectra.items():
-            # Weird thing where there are zeros in the spectra.
-            spec[spec == 0] = np.nan
-
-            spec = tools.bin_array(spec.T, size=self.freq_bin_size).T
-            spec[:, ~temp_mask] = np.nan
-
-            mean = np.nanmean(spec, axis=1)
-            var = np.nanvar(spec, axis=1)
-            n_intg = spec.shape[1]
-
-            if self.rfi_removal == "1D2D":
-                nsample = np.sum(~np.isnan(spec), axis=1)
-
-                width = max(1, self.rfi_kernel_width_freq // self.freq_bin_size)
-
-                varfilt = xrfi.flagged_filter(var, size=2 * width + 1)
-                resid = mean - xrfi.flagged_filter(mean, size=2 * width + 1)
-                flags = np.logical_or(
-                    resid > self.rfi_threshold * np.sqrt(varfilt / nsample),
-                    var - varfilt
-                    > self.rfi_threshold * np.sqrt(2 * varfilt ** 2 / (nsample - 1)),
-                )
-
-                mean[flags] = np.nan
-                var[flags] = np.nan
-
-            means[key] = mean
-            variances[key] = var
-
-        if not self.cache_dir.exists():
-            self.cache_dir.mkdir()
-
-        with h5py.File(fname, "w") as fl:
-            logger.info(f"Saving reduced spectra to cache at {fname}")
-            for kind in kinds:
-                fl[kind + "_mean"] = means[kind]
-                fl[kind + "_var"] = variances[kind]
-            fl.attrs["n_integrations"] = n_intg
-
-        return means, variances, n_intg
-
-    @cached_property
-    def spectrum_ancillary(self) -> dict[str, np.ndarray]:
-        """Ancillary data from the spectrum measurements."""
-        fname = self._get_integrated_filename().with_suffix(".anc.h5")
-        if fname.exists():
-            logger.info("Reading in ancillary spectrum data from .anc.h5 file...")
-            out = {}
-            with h5py.File(fname) as fl:
-                for key in fl.keys():
-                    out[key] = fl[key][...]
-
-        else:
-            anc = [spec_obj.data["time_ancillary"] for spec_obj in self.spec_obj]
-
-            n_times = sum(len(a["times"]) for a in anc)
-
-            index_start_spectra = int((self.ignore_times_percent / 100) * n_times)
-
-            out = {
-                key: np.hstack(tuple(a[key].T for a in anc)).T[index_start_spectra:]
-                for key in anc[0]
-            }
-
-            with h5py.File(fname, "w") as fl:
-                logger.info(f"Saving spectrum ancillary to cache at {fname}")
-                for key, val in out.items():
-                    fl[key] = val
-
-        return out
-
-    @cached_property
-    def spectrum_timestamps(self) -> list[datetime]:
-        """Timestamps from each 3-position switch measurement."""
-        return [
-            datetime.strptime(d, "%Y:%j:%H:%M:%S")
-            for d in self.spectrum_ancillary["times"].astype(str)
-        ]
-
-    def get_spectra(self) -> dict:
-        """Read all spectra and remove RFI.
-
-        Returns
-        -------
-        dict :
-            A dictionary with keys being different powers (p1, p2, p3, Q), and values
-            being ndarrays.
-        """
-        spec = self._read_spectrum()
-
-        if self.rfi_removal == "2D":
-            for key, val in spec.items():
-                # Need to set nans and zeros to inf so that median/mean detrending
-                # can work.
-                val[np.isnan(val)] = np.inf
-
-                if key != "Q":
-                    val[val == 0] = np.inf
-
-                flags, _ = xrfi.xrfi_medfilt(
-                    val,
-                    threshold=self.rfi_threshold,
-                    kt=self.rfi_kernel_width_time,
-                    kf=self.rfi_kernel_width_freq,
-                )
-                val[flags] = np.nan
-                spec[key] = val
-        return spec
-
-    def _read_spectrum(self) -> dict:
-        """
-        Read the contents of the spectrum files into memory.
-
-        Removes a starting percentage of times, and masks out certain frequencies.
-
-        Returns
-        -------
-        dict :
-            A dictionary of the contents of the file. Usually p0, p1, p2 (un-normalised
-            powers of source, load, and load+noise respectively), and ant_temp (the
-            uncalibrated, but normalised antenna temperature).
-        """
-        data = [spec_obj.data for spec_obj in self.spec_obj]
-
-        n_times = sum(len(d["time_ancillary"]["times"]) for d in data)
-        nfreq = np.sum(self.freq.mask)
-        out = {
-            "p0": np.empty((nfreq, n_times)),
-            "p1": np.empty((nfreq, n_times)),
-            "p2": np.empty((nfreq, n_times)),
-            "Q": np.empty((nfreq, n_times)),
-        }
-
-        index_start_spectra = int((self.ignore_times_percent / 100) * n_times)
-        for key, val in out.items():
-            nn = 0
-            for d in data:
-                n = len(d["time_ancillary"]["times"])
-                val[:, nn : (nn + n)] = d["spectra"][key][self.freq.mask]
-                nn += n
-
-            out[key] = val[:, index_start_spectra:]
-
-        return out
-
-    def get_thermistor_indices(self) -> list[int | np.nan]:
-        """Get the index of the closest therm measurement for each spectrum."""
-        closest = []
-        indx = 0
-
-        deltat = self.thermistor_timestamps[1] - self.thermistor_timestamps[0]
-
-        for d in self.spectrum_timestamps:
-            if indx >= len(self.thermistor_timestamps):
-                closest.append(np.nan)
-                continue
-
-            for i, td in enumerate(self.thermistor_timestamps[indx:], start=indx):
-
-                if d - td > timedelta(0) and d - td <= deltat:
-                    closest.append(i)
-                    break
-                if d - td > timedelta(0):
-                    indx += 1
-
-            else:
-                closest.append(np.nan)
-
-        return closest
-
-    @cached_property
-    def thermistor(self) -> np.ndarray:
-        """The thermistor readings."""
-        ary = self.resistance_obj.read()[0]
-
-        return ary[int((self.ignore_times_percent / 100) * len(ary)) :]
-
-    @cached_property
-    def thermistor_timestamps(self) -> list[datetime]:
-        """Timestamps of all the thermistor measurements."""
-        if "time" in self.thermistor.dtype.names:
-            times = self.thermistor["time"]
-            dates = self.thermistor["date"]
-            times = [
-                datetime.strptime(d + ":" + t, "%m/%d/%Y:%H:%M:%S")
-                for d, t in zip(dates.astype(str), times.astype(str))
-            ]
-        else:
-            times = [
-                datetime.strptime(d.split(".")[0], "%m/%d/%Y %H:%M:%S")
-                for d in self.thermistor["start_time"].astype(str)
-            ]
-
-        return times
-
-    @cached_property
-    def thermistor_temp(self):
-        """The associated thermistor temperature in K."""
-        return rcf.temperature_thermistor(self.thermistor["load_resistance"])
-
-    @cached_property
-    def temp_ave(self):
-        """Average thermistor temperature (over time and frequency)."""
-        return np.nanmean(self.thermistor_temp)
-
-    def write(self, path=None):
-        """
-        Write a HDF5 file containing the contents of the LoadSpectrum.
-
-        Parameters
-        ----------
-        path : str
-            Directory into which to save the file, or full path to file.
-            If a directory, filename will be <load_name>_averaged_spectrum.h5.
-            Default is current directory.
-        """
-        path = Path(path or ".")
-
-        # Allow to pass in a directory name *or* full path.
-        if path.is_dir():
-            path /= f"{self.load_name}_averaged_spectrum.h5"
-
-        with h5py.File(path, "w") as fl:
-            fl.attrs["load_name"] = self.load_name
-            fl["freq"] = self.freq.freq
-            fl["averaged_raw_spectrum"] = self.averaged_spectrum
-            fl["temperature"] = self.thermistor_temp
-
-    def plot(
-        self, thermistor=False, fig=None, ax=None, xlabel=True, ylabel=True, **kwargs
-    ):
-        """
-        Make a plot of the averaged uncalibrated spectrum associated with this load.
-
-        Parameters
-        ----------
-        thermistor : bool
-            Whether to plot the thermistor temperature on the same axis.
-        fig : Figure
-            Optionally, pass a matplotlib figure handle which will be used to plot.
-        ax : Axis
-            Optional, pass a matplotlib Axis handle which will be added to.
-        xlabel : bool
-            Whether to make an x-axis label.
-        ylabel : bool
-            Whether to plot the y-axis label
-        kwargs :
-            All other arguments are passed to `plt.subplots()`.
-        """
-        if fig is None:
-            fig, ax = plt.subplots(
-                1, 1, facecolor=kwargs.pop("facecolor", "white"), **kwargs
-            )
-
-        if thermistor:
-            ax.plot(self.freq.freq, self.thermistor_temp)
-            if ylabel:
-                ax.set_ylabel("Temperature [K]")
-        else:
-            ax.plot(self.freq.freq, self.averaged_spectrum)
-            if ylabel:
-                ax.set_ylabel("$T^*$ [K]")
-
-        ax.grid(True)
-        if xlabel:
-            ax.set_xlabel("Frequency [MHz]")
-
-
+@h5.hickleable()
 @attr.s(kw_only=True)
 class HotLoadCorrection:
     """
@@ -1097,71 +55,81 @@ class HotLoadCorrection:
         The number of terms used in fitting S-parameters of the cable.
     """
 
-    _kinds = {"s11": 0, "s12": 1, "s22": 2}
-    path: str | Path = attr.ib(
-        default=":semi_rigid_s_parameters_WITH_HEADER.txt", converter=get_data_path
-    )
-    f_low: float | None = attr.ib(default=None)
-    f_high: float | None = attr.ib(default=None)
+    freq: FrequencyRange = attr.ib()
+    raw_s11: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
+    raw_s12s21: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
+    raw_s22: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
+
     n_terms: int = attr.ib(default=21, converter=int)
 
-    @cached_property
-    def _data(self) -> np.ndarray:
-        return np.genfromtxt(self.path)
+    @classmethod
+    def from_file(
+        cls,
+        path: tp.PathLike = ":semi_rigid_s_parameters_WITH_HEADER.txt",
+        f_low: tp.FreqType = 0 * un.MHz,
+        f_high: tp.FreqType = np.inf * un.MHz,
+        **kwargs,
+    ):
+        """Instantiate the HotLoadCorrection from file.
 
-    @cached_property
-    def freq(self) -> FrequencyRange:
-        """Frequencies of observation."""
-        kwargs = {}
-        if self.f_low is not None:
-            kwargs["f_low"] = self.f_low
-        if self.f_high is not None:
-            kwargs["f_high"] = self.f_high
+        Parameters
+        ----------
+        path
+            Path to the S-parameters file.
+        f_low, f_high
+            The min/max frequencies to use in the modelling.
+        """
+        path = get_data_path(path)
 
-        return FrequencyRange(self._data[:, 0], **kwargs)
+        data = np.genfromtxt(path)
+        freq = FrequencyRange(data[:, 0] * un.MHz, f_low=f_low, f_high=f_high)
 
-    @cached_property
-    def data(self) -> np.ndarray:
-        """The actual data."""
-        if self._data.shape[1] == 7:  # Original file from 2015
-            return (
-                self._data[self.freq.mask, 1::2] + 1j * self._data[self.freq.mask, 2::2]
-            )
-        elif self._data.shape[1] == 6:  # File from 2017
-            return np.array(
+        data = data[freq.mask]
+
+        if data.shape[1] == 7:  # Original file from 2015
+            data = data[:, 1::2] + 1j * data[:, 2::2]
+        elif data.shape[1] == 6:  # File from 2017
+            data = np.array(
                 [
-                    self._data[self.freq.mask, 1] + 1j * self._data[self.freq.mask, 2],
-                    self._data[self.freq.mask, 3],
-                    self._data[self.freq.mask, 4] + 1j * self._data[self.freq.mask, 5],
+                    data[:, 1] + 1j * data[:, 2],
+                    data[:, 3],
+                    data[:, 4] + 1j * data[:, 5],
                 ]
             ).T
-        else:
-            raise OSError("Semi-Rigid Cable file has wrong data format.")
+        return cls(
+            freq=freq,
+            raw_s11=data[:, 0],
+            raw_s12s21=data[:, 1],
+            raw_s22=data[:, 2],
+            **kwargs,
+        )
 
-    def _get_model_kind(self, kind):
+    def _get_model(self, raw_data: np.ndarray):
         model = mdl.Polynomial(
             n_terms=self.n_terms,
-            transform=mdl.UnitTransform(range=(self.freq.min, self.freq.max)),
+            transform=mdl.UnitTransform(
+                range=(self.freq.min.to_value("MHz"), self.freq.max.to_value("MHz"))
+            ),
         )
         model = mdl.ComplexMagPhaseModel(mag=model, phs=model)
-        return model.fit(xdata=self.freq.freq, ydata=self.data[:, self._kinds[kind]])
+        return model.fit(xdata=self.freq.freq, ydata=raw_data)
 
     @cached_property
     def s11_model(self):
         """The reflection coefficient."""
-        return self._get_model_kind("s11")
+        return self._get_model(self.raw_s11)
 
     @cached_property
-    def s12_model(self):
+    def s12s21_model(self):
         """The transmission coefficient."""
-        return self._get_model_kind("s12")
+        return self._get_model(self.raw_s12s21)
 
     @cached_property
     def s22_model(self):
         """The reflection coefficient from the other side."""
-        return self._get_model_kind("s22")
+        return self._get_model(self.raw_s22)
 
-    def power_gain(self, freq: np.ndarray, hot_load_s11: LoadS11) -> np.ndarray:
+    def power_gain(self, freq: tp.FreqType, hot_load_s11: s11.LoadS11) -> np.ndarray:
         """
         Calculate the power gain.
 
@@ -1177,20 +145,18 @@ class HotLoadCorrection:
         gain : np.ndarray
             The power gain as a function of frequency.
         """
-        assert isinstance(
-            hot_load_s11, LoadS11
-        ), "hot_load_s11 must be a switch correction"
+        assert isinstance(hot_load_s11, s11.LoadS11), "hot_load_s11 must be a LoadS11"
         assert (
             hot_load_s11.load_name == "hot_load"
         ), "hot_load_s11 must be a hot_load s11"
 
         return self.get_power_gain(
             {
-                "s11": self.s11_model(freq),
-                "s12s21": self.s12_model(freq),
-                "s22": self.s22_model(freq),
+                "s11": self.s11_model(freq.to_value("MHz")),
+                "s12s21": self.s12s21_model(freq.to_value("MHz")),
+                "s22": self.s22_model(freq.to_value("MHz")),
             },
-            hot_load_s11.s11_model(freq),
+            hot_load_s11.s11_model(freq.to_value("MHz")),
         )
 
     @staticmethod
@@ -1229,7 +195,8 @@ class HotLoadCorrection:
         )
 
 
-@attr.s
+@h5.hickleable()
+@attr.s(kw_only=True)
 class Load:
     """Wrapper class containing all relevant information for a given load.
 
@@ -1246,51 +213,36 @@ class Load:
     """
 
     spectrum: LoadSpectrum = attr.ib()
-    reflections: LoadS11 = attr.ib()
-    hot_load_correction: HotLoadCorrection | None = attr.ib(default=None)
-    ambient: LoadSpectrum | None = attr.ib(default=None)
+    reflections: s11.LoadS11 = attr.ib()
+    _loss_model: Callable[
+        [np.ndarray], np.ndarray
+    ] | HotLoadCorrection | None = attr.ib(default=None)
+    ambient_temperature: float = attr.ib(default=298.0)
 
-    @reflections.validator
-    def _rfl_vld(self, att, val):
-        if val.load_name != self.spectrum.load_name:
-            raise ValueError("LoadS11 and LoadSpectrum must have the same name!")
+    @property
+    def loss_model(self):
+        """The loss model as a callable function of frequency."""
+        if isinstance(self._loss_model, HotLoadCorrection):
+            return partial(self._loss_model.power_gain, hot_load_s11=self.reflections)
+        else:
+            return self._loss_model
 
     @property
     def load_name(self) -> str:
         """The name of the load."""
-        return self.spectrum.load_name
-
-    @property
-    def t_load(self) -> float:
-        """Assumed temperature of the load."""
-        return self.spectrum.t_load
-
-    @property
-    def t_load_ns(self) -> float:
-        """Assumed temperature of the load + noise source."""
-        return self.spectrum.t_load_ns
-
-    @hot_load_correction.validator
-    def _hlc_validator(self, att, val):
-        if self.load_name == "hot_load" and val is None:
-            raise ValueError(
-                "You must provide a hot_load_correction to construct the hot_load Load"
-            )
-
-    @ambient.validator
-    def _amb_validator(self, att, val):
-        if self.load_name == "hot_load" and val is None:
-            raise ValueError("You must provide ambient to construct the hot_load Load")
+        return self.reflections.load_name
 
     @classmethod
-    def from_path(
+    def from_io(
         cls,
-        path: str | Path,
+        io_obj: io.CalibrationObservation,
         load_name: str,
-        f_low: float | attr.NOTHING = attr.NOTHING,
-        f_high: float | attr.NOTHING = attr.NOTHING,
+        f_low: tp.FreqType = 40 * un.MHz,
+        f_high: tp.FreqType = np.inf * un.MHz,
         reflection_kwargs: dict | None = None,
         spec_kwargs: dict | None = None,
+        loss_kwargs: dict | None = None,
+        ambient_temperature: float | None = None,
     ):
         """
         Define a full :class:`Load` from a path and name.
@@ -1307,6 +259,10 @@ class Load:
             Extra arguments to pass through to :class:`SwitchCorrection`.
         spec_kwargs : dict
             Extra arguments to pass through to :class:`LoadSpectrum`.
+        ambient_temperature
+            The ambient temperature to use for the loss, if required (required for new
+            hot loads). By default, read an ambient load's actual temperature reading
+            from the io object.
 
         Returns
         -------
@@ -1317,63 +273,127 @@ class Load:
             spec_kwargs = {}
         if not reflection_kwargs:
             reflection_kwargs = {}
+        loss_kwargs = loss_kwargs or {}
+        # Fill up kwargs with keywords from this instance
+        # TODO: here we only use the calkit defined for the FIRST switching_state,
+        # instead of using each calkit for each switching_state. To fix this, we require
+        # having meta information inside the S11/ directory.
+        if "internal_switch_kwargs" not in reflection_kwargs:
+            reflection_kwargs["internal_switch_kwargs"] = {}
 
-        spec = LoadSpectrum.from_load_name(
-            load_name,
-            path,
+        if "calkit" not in reflection_kwargs["internal_switch_kwargs"]:
+            reflection_kwargs["internal_switch_kwargs"]["calkit"] = rc.get_calkit(
+                rc.AGILENT_85033E,
+                resistance_of_match=io_obj.definition["measurements"]["resistance_m"][
+                    io_obj.s11.switching_state[0].run_num
+                ],
+            )
+
+        spec = LoadSpectrum.from_io(
+            io_obs=io_obj,
+            load_name=load_name,
             f_low=f_low,
             f_high=f_high,
             **spec_kwargs,
         )
 
-        refl = LoadS11.from_path(
+        refl = s11.LoadS11.from_io(
+            io_obj.s11,
             load_name,
-            path,
             f_low=f_low,
             f_high=f_high,
             **reflection_kwargs,
         )
 
         if load_name == "hot_load":
-            hlc = HotLoadCorrection()
-            amb = LoadSpectrum.from_load_name(
-                "ambient", path, f_low=f_low, f_high=f_high, **spec_kwargs
-            )
-            return cls(spec, refl, hot_load_correction=hlc, ambient=amb)
-        else:
-            return cls(spec, refl)
+            hlc = HotLoadCorrection.from_file(f_low=f_low, f_high=f_high, **loss_kwargs)
 
-    @property
-    def s11_model(self):
-        """The S11 model."""
-        return self.reflections.s11_model
+            if ambient_temperature is None:
+                ambient_temperature = LoadSpectrum.from_io(
+                    io_obj,
+                    load_name="ambient",
+                    f_low=f_low,
+                    f_high=f_high,
+                    **spec_kwargs,
+                ).temp_ave
+
+            return cls(
+                spectrum=spec,
+                reflections=refl,
+                loss_model=hlc,
+                ambient_temperature=ambient_temperature,
+            )
+        else:
+            return cls(spectrum=spec, reflections=refl)
+
+    def get_temp_with_loss(self, freq: tp.FreqType | None = None):
+        """Calculate the temperature of the load accounting for loss."""
+        if freq is None:
+            freq = self.freq.freq
+
+        if self.loss_model is None:
+            return self.spectrum.temp_ave * np.ones(len(freq))
+
+        gain = self.loss_model(freq)
+        return gain * self.spectrum.temp_ave + (1 - gain) * self.ambient_temperature
 
     @cached_property
     def temp_ave(self) -> np.ndarray:
         """The average temperature of the thermistor (over frequency and time)."""
-        if self.load_name != "hot_load":
-            return self.spectrum.temp_ave
-
-        gain = self.hot_load_correction.power_gain(self.freq.freq, self.reflections)
-        # temperature
-        return gain * self.spectrum.temp_ave + (1 - gain) * self.ambient.temp_ave
+        return self.get_temp_with_loss()
 
     @property
     def averaged_Q(self) -> np.ndarray:
-        """Averaged power ratio."""
-        return self.spectrum.averaged_Q
+        """The average spectrum power ratio, Q (over time)."""
+        return self.spectrum.q
 
     @property
     def averaged_spectrum(self) -> np.ndarray:
-        """Averaged uncalibrated temperature."""
+        """The average uncalibrated spectrum (over time)."""
         return self.spectrum.averaged_spectrum
 
     @property
+    def t_load(self) -> float:
+        """The assumed temperature of the internal load."""
+        return self.spectrum.t_load
+
+    @property
+    def t_load_ns(self) -> float:
+        """The assumed temperature of the internal load + noise source."""
+        return self.spectrum.t_load_ns
+
+    @property
+    def s11_model(self) -> Callable[[np.ndarray], np.ndarray]:
+        """Callable S11 model as function of frequency."""
+        return self.reflections.s11_model
+
+    @property
     def freq(self) -> FrequencyRange:
-        """A :class:`FrequencyRange` object corresponding to this measurement."""
+        """Frequencies of the spectrum."""
         return self.spectrum.freq
 
+    def with_calkit(self, calkit: rc.Calkit):
+        """Return a new Load with updated calkit."""
+        if "calkit" not in self.reflections.metadata:
+            raise RuntimeError(
+                "Cannot clone with new calkit since calkit is unknown for the load"
+            )
 
+        loads11 = [
+            attr.evolve(x, calkit=calkit)
+            for x in self.reflections.metadata["load_s11s"]
+        ]
+        isw = self.reflections.internal_switch.with_new_calkit(calkit)
+
+        return attr.evolve(
+            self,
+            reflections=s11.LoadS11.from_load_and_internal_switch(
+                load_s11=loads11, internal_switch=isw, base=self.reflections
+            ),
+        )
+
+
+@h5.hickleable()
 @attr.s
 class CalibrationObservation:
     """
@@ -1387,333 +407,221 @@ class CalibrationObservation:
 
     Parameters
     ----------
-    path : str or Path
-        Path to the directory containing all relevant measurements. It is assumed
-        that in this directory is an `S11`, `Resistance` and `Spectra` directory.
-    semi_rigid_path : str or Path, optional
-        Path to a file containing S11 measurements for the semi rigid cable. Used to
-        correct the hot load S11. Found automatically if not given.
-    ambient_temp : int
-        Ambient temperature (C) at which measurements were taken.
-    f_low : float
-        Minimum frequency to keep for all loads (and their S11's). If for some
-        reason different frequency bounds are desired per-load, one can pass in
-        full load objects through ``load_spectra``.
-    f_high : float
-        Maximum frequency to keep for all loads (and their S11's). If for some
-        reason different frequency bounds are desired per-load, one can pass in
-        full load objects through ``load_spectra``.
-    run_num : int or dict
-        Which run number to use for the calibrators. Default is to use the last run
-        for each. Passing an int will attempt to use that run for each source. Pass
-        a dict mapping sources to numbers to use different combinations.
-    repeat_num : int or dict
-        Which repeat number to use for the calibrators. Default is to use the last
-        repeat for each. Passing an int will attempt to use that repeat for each
-        source. Pass a dict mapping sources to numbers to use different
-        combinations.
-    resistance_f : float
-        Female resistance (Ohms). Used for the LNA S11.
-    cterms : int
-        The number of terms to use for the polynomial fits to the calibration
-        functions.
-    wterms : int
-        The number of terms to use for the polynomial fits to the noise-wave
-        calibration functions.
-    load_kwargs : dict
-        Keyword arguments used to instantiate the calibrator :class:`LoadSpectrum`
-        objects. See its documentation for relevant parameters. Parameters specified
-        here are used for _all_ calibrator sources.
-    s11_kwargs : dict
-        Keyword arguments used to instantiate the calibrator :class:`LoadS11`
-        objects. See its documentation for relevant parameters. Parameters specified
-        here are used for _all_ calibrator sources.
-    load_spectra : dict
-        A dictionary mapping load names of calibration sources (eg. ambient, short)
-        to either :class:`LoadSpectrum` instances or dictionaries of keywords to
-        instantiate those objects. Useful for individually specifying
-        properties of each load separately. Values in these dictionaries (if
-        supplied) over-ride those given in ``load_kwargs`` (but values in
-        ``load_kwargs`` are still used if not over-ridden).
-    load_s11s : dict
-        A dictionary mapping load names of calibration sources (eg. ambient, short)
-        to :class:`LoadS11` instances or dictionaries of keywords to instantiate
-        those objects. Useful for individually specifying properties of each load
-        separately. Values in these dictionaries (if  supplied) over-ride those
-        given in ``s11_kwargs`` (but values in ``s11_kwargs`` are still used if not
-        over-ridden).
-    compile_from_def : bool
-        Whether to attempt compiling a virtual observation from a
-        ``definition.yaml`` inside the observation directory. This is the default
-        behaviour, but can be turned off to enforce that the current directory
-        should be used directly.
-    include_previous : bool
-        Whether to include the previous observation by default to supplement this
-        one if required files are missing.
-    freq_bin_size
-        The size of each frequency bin (of the spectra) in units of the raw size.
-
-    Examples
-    --------
-    This will setup an observation with all default options applied:
-
-    >>> path = '/CalibrationObservations/Receiver01_25C_2019_11_26_040_to_200MHz'
-    >>> calobs = CalibrationObservation(path)
-
-    To specify some options for constructing the various calibrator load spectra:
-
-    >>> calobs = CalibrationObservation(
-    >>>     path,
-    >>>    load_kwargs={"cache_dir":".", "ignore_times_percent": 50}
-    >>> )
-
-    But if we typically wanted 50% of times ignored, but in one special case we'd
-    like 80%:
-
-    >>> calobs = CalibrationObservation(
-    >>>     path,
-    >>>     load_kwargs={"cache_dir":".", "ignore_times_percent": 50},
-    >>>     load_spectra={"short": {"ignore_times_percent": 80}}
-    >>> )
-
+    loads
+        dictionary of load names to Loads
+    receiver
+        The object defining the reflection coefficient of the receiver.
+    cterms
+        The number of polynomial terms used for the scaling/offset functions
+    wterms
+        The number of polynomial terms used for the noise-wave parameters.
+    metadata
+        Metadata associated with the data.
     """
 
-    _sources = ("ambient", "hot_load", "open", "short")
-
-    _path: tp.PathLike = attr.ib()
-    semi_rigid_path: tp.PathLike = attr.ib(
-        default=":semi_rigid_s_parameters_WITH_HEADER.txt", kw_only=True
-    )
-    f_low: float = attr.ib(default=40.0, kw_only=True, converter=float)
-    f_high: float | None = attr.ib(
-        default=None, kw_only=True, converter=attr.converters.optional(float)
-    )
-    run_num: int | dict = attr.ib(default=attr.Factory(dict), kw_only=True)
-    repeat_num: int | dict = attr.ib(default=attr.Factory(dict), kw_only=True)
-    resistance_f: float | None = attr.ib(default=None, kw_only=True)
+    loads: dict[str, Load] = attr.ib()
+    receiver: s11.Receiver | s11.AveragedReceiver = attr.ib()
     cterms: int = attr.ib(default=5, kw_only=True)
     wterms: int = attr.ib(default=7, kw_only=True)
-    load_kwargs: dict = attr.ib(default=attr.Factory(dict), kw_only=True)
-    s11_kwargs: dict = attr.ib(default=attr.Factory(dict), kw_only=True)
-    load_spectra: dict[str, LoadSpectrum | dict] = attr.ib(
-        default=attr.Factory(dict), kw_only=True
-    )
-    load_s11s: dict = attr.ib(default=attr.Factory(dict), kw_only=True)
-    compile_from_def: bool = attr.ib(default=True, kw_only=True)
-    include_previous: bool = attr.ib(default=False, kw_only=True)
-    internal_switch_kwargs: dict[str, Any] | None = attr.ib(
-        default=attr.Factory(dict), kw_only=True
-    )
-    freq_bin_size: int = attr.ib(default=1, kw_only=True)
 
-    @f_high.validator
-    def _fh_vld(self, att, val):
-        if val is not None and val < self.f_low:
+    _metadata: dict[str, Any] = attr.ib(default=attr.Factory(dict), kw_only=True)
+
+    @property
+    def metadata(self):
+        """Metadata associated with the object."""
+        return self._metadata
+
+    @classmethod
+    def from_io(
+        cls,
+        io_obj: io.CalibrationObservation,
+        *,
+        semi_rigid_path: tp.PathLike = ":semi_rigid_s_parameters_WITH_HEADER.txt",
+        freq_bin_size: int = 1,
+        spectrum_kwargs: dict[str, dict[str, Any]] | None = None,
+        s11_kwargs: dict[str, dict[str, Any]] | None = None,
+        internal_switch_kwargs: dict[str, Any] | None = None,
+        lna_kwargs: dict[str, Any] | None = None,
+        f_low: tp.FreqType = 40.0 * un.MHz,
+        f_high: tp.FreqType = np.inf * un.MHz,
+        sources: tuple[str] = ("ambient", "hot_load", "open", "short"),
+        receiver_kwargs: dict[str, Any] | None = None,
+        restrict_s11_model_freqs: bool = True,
+        **kwargs,
+    ) -> CalibrationObservation:
+        """Create the object from an edges-io observation.
+
+        Parameters
+        ----------
+        io_obj
+            An calibration observation object from which all the data can be read.
+        semi_rigid_path : str or Path, optional
+            Path to a file containing S11 measurements for the semi rigid cable. Used to
+            correct the hot load S11. Found automatically if not given.
+        freq_bin_size
+            The size of each frequency bin (of the spectra) in units of the raw size.
+        spectrum_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`LoadSpectrum`
+            objects. See its documentation for relevant parameters. Parameters specified
+            here are used for _all_ calibrator sources.
+        s11_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`LoadS11`
+            objects. See its documentation for relevant parameters. Parameters specified
+            here are used for _all_ calibrator sources.
+        internal_switch_kwargs
+            Keyword arguments used to instantiate the :class:`~s11.InternalSwitch`
+            objects. See its documentation for relevant parameters. The same internal
+            switch is used to calibrate the S11 for each input source.
+        f_low : float
+            Minimum frequency to keep for all loads (and their S11's). If for some
+            reason different frequency bounds are desired per-load, one can pass in
+            full load objects through ``load_spectra``.
+        f_high : float
+            Maximum frequency to keep for all loads (and their S11's). If for some
+            reason different frequency bounds are desired per-load, one can pass in
+            full load objects through ``load_spectra``.
+        sources
+            A sequence of strings specifying which loads to actually use in the
+            calibration. Default is all four standard calibrators.
+        receiver_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`~s11.Receiver`
+            objects. See its documentation for relevant parameters. ``lna_kwargs`` is a
+            deprecated alias.
+        restrict_s11_model_freqs
+            Whether to restrict the S11 modelling (i.e. smoothing) to the given freq
+            range. The final output will be calibrated only between the given freq
+            range, but the S11 models themselves can be fit over a broader set of
+            frequencies.
+        """
+        if f_high < f_low:
             raise ValueError("f_high must be larger than f_low!")
 
-    @load_spectra.validator
-    def _ls_vld(self, att, val):
-        if not isinstance(val, dict):
-            raise TypeError("load_spectra must be a dict")
-        for k, v in val.items():
-            if not isinstance(v, (dict, LoadSpectrum)):
-                raise TypeError("values in load_spectra must be dicts or LoadSpectrum")
+        if lna_kwargs is not None:
+            warnings.warn(
+                "Use of 'lna_kwargs' is deprecated, use 'receiver_kwargs' instead."
+            )
+            receiver_kwargs = lna_kwargs
 
-    @load_spectra.validator
-    def _load_spec_vld(self, att, val):
-        if any(name not in self._sources for name in val):
-            raise ValueError(
-                f"Can't specify load_spectra with names: {list(val.keys())}"
+        spectrum_kwargs = spectrum_kwargs or {}
+        s11_kwargs = s11_kwargs or {}
+        internal_switch_kwargs = internal_switch_kwargs or {}
+        receiver_kwargs = receiver_kwargs or {}
+
+        for v in [spectrum_kwargs, s11_kwargs, internal_switch_kwargs, receiver_kwargs]:
+            assert isinstance(v, dict)
+
+        f_low = f_low.to("MHz", copy=False)
+        f_high = f_high.to("MHz", copy=False)
+
+        if "calkit" not in receiver_kwargs:
+            receiver_kwargs["calkit"] = rc.get_calkit(
+                rc.AGILENT_85033E,
+                resistance_of_match=io_obj.definition.get("measurements", {})
+                .get("resistance_f", {})
+                .get(io_obj.s11.receiver_reading[0].run_num, 50.0 * un.Ohm),
             )
 
-    @load_s11s.validator
-    def _load_s11s_vld(self, att, val):
-        if any(name not in self._sources and name not in ["lna"] for name in val):
-            raise ValueError(f"Can't specify load_s11s with names: {list(val.keys())}")
-
-    @cached_property
-    def io(self) -> io.CalibrationObservation:
-        """The underlying io-based data."""
-        if self.compile_from_def:
-            return io.CalibrationObservation.from_def(
-                self._path,
-                run_num=self.run_num,
-                repeat_num=self.repeat_num,
-                include_previous=self.include_previous,
-            )
-        else:
-            return io.CalibrationObservation(
-                self._path,
-                run_num=self.run_num,
-                repeat_num=self.repeat_num,
-            )
-
-    @property
-    def compiled_from_def(self) -> bool:
-        """Alias for compile_from_def."""
-        return self.compile_from_def
-
-    @property
-    def previous_included(self) -> bool:
-        """Alias for include previous."""
-        return self.include_previous
-
-    @safe_property
-    def path(self) -> Path:
-        """The actual path to the observation (even if virtual)."""
-        return self.io.path
-
-    @cached_property
-    def internal_switch(self) -> s11.InternalSwitch:
-        """The internal switch measurements."""
-        kwargs = {
-            **{
-                "resistance": self.io.definition.get("measurements", {})
-                .get("resistance_m", {})
-                .get(self.io.s11.switching_state.run_num, 50.0)
-            },
-            **self.internal_switch_kwargs,
-        }
-        return s11.InternalSwitch(data=self.io.s11.switching_state, **kwargs)
-
-    @cached_property
-    def hot_load_correction(self) -> HotLoadCorrection:
-        """The hot load correction used for the hot load."""
-        return HotLoadCorrection(
-            path=self.semi_rigid_path, f_low=self.f_low, f_high=self.f_high
+        receiver = s11.Receiver.from_io(
+            device=io_obj.s11.receiver_reading,
+            f_low=f_low if restrict_s11_model_freqs else 0 * un.MHz,
+            f_high=f_high if restrict_s11_model_freqs else np.inf * un.MHz,
+            **receiver_kwargs,
         )
 
-    @cached_property
-    def _loads(self) -> dict[str, Load]:
-        try:
-            loads = {}
-            for source in self._sources:
-                load = self.load_spectra.get(source, {})
+        f_low = max(receiver.freq.min, f_low)
+        f_high = min(receiver.freq.max, f_high)
 
-                if isinstance(load, dict):
-                    load = LoadSpectrum(
-                        spec_obj=getattr(self.io.spectra, source),
-                        resistance_obj=getattr(self.io.resistance, source),
-                        f_low=self.f_low,
-                        f_high=self.f_high,
-                        freq_bin_size=self.freq_bin_size,
-                        **{**self.load_kwargs, **load},
-                    )
+        if "default" not in spectrum_kwargs:
+            spectrum_kwargs["default"] = {}
 
-                # Ensure that we finally have a LoadSpectrum
-                if not isinstance(load, LoadSpectrum):
-                    raise TypeError(
-                        "load_spectra must be a dict of LoadSpectrum or dicts."
-                    )
+        if "freq_bin_size" not in spectrum_kwargs["default"]:
+            spectrum_kwargs["default"]["freq_bin_size"] = freq_bin_size
 
-                refl = self.load_s11s.get(source, {})
-
-                if isinstance(refl, dict):
-                    refl = LoadS11(
-                        load_s11=getattr(self.io.s11, source),
-                        internal_switch=self.internal_switch,
-                        f_low=self.f_low,
-                        f_high=self.f_high,
-                        **{**self.s11_kwargs, **refl},
-                    )
-
-                if source == "hot_load":
-                    loads[source] = Load(
-                        load,
-                        refl,
-                        hot_load_correction=self.hot_load_correction,
-                        ambient=loads["ambient"].spectrum,
-                    )
-                else:
-                    loads[source] = Load(load, refl)
-
-            # We must use the most restricted frequency range available from all
-            # available sources as well as the LNA.
-            fmin = max(
-                sum(
-                    (
-                        [load.spectrum.freq._f_low, load.reflections.freq._f_low]
-                        for load in loads.values()
-                    ),
-                    [],
-                )
-                + [self.lna.freq._f_low]
+        loads = {
+            source: Load.from_io(
+                io_obj=io_obj,
+                load_name=source,
+                f_low=f_low,
+                f_high=f_high,
+                reflection_kwargs={
+                    **s11_kwargs.get("default", {}),
+                    **s11_kwargs.get(source, {}),
+                    **{"internal_switch_kwargs": internal_switch_kwargs},
+                },
+                spec_kwargs={
+                    **spectrum_kwargs["default"],
+                    **spectrum_kwargs.get(source, {}),
+                },
+                loss_kwargs={"path": semi_rigid_path},
             )
+            for source in sources
+        }
 
-            fmax = min(
-                sum(
-                    (
-                        [load.spectrum.freq._f_high, load.reflections.freq._f_high]
-                        for load in loads.values()
-                    ),
-                    [],
-                )
-                + [self.lna.freq._f_high]
-            )
-
-            if fmax <= fmin:
-                raise ValueError(
-                    "The inputs loads and S11s have non-overlapping frequency ranges!"
-                )
-
-            # Now make everything actually consistent in its frequency range.
-            new_loads = {}
-            for name, load in loads.items():
-                new_loads[name] = attr.evolve(
-                    load, spectrum=attr.evolve(load.spectrum, f_low=fmin, f_high=fmax)
-                )
-        except AttributeError as e:
-            raise RuntimeError(str(e))
-
-        return new_loads
+        return cls(
+            loads=loads,
+            receiver=receiver,
+            metadata={
+                "path": io_obj.path,
+                "s11_kwargs": s11_kwargs,
+                "lna_kwargs": lna_kwargs,
+                "spectra": {
+                    name: load.spectrum.metadata for name, load in loads.items()
+                },
+                "io": io_obj,
+            },
+            **kwargs,
+        )
 
     def __getattr__(self, name):
         """Get loads as attributes."""
-        if name in self._sources:
-            return self._loads[name]
+        if name in self.loads:
+            return self.loads[name]
 
         raise AttributeError(f"{name} does not exist in CalibrationObservation!")
 
-    @cached_property
-    def lna(self) -> LNA:
-        """The LNA measurements."""
-        refl = self.load_s11s.get("lna", {})
+    def with_load_calkit(self, calkit, loads: Sequence[str] = None):
+        """Return a new observation with loads having given calkit."""
+        if loads is None:
+            loads = self.load_names
+        elif isinstance(loads, str):
+            loads = [loads]
 
-        return LNA(
-            load_s11=self.io.s11.receiver_reading,
-            f_low=self.f_low,
-            f_high=self.f_high,
-            resistance=self.resistance_f
-            or self.io.definition.get("measurements", {})
-            .get("resistance_f", {})
-            .get(self.io.s11.receiver_reading.run_num, 50),
-            **{**self.s11_kwargs, **refl},
-        )
+        loads = {
+            name: load.with_calkit(calkit) if name in loads else load
+            for name, load in self.loads.items()
+        }
 
-    @cached_property
+        return attr.evolve(self, loads=loads)
+
+    @safe_property
     def t_load(self) -> float:
         """Assumed temperature of the load."""
-        return self._loads[list(self._loads.keys())[0]].t_load
+        return self.loads[list(self.loads.keys())[0]].t_load
 
-    @cached_property
+    @safe_property
     def t_load_ns(self) -> float:
         """Assumed temperature of the load + noise source."""
-        return self._loads[list(self._loads.keys())[0]].t_load_ns
+        return self.loads[list(self.loads.keys())[0]].t_load_ns
 
     @cached_property
     def freq(self) -> FrequencyRange:
         """The frequencies at which spectra were measured."""
-        return self._loads[list(self._loads.keys())[0]].spectrum.freq
+        return self.loads[list(self.loads.keys())[0]].freq
+
+    @safe_property
+    def internal_switch(self):
+        """The S11 object representing the internal switch."""
+        return self.loads[self.load_names[0]].reflections.internal_switch
 
     @safe_property
     def load_names(self) -> tuple[str]:
         """Names of the loads."""
-        return tuple(self._loads.keys())
+        return tuple(self.loads.keys())
 
     def new_load(
         self,
         load_name: str,
-        run_num: int = 1,
+        io_obj: io.CalibrationObservation,
         reflection_kwargs: dict | None = None,
         spec_kwargs: dict | None = None,
     ):
@@ -1737,33 +645,12 @@ class CalibrationObservation:
         reflection_kwargs = reflection_kwargs or {}
         spec_kwargs = spec_kwargs or {}
 
-        # Fill up kwargs with keywords from this instance
-        if "resistance" not in reflection_kwargs:
-            reflection_kwargs[
-                "resistance"
-            ] = self.open.reflections.internal_switch.resistance
-
-        for key in [
-            "ignore_times_percent",
-            "rfi_removal",
-            "rfi_kernel_width_freq",
-            "rfi_kernel_width_time",
-            "rfi_threshold",
-            "cache_dir",
-            "t_load",
-            "t_load_ns",
-        ]:
-            if key not in spec_kwargs:
-                spec_kwargs[key] = getattr(self.open.spectrum, key)
-
-        reflection_kwargs["run_num_load"] = run_num
-        reflection_kwargs["repeat_num_switch"] = self.io.s11.switching_state.repeat_num
-        reflection_kwargs["run_num_switch"] = self.io.s11.switching_state.run_num
-        spec_kwargs["run_num"] = run_num
         spec_kwargs["freq_bin_size"] = self.freq.bin_size
+        spec_kwargs["t_load"] = self.open.spectrum.t_load
+        spec_kwargs["t_load_ns"] = self.open.spectrum.t_load_ns
 
-        return Load.from_path(
-            path=self.io.path,
+        return Load.from_io(
+            io_obj=io_obj,
             load_name=load_name,
             f_low=self.freq._f_low,
             f_high=self.freq._f_high,
@@ -1789,14 +676,15 @@ class CalibrationObservation:
         """
         if fig is None and ax is None:
             fig, ax = plt.subplots(
-                len(self._sources), 1, sharex=True, gridspec_kw={"hspace": 0.05}
+                len(self.loads), 1, sharex=True, gridspec_kw={"hspace": 0.05}
             )
 
-        for i, (name, load) in enumerate(self._loads.items()):
-            load.spectrum.plot(
-                fig=fig, ax=ax[i], xlabel=(i == (len(self._sources) - 1))
-            )
+        for i, (name, load) in enumerate(self.loads.items()):
+            ax[i].plot(load.freq.freq, load.averaged_spectrum)
+            ax[i].set_ylabel("$T^*$ [K]")
             ax[i].set_title(name)
+            ax[i].grid(True)
+        ax[-1].set_xlabel("Frequency [MHz]")
 
         return fig
 
@@ -1811,9 +699,9 @@ class CalibrationObservation:
         """
         out = {
             name: source.reflections.plot_residuals(**kwargs)
-            for name, source in self._loads.items()
+            for name, source in self.loads.items()
         }
-        out.update({"lna": self.lna.plot_residuals(**kwargs)})
+        out.update({"lna": self.receiver.plot_residuals(**kwargs)})
         return out
 
     @cached_property
@@ -1823,8 +711,8 @@ class CalibrationObservation:
             return dict(self._injected_source_s11s)
         except (TypeError, AttributeError):
             return {
-                name: source.s11_model(self.freq.freq)
-                for name, source in self._loads.items()
+                name: source.s11_model(self.freq.freq.to_value("MHz"))
+                for name, source in self.loads.items()
             }
 
     @cached_property
@@ -1835,8 +723,7 @@ class CalibrationObservation:
             and self._injected_source_temps is not None
         ):
             return self._injected_source_temps
-
-        return {k: source.temp_ave for k, source in self._loads.items()}
+        return {k: source.temp_ave for k, source in self.loads.items()}
 
     @cached_property
     def _calibration_coefficients(self):
@@ -1847,13 +734,12 @@ class CalibrationObservation:
         ):
             ave_spec = self._injected_averaged_spectra
         else:
-            ave_spec = {
-                k: source.averaged_spectrum for k, source in self._loads.items()
-            }
+            ave_spec = {k: source.averaged_spectrum for k, source in self.loads.items()}
+
         scale, off, Tu, TC, TS = rcf.get_calibration_quantities_iterative(
             self.freq.freq_recentred,
             temp_raw=ave_spec,
-            gamma_rec=self.lna_s11,
+            gamma_rec=self.receiver_s11,
             gamma_ant=self.s11_correction_models,
             temp_ant=self.source_thermistor_temps,
             cterms=self.cterms,
@@ -1912,7 +798,7 @@ class CalibrationObservation:
         """
         return self._calibration_coefficients[4]
 
-    def C1(self, f: float | np.ndarray | None = None):  # noqa: N802
+    def C1(self, f: tp.FreqType | None = None):  # noqa: N802
         """
         Scaling calibration parameter.
 
@@ -1927,7 +813,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.C1_poly(fnorm)
 
-    def C2(self, f: float | np.ndarray | None = None):  # noqa: N802
+    def C2(self, f: tp.FreqType | None = None):  # noqa: N802
         """
         Offset calibration parameter.
 
@@ -1942,7 +828,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.C2_poly(fnorm)
 
-    def Tunc(self, f: float | np.ndarray | None = None):  # noqa: N802
+    def Tunc(self, f: tp.FreqType | None = None):  # noqa: N802
         """
         Uncorrelated noise-wave parameter.
 
@@ -1957,7 +843,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.Tunc_poly(fnorm)
 
-    def Tcos(self, f: float | np.ndarray | None = None):  # noqa: N802
+    def Tcos(self, f: tp.FreqType | None = None):  # noqa: N802
         """
         Cosine noise-wave parameter.
 
@@ -1972,7 +858,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.Tcos_poly(fnorm)
 
-    def Tsin(self, f: float | np.ndarray | None = None):  # noqa: N802
+    def Tsin(self, f: tp.FreqType | None = None):  # noqa: N802
         """
         Sine noise-wave parameter.
 
@@ -1988,12 +874,12 @@ class CalibrationObservation:
         return self.Tsin_poly(fnorm)
 
     @cached_property
-    def lna_s11(self):
+    def receiver_s11(self):
         """The corrected S11 of the LNA evaluated at the data frequencies."""
         if hasattr(self, "_injected_lna_s11") and self._injected_lna_s11 is not None:
             return self._injected_lna_s11
         else:
-            return self.lna.s11_model(self.freq.freq)
+            return self.receiver.s11_model(self.freq.freq.to_value("MHz"))
 
     def get_linear_coefficients(self, load: Load | str):
         """
@@ -2009,11 +895,11 @@ class CalibrationObservation:
         elif load.load_name in self.s11_correction_models:
             load_s11 = self.s11_correction_models[load.load_name]
         else:
-            load_s11 = load.s11_model(self.freq.freq)
+            load_s11 = load.s11_model(self.freq.freq.to_value("MHz"))
 
         return rcf.get_linear_coefficients(
             load_s11,
-            self.lna_s11,
+            self.receiver_s11,
             self.C1(self.freq.freq),
             self.C2(self.freq.freq),
             self.Tunc(self.freq.freq),
@@ -2048,11 +934,10 @@ class CalibrationObservation:
     def _load_str_to_load(self, load: Load | str):
         if isinstance(load, str):
             try:
-                load = self._loads[load]
-            except AttributeError:
+                load = self.loads[load]
+            except (AttributeError, KeyError):
                 raise AttributeError(
-                    "load must be a Load object or a string (one of "
-                    "{ambient,hot_load,open,short})"
+                    f"load must be a Load object or a string (one of {self.load_names})"
                 )
         else:
             assert isinstance(
@@ -2087,14 +972,14 @@ class CalibrationObservation:
                 f"({self.freq.freq.min()} - {self.freq.freq.max()} MHz)"
             )
 
-        if freq.min() > self.freq.freq.max():
+        if freq.max() > self.freq.freq.max():
             warnings.warn("The maximum frequency is outside the calibrated range ")
 
         a, b = self.get_linear_coefficients(load)
         return (temp - b) / a
 
     def get_K(
-        self, freq: np.ndarray | None = None
+        self, freq: tp.FreqType | None = None
     ) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """Get the source-S11-dependent factors of Monsalve (2017) Eq. 7."""
         if freq is None:
@@ -2102,10 +987,11 @@ class CalibrationObservation:
             gamma_ants = self.s11_correction_models
         else:
             gamma_ants = {
-                name: source.s11_model(freq) for name, source in self._loads.items()
+                name: source.s11_model(freq.to_value("MHz"))
+                for name, source in self.loads.items()
             }
 
-        lna_s11 = self.lna.s11_model(freq)
+        lna_s11 = self.receiver.s11_model(freq.to_value("MHz"))
         return {
             name: rcf.get_K(gamma_rec=lna_s11, gamma_ant=gamma_ant)
             for name, gamma_ant in gamma_ants.items()
@@ -2154,51 +1040,31 @@ class CalibrationObservation:
 
         # binning
         temp_calibrated = self.calibrate(load)
-
         if bins > 0:
-            freq_ave_cal = convolve(
-                temp_calibrated, Gaussian1DKernel(stddev=bins), boundary="extend"
-            )
+            freq_ave_cal = bin_array(temp_calibrated, size=bins)
+            f = bin_array(self.freq.freq.to_value("MHz"), size=bins)
         else:
             freq_ave_cal = temp_calibrated
+            f = self.freq.freq.to_value("MHz")
+
         freq_ave_cal[np.isinf(freq_ave_cal)] = np.nan
 
         rms = np.sqrt(np.mean((freq_ave_cal - np.mean(freq_ave_cal)) ** 2))
 
+        ax.plot(
+            f,
+            freq_ave_cal,
+            label=f"Calibrated {load.load_name} [RMS = {rms:.3f}]",
+        )
+
         temp_ave = self.source_thermistor_temps.get(load.load_name, load.temp_ave)
 
-        if as_residuals:
-            freq_ave_cal -= temp_ave
-
-        if load_in_title:
-            ax.set_title(load.spectrum.load_name)
-        elif label:
-            label += f" ({load.spectrum.load_name})"
-        else:
-            label = load.spectrum.load_name
-
-        if rms_in_label:
-            if label:
-                label += f" [RMS={rms:.3f}]"
-            else:
-                label = f"RMS={rms:.3f}"
-
-        ax.plot(self.freq.freq, freq_ave_cal, label=label)
-
-        if not as_residuals:
-            if not hasattr(temp_ave, "__len__"):
-                ax.axhline(
-                    temp_ave,
-                    color="C2",
-                    label="Average thermistor temp" if label else None,
-                )
-            else:
-                ax.plot(
-                    self.freq.freq,
-                    temp_ave,
-                    color="C2",
-                    label="Average thermistor temp",
-                )
+        ax.plot(
+            self.freq.freq,
+            temp_ave,
+            color="C2",
+            label="Average thermistor temp",
+        )
 
         ax.set_ylim([np.nanmin(freq_ave_cal), np.nanmax(freq_ave_cal)])
         if xlabel:
@@ -2215,13 +1081,10 @@ class CalibrationObservation:
 
     def get_load_residuals(self):
         """Get residuals of the calibrated temperature for a each load."""
-        out = {}
-        for source in self._sources:
-            load = self._load_str_to_load(source)
-            cal = self.calibrate(load)
-            true = self.source_thermistor_temps[source]
-            out[source] = cal - true
-        return out
+        return {
+            name: self.calibrate(load) - load.temp_ave
+            for name, load in self.loads.items()
+        }
 
     def get_rms(self, smooth: int = 4):
         """Return a dict of RMS values for each source.
@@ -2253,58 +1116,26 @@ class CalibrationObservation:
         fig :
             Matplotlib figure that was created.
         """
-        if fig is None or ax is None or len(ax) != len(self._sources):
+        if fig is None or ax is None or len(ax) != len(self.loads):
             fig, ax = plt.subplots(
-                len(self._sources),
+                len(self.loads),
                 1,
                 sharex=True,
                 gridspec_kw={"hspace": 0.05},
                 figsize=(10, 12),
             )
 
-        for i, source in enumerate(self._sources):
+        for i, source in enumerate(self.loads):
             self.plot_calibrated_temp(
                 source,
                 bins=bins,
                 fig=fig,
                 ax=ax[i],
-                xlabel=i == (len(self._sources) - 1),
-                **kwargs,
+                xlabel=i == (len(self.loads) - 1),
             )
 
         fig.suptitle("Calibrated Temperatures for Calibration Sources", fontsize=15)
         return fig
-
-    def write_coefficients(self, path: str | None = None):
-        """
-        Save a text file with the derived calibration co-efficients.
-
-        Parameters
-        ----------
-        path : str
-            Directory in which to write the file. The filename starts with
-            `All_cal-params` and includes parameters of the class in the filename.
-            By default, current directory.
-        """
-        path = Path(path or ".")
-
-        if path.is_dir():
-            path /= (
-                f"calibration_parameters_fmin{self.freq.freq.min()}_"
-                f"fmax{self.freq.freq.max()}_C{self.cterms}_W{self.wterms}.txt"
-            )
-
-        np.savetxt(
-            path,
-            [
-                self.freq.freq,
-                self.C1(),
-                self.C2(),
-                self.Tunc(),
-                self.Tcos(),
-                self.Tsin(),
-            ],
-        )
 
     def plot_coefficients(self, fig=None, ax=None):
         """
@@ -2362,16 +1193,13 @@ class CalibrationObservation:
         filename : path
             The filename to write to.
         """
+        # TODO: this is *not* all the metadata available when using edges-io. We should
+        # build a better system of maintaining metadata in subclasses to be used here.
         with h5py.File(filename, "w") as fl:
             # Write attributes
-            fl.attrs["path"] = str(self.io.original_path)
+
             fl.attrs["cterms"] = self.cterms
             fl.attrs["wterms"] = self.wterms
-            fl.attrs["switch_path"] = str(self.internal_switch.data.path)
-            fl.attrs["switch_repeat_num"] = self.internal_switch.data.repeat_num
-            fl.attrs["switch_resistance"] = self.internal_switch.resistance
-            fl.attrs["switch_nterms"] = self.internal_switch.n_terms[0]
-            fl.attrs["switch_model"] = str(self.internal_switch.model)
             fl.attrs["t_load"] = self.open.spectrum.t_load
             fl.attrs["t_load_ns"] = self.open.spectrum.t_load_ns
 
@@ -2380,42 +1208,38 @@ class CalibrationObservation:
             fl["Tunc"] = self.Tunc_poly.coefficients
             fl["Tcos"] = self.Tcos_poly.coefficients
             fl["Tsin"] = self.Tsin_poly.coefficients
-            fl["frequencies"] = self.freq.freq
-            fl["lna_s11_real"] = self.lna.s11_model(self.freq.freq).real
-            fl["lna_s11_imag"] = self.lna.s11_model(self.freq.freq).imag
 
-            fl["internal_switch_s11_real"] = np.real(
-                self.internal_switch.s11_model(self.freq.freq)
+            hickle.dump(self.freq, fl.create_group("frequencies"))
+            hickle.dump(
+                self.receiver,
+                fl.create_group("receiver_s11"),
             )
-            fl["internal_switch_s11_imag"] = np.imag(
-                self.internal_switch.s11_model(self.freq.freq)
+            hickle.dump(
+                self.internal_switch,
+                fl.create_group("internal_switch"),
             )
-            fl["internal_switch_s12_real"] = np.real(
-                self.internal_switch.s12_model(self.freq.freq)
-            )
-            fl["internal_switch_s12_imag"] = np.imag(
-                self.internal_switch.s12_model(self.freq.freq)
-            )
-            fl["internal_switch_s22_real"] = np.real(
-                self.internal_switch.s22_model(self.freq.freq)
-            )
-            fl["internal_switch_s22_imag"] = np.imag(
-                self.internal_switch.s22_model(self.freq.freq)
+            hickle.dump(
+                self.metadata,
+                fl.create_group("metadata"),
             )
 
-            load_grp = fl.create_group("loads")
-
-            for name, load in self._loads.items():
-                grp = load_grp.create_group(name)
-                grp.attrs["s11_model"] = yaml.dump(load.s11_model)
-                grp["averaged_Q"] = load.spectrum.averaged_Q
-                grp["variance_Q"] = load.spectrum.variance_Q
-                grp["temp_ave"] = load.temp_ave
-                grp.attrs["n_integrations"] = load.spectrum.n_integrations
-
-    def to_calfile(self):
-        """Directly create a :class:`Calibration` object without writing to file."""
-        return Calibration.from_calobs(self)
+    def to_calibrator(self):
+        """Directly create a :class:`Calibrator` object without writing to file."""
+        return Calibrator(
+            cterms=self.cterms,
+            wterms=self.wterms,
+            t_load=self.t_load,
+            t_load_ns=self.t_load_ns,
+            C1=self.C1_poly,
+            C2=self.C2_poly,
+            Tunc=self.Tunc_poly,
+            Tcos=self.Tcos_poly,
+            Tsin=self.Tsin_poly,
+            freq=self.freq,
+            receiver_s11=self.receiver.s11_model,
+            internal_switch=self.internal_switch,
+            metadata=self.metadata,
+        )
 
     def inject(
         self,
@@ -2468,183 +1292,191 @@ class CalibrationObservation:
 
         return new
 
+    @classmethod
+    def from_yaml(cls, config: tp.PathLike | dict, obs_path: tp.PathLike | None = None):
+        """Create the calibration observation from a YAML configuration."""
+        if not isinstance(config, dict):
+            with open(config) as yml:
+                config = ayaml.load(yml)
 
-@attr.s
-class _LittleS11:
-    s11_model: Callable = attr.ib()
+        iokw = config.pop("data", {})
+
+        if not obs_path:
+            obs_path = iokw.pop("path")
+
+        from_def = iokw.pop("compile_from_def", False)
+
+        if from_def:
+            io_obs = io.CalibrationObservation.from_def(obs_path, **iokw)
+        else:
+            io_obs = io.CalibrationObservation(obs_path, **iokw)
+
+        return cls.from_io(io_obs, **config)
 
 
-@attr.s
-class _LittleSpectrum:
-    averaged_Q: np.ndarray = attr.ib()
-    variance_Q: np.ndarray = attr.ib()
-    n_integrations: int = attr.ib()
+@h5.hickleable()
+@attr.s(kw_only=True)
+class Calibrator:
+    freq: FrequencyRange = attr.ib()
 
+    cterms: int = attr.ib()
+    wterms: int = attr.ib()
 
-@attr.s
-class _LittleLoad:
-    reflections: _LittleS11 = attr.ib()
-    spectrum: _LittleSpectrum = attr.ib()
-    temp_ave: np.ndarray = attr.ib()
+    _C1: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _C2: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _Tunc: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _Tcos: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _Tsin: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    _receiver_s11: Callable[[np.ndarray], np.ndarray] = attr.ib()
+    internal_switch = attr.ib()
+    t_load: float = attr.ib(300)
+    t_load_ns: float = attr.ib(350)
+    metadata: dict = attr.ib(default=attr.Factory(dict))
 
-    def s11_model(self, freq):
-        return self.reflections.s11_model(freq)
+    def __attrs_post_init__(self):
+        """Initialize properties of the class."""
+        for key in ["C1", "C2", "Tunc", "Tcos", "Tsin"]:
+            setattr(self, key, partial(self._call_func, key=key, norm=True))
+        for key in [
+            "receiver_s11",
+        ]:
+            setattr(self, key, partial(self._call_func, key=key, norm=False))
 
+    def clone(self, **kwargs):
+        """Clone the instance with new parameters."""
+        return attr.evolve(self, **kwargs)
 
-class Calibration:
-    def __init__(self, filename: str | Path):
-        """
-        A class defining an interface to a HDF5 file containing calibration information.
+    @internal_switch.validator
+    def _isw_vld(self, att, val):
+        if isinstance(val, s11.InternalSwitch):
+            return
 
-        Parameters
-        ----------
-        filename : str or Path
-            The path to the calibration file.
-        """
-        self.calfile = Path(filename)
+        for key in ("s11", "s12", "s22"):
+            if not hasattr(val, f"{key}_model") or not callable(
+                getattr(val, f"{key}_model")
+            ):
+                raise ValueError(f"internal_switch must provide {key}_model method")
 
-        with h5py.File(filename, "r") as fl:
-            self.calobs_path = fl.attrs["path"]
-            self.cterms = int(fl.attrs["cterms"])
-            self.wterms = int(fl.attrs["wterms"])
-            self.t_load = fl.attrs.get("t_load", 300)
-            self.t_load_ns = fl.attrs.get("t_load_ns", 400)
+    def _call_func(self, freq: tp.FreqType | None = None, *, key=None, norm=False):
+        if freq is None:
+            freq = self.freq.freq
 
-            self.C1_poly = np.poly1d(fl["C1"][...])
-            self.C2_poly = np.poly1d(fl["C2"][...])
-            self.Tcos_poly = np.poly1d(fl["Tcos"][...])
-            self.Tsin_poly = np.poly1d(fl["Tsin"][...])
-            self.Tunc_poly = np.poly1d(fl["Tunc"][...])
+        if not hasattr(freq, "unit"):
+            raise ValueError("freq must have units of frequency")
 
-            self.freq = FrequencyRange(fl["frequencies"][...])
+        if norm:
+            freq = self.freq.normalize(freq)
+        else:
+            freq = freq.to_value("MHz")
 
-            self._loads = {}
-            if "loads" in fl:
-                lg = fl["loads"]
-
-                self.load_names = list(lg.keys())
-
-                for name, grp in lg.items():
-                    self._loads[name] = _LittleLoad(
-                        reflections=_LittleS11(
-                            s11_model=yaml.load(
-                                grp.attrs["s11_model"], Loader=yaml.FullLoader
-                            ).at(x=self.freq.freq)
-                        ),
-                        spectrum=_LittleSpectrum(
-                            averaged_Q=grp["averaged_Q"][...],
-                            variance_Q=grp["variance_Q"][...],
-                            n_integrations=grp.attrs["n_integrations"],
-                        ),
-                        temp_ave=grp["temp_ave"][...],
-                    )
-                    setattr(self, name, self._loads[name])
-
-            self._lna_s11_rl = Spline(self.freq.freq, fl["lna_s11_real"][...])
-            self._lna_s11_im = Spline(self.freq.freq, fl["lna_s11_imag"][...])
-
-            self._intsw_s11_rl = Spline(
-                self.freq.freq, fl["internal_switch_s11_real"][...]
-            )
-            self._intsw_s11_im = Spline(
-                self.freq.freq, fl["internal_switch_s11_imag"][...]
-            )
-            self._intsw_s12_rl = Spline(
-                self.freq.freq, fl["internal_switch_s12_real"][...]
-            )
-            self._intsw_s12_im = Spline(
-                self.freq.freq, fl["internal_switch_s12_imag"][...]
-            )
-            self._intsw_s22_rl = Spline(
-                self.freq.freq, fl["internal_switch_s22_real"][...]
-            )
-            self._intsw_s22_im = Spline(
-                self.freq.freq, fl["internal_switch_s22_imag"][...]
-            )
+        return getattr(self, "_" + key)(freq)
 
     @classmethod
-    def from_calobs(cls, calobs: CalibrationObservation) -> Calibration:
+    def from_calobs_file(cls, path: tp.PathLike) -> Calibrator:
+        """Generate from calobs file."""
+        calobs = hickle.load(path)
+        return calobs.to_calibrator()
+
+    @classmethod
+    def from_calfile(cls, path: tp.PathLike) -> Calibrator:
+        """Generate from calfile."""
+        with h5py.File(path, "r") as fl:
+            cterms = fl.attrs["cterms"]
+            wterms = fl.attrs["wterms"]
+            t_load = fl.attrs["t_load"]
+            t_load_ns = fl.attrs["t_load_ns"]
+
+            C1 = np.poly1d(fl["C1"])
+            C2 = np.poly1d(fl["C2"])
+            Tunc = np.poly1d(fl["Tunc"])
+            Tcos = np.poly1d(fl["Tcos"])
+            Tsin = np.poly1d(fl["Tsin"])
+
+            freq = hickle.load(fl["frequencies"])
+            receiver_s11 = hickle.load(fl["receiver_s11"])
+            internal_switch = hickle.load(fl["internal_switch"])
+            metadata = hickle.load(fl["metadata"])
+
+        return cls(
+            cterms=cterms,
+            wterms=wterms,
+            t_load=t_load,
+            t_load_ns=t_load_ns,
+            C1=C1,
+            C2=C2,
+            Tunc=Tunc,
+            Tcos=Tcos,
+            Tsin=Tsin,
+            freq=freq,
+            receiver_s11=receiver_s11.s11_model,
+            internal_switch=internal_switch,
+            metadata=metadata,
+        )
+
+    @classmethod
+    def from_old_calfile(cls, path: tp.PathLike) -> Calibrator:
+        """Read from older calfiles."""
+        with h5py.File(path, "r") as fl:
+            cterms = int(fl.attrs["cterms"])
+            wterms = int(fl.attrs["wterms"])
+            t_load = fl.attrs.get("t_load", 300)
+            t_load_ns = fl.attrs.get("t_load_ns", 400)
+
+            C1_poly = np.poly1d(fl["C1"][...])
+            C2_poly = np.poly1d(fl["C2"][...])
+            Tcos_poly = np.poly1d(fl["Tcos"][...])
+            Tsin_poly = np.poly1d(fl["Tsin"][...])
+            Tunc_poly = np.poly1d(fl["Tunc"][...])
+
+            freq = FrequencyRange(fl["frequencies"][...] * un.MHz)
+
+            try:
+                metadata = dict(fl["metadata"].attrs)
+            except KeyError:
+                # For backwards compat
+                metadata = {}
+
+            _lna_s11_rl = Spline(freq.freq.to_value("MHz"), fl["lna_s11_real"][...])
+            _lna_s11_im = Spline(freq.freq.to_value("MHz"), fl["lna_s11_imag"][...])
+
+            _intsw_s11_rl = Spline(freq.freq, fl["internal_switch_s11_real"][...])
+            _intsw_s11_im = Spline(freq.freq, fl["internal_switch_s11_imag"][...])
+            _intsw_s12_rl = Spline(freq.freq, fl["internal_switch_s12_real"][...])
+            _intsw_s12_im = Spline(freq.freq, fl["internal_switch_s12_imag"][...])
+            _intsw_s22_rl = Spline(freq.freq, fl["internal_switch_s22_real"][...])
+            _intsw_s22_im = Spline(freq.freq, fl["internal_switch_s22_imag"][...])
+
+            internal_switch = SimpleNamespace(
+                s11_model=lambda freq: _intsw_s11_rl(freq) + _intsw_s11_im(freq) * 1j,
+                s12_model=lambda freq: _intsw_s12_rl(freq) + _intsw_s12_im(freq) * 1j,
+                s22_model=lambda freq: _intsw_s22_rl(freq) + _intsw_s22_im(freq) * 1j,
+            )
+
+        return cls(
+            C1=C1_poly,
+            C2=C2_poly,
+            Tunc=Tunc_poly,
+            Tcos=Tcos_poly,
+            Tsin=Tsin_poly,
+            freq=freq,
+            receiver_s11=lambda x: _lna_s11_rl(x) + 1j * _lna_s11_im(x),
+            internal_switch=internal_switch,
+            t_load=t_load,
+            t_load_ns=t_load_ns,
+            cterms=cterms,
+            wterms=wterms,
+            metadata=metadata,
+        )
+
+    @classmethod
+    def from_calobs(cls, calobs: CalibrationObservation) -> Calibrator:
         """Generate a :class:`Calibration` from an in-memory observation."""
-        tmp = tempfile.mktemp()
-        calobs.write(tmp)
-        return cls(tmp)
-
-    def lna_s11(self, freq=None):
-        """Get the LNA S11 at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self._lna_s11_rl(freq) + 1j * self._lna_s11_im(freq)
-
-    def internal_switch_s11(self, freq=None):
-        """Get the S11 of the internal switch at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self._intsw_s11_rl(freq) + 1j * self._intsw_s11_im(freq)
-
-    def internal_switch_s12(self, freq=None):
-        """Get the S12 of the internal switch at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self._intsw_s12_rl(freq) + 1j * self._intsw_s12_im(freq)
-
-    def internal_switch_s22(self, freq=None):
-        """Get the S22 of the internal switch at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self._intsw_s22_rl(freq) + 1j * self._intsw_s22_im(freq)
-
-    def C1(self, freq=None):
-        """Evaluate the Scale polynomial at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self.C1_poly(self.freq.normalize(freq))
-
-    def C2(self, freq=None):
-        """Evaluate the Offset polynomial at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self.C2_poly(self.freq.normalize(freq))
-
-    def Tcos(self, freq=None):
-        """Evaluate the cos temperature polynomial at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self.Tcos_poly(self.freq.normalize(freq))
-
-    def Tsin(self, freq=None):
-        """Evaluate the sin temperature polynomial at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self.Tsin_poly(self.freq.normalize(freq))
-
-    def Tunc(self, freq=None):
-        """Evaluate the uncorrelated temperature polynomial at given frequencies."""
-        if freq is None:
-            freq = self.freq.freq
-        return self.Tunc_poly(self.freq.normalize(freq))
-
-    def get_K(
-        self, freq: np.ndarray | None = None
-    ) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
-        """Get the source-S11-dependent factors of Monsalve (2017) Eq. 7."""
-        if freq is None:
-            freq = self.freq.freq
-            gamma_ants = self.s11_correction_models
-        else:
-            gamma_ants = {
-                name: source.s11_model(freq) for name, source in self._loads.items()
-            }
-
-        lna_s11 = self.lna_s11(freq)
-        return {
-            name: rcf.get_K(gamma_rec=lna_s11, gamma_ant=gamma_ant)
-            for name, gamma_ant in gamma_ants.items()
-        }
+        return calobs.to_calibrator()
 
     def _linear_coefficients(self, freq, ant_s11):
         return rcf.get_linear_coefficients(
             ant_s11,
-            self.lna_s11(freq),
+            self.receiver_s11(freq),
             self.C1(freq),
             self.C2(freq),
             self.Tunc(freq),
@@ -2730,14 +1562,8 @@ def perform_term_sweep(
     delta_rms_thresh: float = 0,
     max_cterms: int = 15,
     max_wterms: int = 15,
-    explore_run_nums: bool = False,
-    explore_repeat_nums: bool = False,
-    direc=".",
-    verbose=False,
 ) -> CalibrationObservation:
     """For a given calibration definition, perform a sweep over number of terms.
-
-    There are options to save _every_ calibration solution, or just the "best" one.
 
     Parameters
     ----------
@@ -2752,149 +1578,43 @@ def perform_term_sweep(
         The maximum number of cterms to trial.
     max_wterms : int
         The maximum number of wterms to trial.
-    explore_run_nums : bool
-        Whether to iterate over S11 run numbers to find the best residuals.
-    explore_repeat_nums : bool
-        Whether to iterate over S11 repeat numbers to find the best residuals.
-    direc : str
-        Directory to write resultant :class:`Calibration` file to.
-    verbose : bool
-        Whether to write out the RMS values derived throughout the sweep.
-
-    Notes
-    -----
-    When exploring run/repeat nums, run nums are kept constant within a load (i.e. the
-    match/short/open etc. all have either run_num=1 or run_num=2 for the same load.
-    This is physically motivated.
     """
     cterms = range(calobs.cterms, max_cterms)
     wterms = range(calobs.wterms, max_wterms)
 
     winner = np.zeros(len(cterms), dtype=int)
+    rms = np.ones((len(cterms), len(wterms))) * np.inf
 
-    s11_keys = ["switching_state", "receiver_reading"] + list(io.LOAD_ALIASES.keys())
-    if explore_repeat_nums:
-        # Note that we don't explore run_nums for spectra/resistance, because it's rare
-        # to have those, and they'll only exist if one got completely botched (and that
-        # should be set by the user).
-        rep_num = {
-            k: range(1, getattr(calobs.io.s11, k).max_repeat_num + 1) for k in s11_keys
-        }
-    else:
-        rep_num = {k: [getattr(calobs.io.s11, k).repeat_num] for k in s11_keys}
+    for i, c in enumerate(cterms):
+        for j, w in enumerate(wterms):
+            clb = calobs.clone(cterms=c, wterms=w)
 
-    rep_num = tools.dct_of_list_to_list_of_dct(rep_num)
+            res = clb.get_load_residuals()
+            dof = sum(len(r) for r in res.values()) - c - w
 
-    if explore_run_nums:
-        run_num = {
-            "switching_state": range(
-                1, calobs.io.s11.get_highest_run_num("SwitchingState") + 1
-            ),
-            "receiver_reading": range(
-                1, calobs.io.s11.get_highest_run_num("ReceiverReading") + 1
-            ),
-        }
-    else:
-        run_num = {
-            "switching_state": [calobs.io.s11.switching_state.run_num],
-            "receiver_reading": [calobs.io.s11.receiver_reading.run_num],
-        }
+            rms[i, j] = np.sqrt(
+                sum(np.nansum(np.square(x)) for x in res.values()) / dof
+            )
 
-    run_num = tools.dct_of_list_to_list_of_dct(run_num)
+            logger.info(f"Nc = {c:02}, Nw = {w:02}; RMS/dof = {rms[i, j]:1.3e}")
 
-    best_rms = np.inf
-    for this_rep_num in rep_num:
-        for this_run_num in run_num:
+            # If we've decreased by more than the threshold, this wterms becomes
+            # the new winner (for this number of cterms)
+            if j > 0 and rms[i, j] >= rms[i, j - 1] - delta_rms_thresh:
+                winner[i] = j - 1
+                break
 
-            if verbose:
-                print(
-                    f"SWEEPING SwSt={calobs.io.s11.switching_state.repeat_num}, "
-                    f"RcvRd={calobs.io.s11.receiver_reading.repeat_num} "
-                    f"[Sw={calobs.io.s11.switching_state.run_num}, "
-                    f"RR={calobs.io.s11.receiver_reading.run_num}, "
-                    f"open={calobs.io.s11.open.run_num}, "
-                    f"short={calobs.io.s11.short.run_num}, "
-                    f"ambient={calobs.io.s11.ambient.run_num}, "
-                    f"hot={calobs.io.s11.hot_load.run_num}]"
-                )
-                print("-" * 30)
+        if i > 0 and rms[i, winner[i]] >= rms[i - 1, winner[i - 1]] - delta_rms_thresh:
+            break
 
-            rms = np.zeros((len(cterms), len(wterms)))
-
-            for i, c in enumerate(cterms):
-                for j, w in enumerate(wterms):
-                    clb = calobs.clone(
-                        cterms=c,
-                        wterms=w,
-                        repeat_num=this_rep_num,
-                        run_num=this_run_num,
-                    )
-                    res = clb.get_load_residuals()
-                    dof = sum(len(r) for r in res.values()) - c - w
-
-                    rms[i, j] = np.sqrt(
-                        sum(np.nansum(np.square(x)) for x in res.values()) / dof
-                    )
-
-                    if verbose:
-                        print(f"Nc = {c:02}, Nw = {w:02}; RMS/dof = {rms[i, j]:1.3e}")
-
-                    # If we've decreased by more than the threshold, this wterms becomes
-                    # the new winner (for this number of cterms)
-                    if j > 0 and rms[i, j] >= rms[i, j - 1] - delta_rms_thresh:
-                        winner[i] = j - 1
-                        break
-
-                if (
-                    i > 0
-                    and rms[i, winner[i]]
-                    >= rms[i - 1, winner[i - 1]] - delta_rms_thresh
-                ):
-                    break
-
-            if verbose:
-                print(
-                    f"Best parameters found for Nc={cterms[i-1]}, "
-                    f"Nw={wterms[winner[i-1]]}, "
-                    f"with RMS = {rms[i-1, winner[i-1]]}."
-                )
-                print()
-
-            if rms[i - 1, winner[i - 1]] < best_rms:
-                best_run_combo = (
-                    clb.io.run_num,
-                    clb.io.s11.receiver_reading.repeat_num,
-                    clb.io.s11.switching_state.repeat_num,
-                )
-                best_cterms = cterms[i - 1]
-                best_wterms = wterms[winner[i - 1]]
-
-    if verbose and (explore_repeat_nums or explore_run_nums):
-        print("The very best parameters were found were for:")
-        print(f"\tSwitchingState Repeat = {best_run_combo[2]}")
-        print(f"\tReceiverReading Repeat = {best_run_combo[1]}")
-        print(f"\tRun Numbers = {best_run_combo[0]}")
-        print(f"\t# C-terms = {best_cterms}")
-        print(f"\t# W-terms = {best_wterms}")
-
-    clb = calobs.clone(
-        cterms=best_cterms,
-        wterms=best_wterms,
-        run_num=best_run_combo[0],
-        repeat_num={
-            "switching_state": best_run_combo[2],
-            "receiver_reading": best_run_combo[1],
-        },
+    logger.info(
+        f"Best parameters found for Nc={cterms[i-1]}, "
+        f"Nw={wterms[winner[i-1]]}, "
+        f"with RMS = {rms[i-1, winner[i-1]]}."
     )
 
-    if direc is not None:
-        direc = Path(direc)
-        if not direc.exists():
-            direc.mkdir(parents=True)
-
-        pth = Path(clb.path).parent.name
-
-        pth = str(pth) + f"_c{clb.cterms}_w{clb.wterms}.h5"
-        clb.write(direc / pth)
-
-    return clb
+    best = np.unravel_index(np.argmin(rms), rms.shape)
+    return calobs.clone(
+        cterms=cterms[best[0]],
+        wterms=cterms[best[1]],
+    )
