@@ -165,7 +165,6 @@ class ThermistorReadings:
 def get_ave_and_var_spec(
     spec_obj,
     load_name,
-    hsh,
     freq,
     ignore_times_percent,
     freq_bin_size,
@@ -369,7 +368,9 @@ class LoadSpectrum:
 
         sig = inspect.signature(cls.from_io)
         lc = locals()
-        defining_dict = {p: lc[p] for p in sig.parameters if p not in ["cls"]}
+        defining_dict = {p: lc[p] for p in sig.parameters if p not in ["cls", "io_obs"]}
+        defining_dict["spec"] = spec
+        defining_dict["res"] = res
 
         hsh = iou.stable_hash(
             tuple(defining_dict.values()) + (__version__.split(".")[0],)
@@ -392,7 +393,6 @@ class LoadSpectrum:
         means, variances, n_integ = get_ave_and_var_spec(
             spec_obj=spec,
             load_name=load_name,
-            hsh=hsh,
             freq=freq,
             ignore_times_percent=ignore_times_percent,
             freq_bin_size=freq_bin_size,
