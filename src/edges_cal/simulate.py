@@ -145,7 +145,7 @@ def simulate_qant_from_calobs(
     ant_temp = loss * ant_temp / bm_corr + (1 - loss) * t_amb
 
     lna_s11 = (
-        calobs.receiver_s11(freq.to_value("MHz"))
+        calobs.receiver_s11(freq)
         if callable(calobs.receiver_s11)
         else calobs.receiver.s11_model(freq.to_value("MHz"))
     )
