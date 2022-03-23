@@ -28,14 +28,16 @@ def tmpdir(tmp_path_factory):
     return tmp_path_factory.mktemp("edges-cal")
 
 
-@pytest.fixture(scope="session")
-def io_obs(cal_data):
-    return io.CalibrationObservation(cal_data)
-
-
 @pytest.fixture(scope="session", autouse=True)
 def set_cache_dir(tmpdir):
-    config["cal"]["cache_dir"] = str(tmpdir / "cal-cache")
+    print("DOING THIS")
+    config["cal"]["cache-dir"] = str(tmpdir / "cal-cache")
+
+
+@pytest.fixture(scope="session")
+def io_obs(cal_data):
+    print(config["cal"]["cache-dir"])
+    return io.CalibrationObservation(cal_data)
 
 
 @pytest.fixture(scope="session")

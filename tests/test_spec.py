@@ -29,6 +29,27 @@ def test_read(io_obs: CalibrationObservation):
         assert np.all(spec.variance_spectrum[mask] > spec.variance_Q[mask])
 
 
+def test_gauss_smooth(io_obs: CalibrationObservation):
+    spec = LoadSpectrum.from_io(
+        io_obs,
+        "ambient",
+        f_high=100 * u.MHz,
+        f_low=50 * u.MHz,
+        freq_bin_size=8,
+        frequency_smoothing="gauss",
+    )
+    spec2 = LoadSpectrum.from_io(
+        io_obs,
+        "ambient",
+        f_high=100 * u.MHz,
+        f_low=50 * u.MHz,
+        freq_bin_size=8,
+        frequency_smoothing="bin",
+    )
+
+    assert np.allclose(spec.averaged_Q, spec2.averaged_Q, atol=1e-2, rtol=0.1)
+
+
 def test_equality(io_obs: CalibrationObservation):
     spec1 = LoadSpectrum.from_io(
         io_obs, "ambient", f_high=100 * u.MHz, f_low=50 * u.MHz

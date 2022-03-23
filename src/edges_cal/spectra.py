@@ -172,8 +172,17 @@ def get_ave_and_var_spec(
     rfi_kernel_width_freq,
     temperature_range,
     thermistor,
+    frequency_smoothing: str,
 ) -> tuple[dict, dict, int]:
-    """Get the mean and variance of the spectra."""
+    """Get the mean and variance of the spectra.
+
+    Parameters
+    ----------
+    freqeuncy_smoothing
+        How to average frequency bins together. Default is to merely bin them
+        directly. Other options are 'gauss' to do Gaussian filtering (this is the
+        same as Alan's C pipeline).
+    """
     logger.info(f"Reducing {load_name} spectra...")
     spectra = read_spectrum(
         spec_obj=spec_obj, freq=freq, ignore_times_percent=ignore_times_percent
@@ -227,7 +236,13 @@ def get_ave_and_var_spec(
         # Weird thing where there are zeros in the spectra.
         spec[spec == 0] = np.nan
 
-        spec = tools.bin_array(spec.T, size=freq_bin_size).T
+        if freq_bin_size > 1:
+            if frequency_smoothing == "bin":
+                spec = tools.bin_array(spec.T, size=freq_bin_size).T
+            elif frequency_smoothing == "gauss":
+                spec = tools.gauss_smooth(spec.T, size=freq_bin_size).T
+            else:
+                raise ValueError("frequency_smoothing must be one of ('bin', 'gauss').")
         spec[:, ~temp_mask] = np.nan
 
         mean = np.nanmean(spec, axis=1)
@@ -338,6 +353,7 @@ class LoadSpectrum:
         rfi_threshold: float = 6.0,
         rfi_kernel_width_freq: int = 16,
         temperature_range: float | tuple[float, float] | None = None,
+        frequency_smoothing: str = "bin",
         **kwargs,
     ):
         """Instantiate the class from a given load name and directory.
@@ -352,6 +368,10 @@ class LoadSpectrum:
             The run number to use for the spectra.
         filetype : str
             The filetype to look for (acq or h5).
+        freqeuncy_smoothing
+            How to average frequency bins together. Default is to merely bin them
+            directly. Other options are 'gauss' to do Gaussian filtering (this is the
+            same as Alan's C pipeline).
         kwargs :
             All other arguments to :class:`LoadSpectrum`.
 
@@ -400,6 +420,7 @@ class LoadSpectrum:
             rfi_kernel_width_freq=rfi_kernel_width_freq,
             temperature_range=temperature_range,
             thermistor=thermistor,
+            frequency_smoothing=frequency_smoothing,
         )
 
         temperature = thermistor.get_physical_temperature()
@@ -425,7 +446,7 @@ class LoadSpectrum:
 
         if cache_dir is not None:
             if not cache_dir.exists():
-                cache_dir.makedirs()
+                cache_dir.mkdir(parents=True)
             hickle.dump(out, fname)
 
         return out

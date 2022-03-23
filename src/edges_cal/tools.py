@@ -9,6 +9,7 @@ from astropy import units as u
 from edges_io import h5
 from itertools import product
 from pathlib import Path
+from scipy.ndimage import convolve1d
 from typing import Any, Callable, Sequence
 
 from . import DATA_PATH
@@ -365,3 +366,19 @@ def bin_array(x: np.ndarray, size: int = 1) -> np.ndarray:
     n = x.shape[-1]
     nn = size * (n // size)
     return np.nanmean(x[..., :nn].reshape(x.shape[:-1] + (-1, size)), axis=-1)
+
+
+def gauss_smooth(x: np.ndarray, size: int) -> np.ndarray:
+    """Smooth x with a Gaussian function, and reduces the size of the array."""
+    assert isinstance(size, int)
+
+    # This choice of size scaling corresponds to Alan's C code.
+    y = np.arange(-size * 4, size * 4 + 1) * 2 / size
+    window = np.exp(-(y ** 2) * 0.69)
+
+    sums = convolve1d(x, window, mode="nearest")[..., int(size / 2) :: size]
+    wghts = convolve1d(np.ones_like(x), window, mode="nearest")[
+        ..., int(size / 2) :: size
+    ]
+
+    return sums / wghts
