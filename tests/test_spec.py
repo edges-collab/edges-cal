@@ -47,7 +47,11 @@ def test_gauss_smooth(io_obs: CalibrationObservation):
         frequency_smoothing="bin",
     )
 
-    assert np.allclose(spec.averaged_Q, spec2.averaged_Q, atol=1e-2, rtol=0.1)
+    assert spec.averaged_Q.shape == spec2.averaged_Q.shape
+    mask = (~np.isnan(spec.averaged_Q)) & (~np.isnan(spec2.averaged_Q))
+    np.testing.assert_allclose(
+        spec.averaged_Q[mask], spec2.averaged_Q[mask], atol=1e-2, rtol=0.1
+    )
 
 
 def test_equality(io_obs: CalibrationObservation):
