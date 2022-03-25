@@ -144,7 +144,7 @@ class ThermistorReadings:
         else:
             times = [
                 datetime.strptime(d.split(".")[0], "%m/%d/%Y %H:%M:%S")
-                for d in self.data["start_time"].astype(str)
+                for d in self._data["start_time"].astype(str)
             ]
 
         return times
