@@ -384,6 +384,7 @@ class LoadSpectrum:
         rfi_kernel_width_freq: int = 16,
         temperature_range: float | tuple[float, float] | None = None,
         frequency_smoothing: str = "bin",
+        temperature: float | None = None,
         **kwargs,
     ):
         """Instantiate the class from a given load name and directory.
@@ -457,14 +458,15 @@ class LoadSpectrum:
             frequency_smoothing=frequency_smoothing,
         )
 
-        temperature = thermistor.get_physical_temperature()
+        if temperature is None:
+            temperature = np.nanmean(thermistor.get_physical_temperature())
 
         out = cls(
             freq=freq,
             q=means["Q"],
             variance=variances["Q"],
             n_integrations=n_integ,
-            temp_ave=np.nanmean(temperature),
+            temp_ave=temperature,
             metadata={
                 "spectra_path": spec[0].path,
                 "resistance_path": res.path,
