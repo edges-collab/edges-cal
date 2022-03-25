@@ -18,6 +18,7 @@ from typing import Any, Sequence
 from . import __version__
 from . import receiver_calibration_func as rcf
 from . import tools, xrfi
+from .cached_property import cached_property
 from .config import config
 from .tools import FrequencyRange
 
@@ -85,10 +86,20 @@ def get_spectrum_ancillary(
 @h5.hickleable()
 @attr.s
 class ThermistorReadings:
+    """
+    Object containing thermistor readings.
+
+    Parameters
+    ----------
+    data
+        The data array containing the readings.
+    ignore_times_percent
+        The fraction of readings to ignore at the start of the observation. If greater
+        than 100, will be interpreted as being a number of seconds to ignore.
+    """
+
     _data: np.ndarray = attr.ib()
-    ignore_times_percent: float = attr.ib(
-        0.0, validator=(attr.validators.ge(0.0), attr.validators.lt(100.0))
-    )
+    ignore_times_percent: float = attr.ib(0.0, validator=attr.validators.ge(0.0))
 
     @_data.validator
     def _data_vld(self, att, val):
@@ -99,10 +110,17 @@ class ThermistorReadings:
                         f"{key} must be in the data for ThermistorReadings"
                     )
 
-    @property
+    @cached_property
     def ignore_ntimes(self) -> int:
         """Number of time integrations to ignore from the start of the observation."""
-        return int(len(self._data) * self.ignore_times_percent / 100)
+        if self.ignore_times_percent <= 100.0:
+            return int(len(self._data) * self.ignore_times_percent / 100)
+        else:
+            ts = self.get_timestamps()
+            for i, t in enumerate(ts):
+                if (t - ts[0]).seconds > self.ignore_times_percent:
+                    break
+            return i
 
     @property
     def data(self):
@@ -184,13 +202,25 @@ def get_ave_and_var_spec(
         same as Alan's C pipeline).
     """
     logger.info(f"Reducing {load_name} spectra...")
-    spectra = read_spectrum(
-        spec_obj=spec_obj, freq=freq, ignore_times_percent=ignore_times_percent
-    )
-    spec_anc = get_spectrum_ancillary(spec_obj, ignore_times_percent)
+    spec_anc = get_spectrum_ancillary(spec_obj, 0)
     spec_timestamps = [
         datetime.strptime(d, "%Y:%j:%H:%M:%S") for d in spec_anc["times"].astype(str)
     ]
+    if ignore_times_percent > 100.0:
+        # Interpret as a number of seconds.
+        for i, t in enumerate(spec_timestamps):
+            if (t - spec_timestamps[0]).seconds > ignore_times_percent:
+                break
+        ignore_times_percent = 100 * i / len(spec_timestamps)
+        ignore_ninteg = i
+    else:
+        ignore_ninteg = int(len(spec_timestamps) * ignore_times_percent / 100.0)
+
+    spectra = read_spectrum(
+        spec_obj=spec_obj, freq=freq, ignore_times_percent=ignore_times_percent
+    )
+    spec_anc = {k: v[ignore_ninteg:] for k, v in spec_anc.items()}
+
     thermistor_temp = thermistor.get_physical_temperature()
     thermistor_times = thermistor.get_timestamps()
 
@@ -372,6 +402,10 @@ class LoadSpectrum:
             How to average frequency bins together. Default is to merely bin them
             directly. Other options are 'gauss' to do Gaussian filtering (this is the
             same as Alan's C pipeline).
+        ignore_times_percent
+            The fraction of readings to ignore at the start of the observation. If
+            greater than 100, will be interpreted as being a number of seconds to
+            ignore.
         kwargs :
             All other arguments to :class:`LoadSpectrum`.
 
