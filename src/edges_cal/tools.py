@@ -161,7 +161,7 @@ class FrequencyRange:
         np.inf * u.MHz, validator=vld_unit("frequency"), kw_only=True
     )
     bin_size: int = attr.ib(default=1, converter=int, kw_only=True)
-    alan_mode: bool = attr.ib(defaut=False, converter=bool, kw_only=True)
+    alan_mode: bool = attr.ib(default=False, converter=bool, kw_only=True)
 
     @bin_size.validator
     def _bin_size_validator(self, att, val):
