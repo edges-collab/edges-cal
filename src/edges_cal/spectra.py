@@ -495,6 +495,7 @@ class LoadSpectrum:
                 "rfi_kernel_width_freq": rfi_kernel_width_freq,
                 "temperature_range": temperature_range,
                 "hash": hsh,
+                "frequency_smoothing": frequency_smoothing,
             },
             **kwargs,
         )

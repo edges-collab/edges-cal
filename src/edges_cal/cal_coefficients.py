@@ -656,11 +656,18 @@ class CalibrationObservation:
         spec_kwargs["t_load"] = self.open.spectrum.t_load
         spec_kwargs["t_load_ns"] = self.open.spectrum.t_load_ns
 
+        if "frequency_smoothing" not in spec_kwargs:
+            spec_kwargs["frequency_smoothing"] = self.open.spectrum.metadata[
+                "frequency_smoothing"
+            ]
+
+        spec_kwargs
         return Load.from_io(
             io_obj=io_obj,
             load_name=load_name,
             f_low=self.freq._f_low,
             f_high=self.freq._f_high,
+            f_range_keep=(self.freq.post_bin_f_low, self.freq.post_bin_f_high),
             reflection_kwargs=reflection_kwargs,
             spec_kwargs=spec_kwargs,
         )
