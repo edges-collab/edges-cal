@@ -376,15 +376,23 @@ def bin_array(x: np.ndarray, size: int = 1) -> np.ndarray:
     return np.nanmean(x[..., :nn].reshape(x.shape[:-1] + (-1, size)), axis=-1)
 
 
-def gauss_smooth(x: np.ndarray, size: int) -> np.ndarray:
+def gauss_smooth(
+    x: np.ndarray, size: int, decimate_at: int | None = None
+) -> np.ndarray:
     """Smooth x with a Gaussian function, and reduces the size of the array."""
     assert isinstance(size, int)
+
+    if decimate_at is None:
+        decimate_at = int(size / 2)
+
+    assert isinstance(decimate_at, int)
+    assert decimate_at < size
 
     # This choice of size scaling corresponds to Alan's C code.
     y = np.arange(-size * 4, size * 4 + 1) * 2 / size
     window = np.exp(-(y ** 2) * 0.69)
 
-    sums = convolve1d(x, window, mode="nearest")[..., int(size / 2) :: size]
-    wghts = convolve1d(np.ones_like(x), window, mode="nearest")[..., ::size]
+    sums = convolve1d(x, window, mode="nearest")[..., decimate_at::size]
+    wghts = convolve1d(np.ones_like(x), window, mode="nearest")[..., decimate_at::size]
 
     return sums / wghts

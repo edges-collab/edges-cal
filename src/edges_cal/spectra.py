@@ -270,7 +270,11 @@ def get_ave_and_var_spec(
             if frequency_smoothing == "bin":
                 spec = tools.bin_array(spec.T, size=freq_bin_size).T
             elif frequency_smoothing == "gauss":
-                spec = tools.gauss_smooth(spec.T, size=freq_bin_size).T
+                # We only really allow Gaussian smoothing so that we can match Alan's
+                # pipeline. In that case, the frequencies actually kept start from the
+                # 0th index, instead of taking the centre of each new bin. Thus we
+                # set decimate_at = 0.
+                spec = tools.gauss_smooth(spec.T, size=freq_bin_size, decimate_at=0).T
             else:
                 raise ValueError("frequency_smoothing must be one of ('bin', 'gauss').")
         spec[:, ~temp_mask] = np.nan
