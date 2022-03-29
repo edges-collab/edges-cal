@@ -438,7 +438,6 @@ class LoadSpectrum:
             f_high=f_high,
             bin_size=freq_bin_size,
             alan_mode=frequency_smoothing == "gauss",
-            keep_full=False,
         )
 
         sig = inspect.signature(cls.from_io)
