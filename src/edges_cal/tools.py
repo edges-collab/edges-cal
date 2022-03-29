@@ -385,8 +385,6 @@ def gauss_smooth(x: np.ndarray, size: int) -> np.ndarray:
     window = np.exp(-(y ** 2) * 0.69)
 
     sums = convolve1d(x, window, mode="nearest")[..., int(size / 2) :: size]
-    wghts = convolve1d(np.ones_like(x), window, mode="nearest")[
-        ..., int(size / 2) :: size
-    ]
+    wghts = convolve1d(np.ones_like(x), window, mode="nearest")[..., ::size]
 
     return sums / wghts
