@@ -289,11 +289,19 @@ class Load:
                 ],
             )
 
+        # For the LoadSpectrum, we can specify both f_low/f_high and f_range_keep.
+        # The first pair is what defines what gets read in and smoothed/averaged.
+        # The second pair then selects a part of this range to keep for doing
+        # calibration with.
+        if "f_low" not in spec_kwargs:
+            spec_kwargs["f_low"] = f_low
+        if "f_high" not in spec_kwargs:
+            spec_kwargs["f_high"] = f_high
+
         spec = LoadSpectrum.from_io(
             io_obs=io_obj,
             load_name=load_name,
-            f_low=f_low,
-            f_high=f_high,
+            f_range_keep=(f_low, f_high),
             **spec_kwargs,
         )
 
@@ -312,8 +320,7 @@ class Load:
                 ambient_temperature = LoadSpectrum.from_io(
                     io_obj,
                     load_name="ambient",
-                    f_low=f_low,
-                    f_high=f_high,
+                    f_range_keep=(f_low, f_high),
                     **spec_kwargs,
                 ).temp_ave
 

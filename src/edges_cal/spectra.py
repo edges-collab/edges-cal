@@ -17,7 +17,9 @@ from typing import Any, Sequence
 
 from . import __version__
 from . import receiver_calibration_func as rcf
-from . import tools, xrfi
+from . import tools
+from . import types as tp
+from . import xrfi
 from .cached_property import cached_property
 from .config import config
 from .tools import FrequencyRange
@@ -329,10 +331,10 @@ class LoadSpectrum:
     """
 
     freq: FrequencyRange = attr.ib()
-    q: np.ndarray = attr.ib(
+    _q: np.ndarray = attr.ib(
         eq=attr.cmp_using(eq=partial(np.array_equal, equal_nan=True))
     )
-    variance: np.ndarray | None = attr.ib(
+    _variance: np.ndarray | None = attr.ib(
         eq=attr.cmp_using(eq=partial(np.array_equal, equal_nan=True))
     )
     n_integrations: int = attr.ib()
@@ -352,6 +354,16 @@ class LoadSpectrum:
                 "f_high": self.freq.max,
             },
         }
+
+    @property
+    def q(self):
+        """The Q-ratio of the three-position switch averaged over time."""
+        return self._q[self.freq.mask]
+
+    @property
+    def variance(self):
+        """The Q-ratio of the three-position switch averaged over time."""
+        return self._variance[self.freq.mask]
 
     @classmethod
     def from_h5(cls, path):
@@ -382,6 +394,7 @@ class LoadSpectrum:
         load_name: str,
         f_low=40.0 * un.MHz,
         f_high=np.inf * un.MHz,
+        f_range_keep: tuple[tp.FreqType, tp.Freqtype] | None = None,
         freq_bin_size=1,
         ignore_times_percent: float = 5.0,
         rfi_threshold: float = 6.0,
@@ -487,12 +500,21 @@ class LoadSpectrum:
             **kwargs,
         )
 
+        if f_range_keep is not None:
+            out = out.between_freqs(*f_range_keep)
+
         if cache_dir is not None:
             if not cache_dir.exists():
                 cache_dir.mkdir(parents=True)
             hickle.dump(out, fname)
 
         return out
+
+    def between_freqs(self, f_low: tp.FreqType, f_high: tp.FreqType = np.inf * un.MHz):
+        """Return a new LoadSpectrum that is masked between new frequencies."""
+        return attr.evolve(
+            self, freq=self.freq.with_new_mask(f_low=f_low, f_high=f_high)
+        )
 
     @property
     def averaged_Q(self) -> np.ndarray:
