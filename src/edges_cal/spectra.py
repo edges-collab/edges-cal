@@ -364,16 +364,6 @@ class LoadSpectrum:
             },
         }
 
-    @property
-    def q(self):
-        """The Q-ratio of the three-position switch averaged over time."""
-        return self._q[self.freq.mask]
-
-    @property
-    def variance(self):
-        """The Q-ratio of the three-position switch averaged over time."""
-        return self._variance[self.freq.mask]
-
     @classmethod
     def from_h5(cls, path):
         """Read the contents of a .h5 file into a LoadSpectrum."""
