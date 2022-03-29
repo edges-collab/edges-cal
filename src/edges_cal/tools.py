@@ -162,6 +162,12 @@ class FrequencyRange:
     )
     bin_size: int = attr.ib(default=1, converter=int, kw_only=True)
     alan_mode: bool = attr.ib(default=False, converter=bool, kw_only=True)
+    post_bin_f_low: tp.Freqtype = attr.ib(
+        0 * u.MHz, validator=vld_unit("frequency"), kw_only=True
+    )
+    post_bin_f_high: float = attr.ib(
+        np.inf * u.MHz, validator=vld_unit("frequency"), kw_only=True
+    )
 
     @bin_size.validator
     def _bin_size_validator(self, att, val):
@@ -225,12 +231,18 @@ class FrequencyRange:
     def freq(self):
         """The frequency array."""
         if self.alan_mode:
-            return self.freq_full[self.mask][:: self.bin_size]
+            freq = self.freq_full[self.mask][:: self.bin_size]
         else:
-            return (
+            freq = (
                 bin_array(self.freq_full[self.mask].value, self.bin_size)
                 * self.freq_full.unit
             )
+
+        # We have a secondary mask that is done after binning, because sometimes the
+        # binning changes the exact edges so you get different results for if you
+        # mask before or after binning.
+        secondary_mask = (freq >= self.post_bin_f_low) & (freq <= self.post_bin_f_high)
+        return freq[secondary_mask]
 
     @cached_property
     def range(self):

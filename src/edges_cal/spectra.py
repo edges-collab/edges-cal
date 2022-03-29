@@ -514,7 +514,7 @@ class LoadSpectrum:
         mask = (self.freq.freq >= f_low) & (self.freq.freq <= f_high)
         return attr.evolve(
             self,
-            freq=self.freq.with_new_mask(f_low=f_low, f_high=f_high),
+            freq=self.freq.with_new_mask(post_bin_f_low=f_low, post_bin_f_high=f_high),
             q=self.q[mask],
             variance=self.variance[mask],
         )
