@@ -285,7 +285,13 @@ class FrequencyRange:
 
     @classmethod
     def from_edges(
-        cls, n_channels: int = 16384 * 2, max_freq: float = 200.0 * u.MHz, **kwargs
+        cls,
+        n_channels: int = 16384 * 2,
+        max_freq: float = 200.0 * u.MHz,
+        keep_full: bool = True,
+        f_low=0 * np.inf * u.MHz,
+        f_high=np.inf * u.MHz,
+        **kwargs,
     ) -> FrequencyRange:
         """Construct a :class:`FrequencyRange` object with underlying EDGES freqs.
 
@@ -295,6 +301,11 @@ class FrequencyRange:
             Number of channels
         max_freq : float
             Maximum frequency in original measurement.
+        keep_full
+            Whether to keep the full underlying frequency array, or just the part
+            of the array inside the mask.
+        f_low, f_high
+            A frequency range to keep.
         kwargs
             All other arguments passed through to :class:`FrequencyRange`.
 
@@ -324,7 +335,10 @@ class FrequencyRange:
         # corresponds to the centre of the N+1 bin, which doesn't actually exist.
         f = np.arange(0, max_freq.value, df.value) * max_freq.unit
 
-        return cls(f=f, **kwargs)
+        if not keep_full:
+            f = f[(f >= f_low) * (f <= f_high)]
+
+        return cls(f=f, f_low=f_low, f_high=f_high, **kwargs)
 
     def clone(self, **kwargs):
         """Make a new frequency range object with updated parameters."""

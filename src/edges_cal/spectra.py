@@ -331,10 +331,10 @@ class LoadSpectrum:
     """
 
     freq: FrequencyRange = attr.ib()
-    _q: np.ndarray = attr.ib(
+    q: np.ndarray = attr.ib(
         eq=attr.cmp_using(eq=partial(np.array_equal, equal_nan=True))
     )
-    _variance: np.ndarray | None = attr.ib(
+    variance: np.ndarray | None = attr.ib(
         eq=attr.cmp_using(eq=partial(np.array_equal, equal_nan=True))
     )
     n_integrations: int = attr.ib()
@@ -342,6 +342,15 @@ class LoadSpectrum:
     t_load_ns: float = attr.ib(300, 0)
     t_load: float = attr.ib(400.0)
     _metadata: dict[str, Any] = attr.ib(default=attr.Factory(dict))
+
+    @q.validator
+    @variance.validator
+    def _q_vld(self, att, val):
+        if val.shape != (self.freq.n,):
+            raise ValueError(
+                f"{att.name} must be one-dimensional with same length as un-masked "
+                f"frequency. Got {val.shape}, needed ({self.freq.n},)"
+            )
 
     @property
     def metadata(self) -> dict[str, Any]:
@@ -439,6 +448,7 @@ class LoadSpectrum:
             f_high=f_high,
             bin_size=freq_bin_size,
             alan_mode=frequency_smoothing == "gauss",
+            keep_full=False,
         )
 
         sig = inspect.signature(cls.from_io)
@@ -512,8 +522,12 @@ class LoadSpectrum:
 
     def between_freqs(self, f_low: tp.FreqType, f_high: tp.FreqType = np.inf * un.MHz):
         """Return a new LoadSpectrum that is masked between new frequencies."""
+        mask = (self.freq.freq >= f_low) & (self.freq.freq <= f_high)
         return attr.evolve(
-            self, freq=self.freq.with_new_mask(f_low=f_low, f_high=f_high)
+            self,
+            freq=self.freq.with_new_mask(f_low=f_low, f_high=f_high),
+            q=self.q[mask],
+            variance=self.variance[mask],
         )
 
     @property
