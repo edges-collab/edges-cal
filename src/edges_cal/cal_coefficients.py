@@ -661,13 +661,16 @@ class CalibrationObservation:
                 "frequency_smoothing"
             ]
 
-        spec_kwargs
+        spec_kwargs["f_range_keep"] = (
+            self.freq.post_bin_f_low,
+            self.freq.post_bin_f_high,
+        )
+
         return Load.from_io(
             io_obj=io_obj,
             load_name=load_name,
             f_low=self.freq._f_low,
             f_high=self.freq._f_high,
-            f_range_keep=(self.freq.post_bin_f_low, self.freq.post_bin_f_high),
             reflection_kwargs=reflection_kwargs,
             spec_kwargs=spec_kwargs,
         )
