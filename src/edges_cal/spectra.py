@@ -383,7 +383,10 @@ class LoadSpectrum:
         res = getattr(io_obs.resistance, load_name)
 
         freq = FrequencyRange.from_edges(
-            f_low=f_low, f_high=f_high, bin_size=freq_bin_size
+            f_low=f_low,
+            f_high=f_high,
+            bin_size=freq_bin_size,
+            alan_mode=frequency_smoothing == "gauss",
         )
 
         sig = inspect.signature(cls.from_io)
