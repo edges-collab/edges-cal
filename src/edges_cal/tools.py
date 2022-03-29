@@ -145,6 +145,10 @@ class FrequencyRange:
         A minimum frequency to keep in the array. Default is min(f).
     bin_size
         Bin input frequencies into bins of this size.
+    alan_mode
+        Only applicable if bin_size > 1. If True, then take every
+        bin_size frequency, starting from the 0th channel. Otherwise
+        take the mean of each bin as the resulting frequency.
     """
 
     _f: tp.FreqType = attr.ib(
@@ -157,6 +161,7 @@ class FrequencyRange:
         np.inf * u.MHz, validator=vld_unit("frequency"), kw_only=True
     )
     bin_size: int = attr.ib(default=1, converter=int, kw_only=True)
+    alan_mode: bool = attr.ib(defaut=False, converter=bool, kw_only=True)
 
     @bin_size.validator
     def _bin_size_validator(self, att, val):
@@ -219,10 +224,13 @@ class FrequencyRange:
     @cached_property
     def freq(self):
         """The frequency array."""
-        return (
-            bin_array(self.freq_full[self.mask].value, self.bin_size)
-            * self.freq_full.unit
-        )
+        if self.alan_mode:
+            return self.freq_full[self.mask][:: self.bin_size]
+        else:
+            return (
+                bin_array(self.freq_full[self.mask].value, self.bin_size)
+                * self.freq_full.unit
+            )
 
     @cached_property
     def range(self):
