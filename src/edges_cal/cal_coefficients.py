@@ -544,25 +544,30 @@ class CalibrationObservation:
         if "freq_bin_size" not in spectrum_kwargs["default"]:
             spectrum_kwargs["default"]["freq_bin_size"] = freq_bin_size
 
-        loads = {
-            source: Load.from_io(
+        def get_load(name, ambient_temperature=None):
+            return Load.from_io(
                 io_obj=io_obj,
-                load_name=source,
+                load_name=name,
                 f_low=f_low,
                 f_high=f_high,
                 reflection_kwargs={
                     **s11_kwargs.get("default", {}),
-                    **s11_kwargs.get(source, {}),
+                    **s11_kwargs.get(name, {}),
                     **{"internal_switch_kwargs": internal_switch_kwargs},
                 },
                 spec_kwargs={
                     **spectrum_kwargs["default"],
-                    **spectrum_kwargs.get(source, {}),
+                    **spectrum_kwargs.get(name, {}),
                 },
                 loss_kwargs={"path": semi_rigid_path},
+                ambient_temperature=None,
             )
-            for source in sources
-        }
+
+        loads = {}
+        for src in sources:
+            loads[src] = get_load(
+                src, ambient_temperature=getattr(loads.get("ambient"), "temp_ave", None)
+            )
 
         return cls(
             loads=loads,
