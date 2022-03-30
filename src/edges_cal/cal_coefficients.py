@@ -560,7 +560,7 @@ class CalibrationObservation:
                     **spectrum_kwargs.get(name, {}),
                 },
                 loss_kwargs={"path": semi_rigid_path},
-                ambient_temperature=None,
+                ambient_temperature=ambient_temperature,
             )
 
         loads = {}
