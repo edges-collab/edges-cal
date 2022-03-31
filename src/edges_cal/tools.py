@@ -301,7 +301,7 @@ class FrequencyRange:
         n_channels: int = 16384 * 2,
         max_freq: float = 200.0 * u.MHz,
         keep_full: bool = True,
-        f_low=0 * np.inf * u.MHz,
+        f_low=0 * u.MHz,
         f_high=np.inf * u.MHz,
         **kwargs,
     ) -> FrequencyRange:

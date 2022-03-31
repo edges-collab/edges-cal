@@ -47,10 +47,12 @@ def test_gauss_smooth(io_obs: CalibrationObservation):
         frequency_smoothing="bin",
     )
 
-    assert spec.averaged_Q.shape == spec2.averaged_Q.shape
-    mask = (~np.isnan(spec.averaged_Q)) & (~np.isnan(spec2.averaged_Q))
+    # gauss smooth has one more value because the way it bins is like Alan's code,
+    # which starts at index 0, rather than in the middle of the bin.
+    assert len(spec.averaged_Q) - 1 == len(spec2.averaged_Q)
+    mask = (~np.isnan(spec.averaged_Q[:-1])) & (~np.isnan(spec2.averaged_Q))
     np.testing.assert_allclose(
-        spec.averaged_Q[mask], spec2.averaged_Q[mask], atol=1e-2, rtol=0.1
+        spec.averaged_Q[:-1][mask], spec2.averaged_Q[mask], atol=1e-2, rtol=0.1
     )
 
 

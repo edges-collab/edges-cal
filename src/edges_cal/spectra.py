@@ -222,7 +222,7 @@ def get_ave_and_var_spec(
         spec_obj=spec_obj, freq=freq, ignore_times_percent=ignore_times_percent
     )
     spec_anc = {k: v[ignore_ninteg:] for k, v in spec_anc.items()}
-
+    spec_timestamps = spec_timestamps[ignore_ninteg:]
     thermistor_temp = thermistor.get_physical_temperature()
     thermistor_times = thermistor.get_timestamps()
 
@@ -240,6 +240,7 @@ def get_ave_and_var_spec(
         else:
             temp_range = temperature_range
 
+        print(len(thermistor.get_thermistor_indices(spec_timestamps)))
         temp_mask = np.zeros(spectra["Q"].shape[1], dtype=bool)
         for i, c in enumerate(thermistor.get_thermistor_indices(spec_timestamps)):
             if np.isnan(c):

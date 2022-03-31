@@ -566,7 +566,10 @@ class CalibrationObservation:
         loads = {}
         for src in sources:
             loads[src] = get_load(
-                src, ambient_temperature=getattr(loads.get("ambient"), "temp_ave", None)
+                src,
+                ambient_temperature=loads["ambient"].spectrum.temp_ave
+                if src == "hot_load"
+                else None,
             )
 
         return cls(
