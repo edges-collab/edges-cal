@@ -249,7 +249,7 @@ def detrend_medfilt(
 
     d_sm = flagged_filter(data, size=size, kind="median", flags=flags)
     d_rs = data - d_sm
-    d_sq = d_rs ** 2
+    d_sq = d_rs**2
 
     # Remember that d_sq will be zero for any window in which the data is monotonic (but
     # could also be zero for non-monotonic windows where the two halves of the window
@@ -304,7 +304,7 @@ def detrend_meanfilt(
 
     d_sm = flagged_filter(data, size=size, kind="mean", flags=flags)
     d_rs = data - d_sm
-    d_sq = d_rs ** 2
+    d_sq = d_rs**2
 
     # Factor of .456 is to put mod-z scores on same scale as standard deviation.
     sig = np.sqrt(flagged_filter(d_sq, size=size, kind="mean", flags=flags))
@@ -952,7 +952,7 @@ def model_filter(
         if std_estimator == "medfilt":
             model_std = np.sqrt(
                 flagged_filter(
-                    res ** 2,
+                    res**2,
                     size=2 * (medfilt_width // 2) + 1,
                     kind="median",
                     flags=flags,
@@ -975,7 +975,7 @@ def model_filter(
                 res_model = res_model.with_nterms(
                     max(min_resid_terms, model.n_terms + n_resid)
                 )
-            res_mdl = res_model.fit(ydata=np.log(absres ** 2), weights=weights).fit
+            res_mdl = res_model.fit(ydata=np.log(absres**2), weights=weights).fit
             model_std = np.sqrt(np.exp(res_mdl())) / 0.53
             res_models.append(res_mdl.model)
 
@@ -990,7 +990,7 @@ def model_filter(
             res2 = np.concatenate(
                 (
                     np.ones(sliding_rms_width // 2) * np.nan,
-                    res ** 2,
+                    res**2,
                     np.ones(sliding_rms_width // 2) * np.nan,
                 )
             )
@@ -1511,7 +1511,7 @@ def visualise_model_info(info: ModelFilterInfo | ModelFilterInfoContainer, n: in
         x = np.linspace(-4, 4, 200)
         ax[1, 2].plot(
             x,
-            np.exp(-(x ** 2)) / np.sqrt(2 * np.pi),
+            np.exp(-(x**2)) / np.sqrt(2 * np.pi),
             color="k",
             label="Normal Dist." if not i else None,
         )
