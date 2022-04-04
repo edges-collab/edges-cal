@@ -267,7 +267,9 @@ def get_ave_and_var_spec(
 
     for key, spec in spectra.items():
         # Weird thing where there are zeros in the spectra.
-        spec[spec == 0] = np.nan
+        # For the Q-ratio, zero values are perfectly fine.
+        if key.lower() != "q":
+            spec[spec == 0] = np.nan
 
         if freq_bin_size > 1:
             if frequency_smoothing == "bin":
