@@ -193,6 +193,7 @@ def get_ave_and_var_spec(
     temperature_range,
     thermistor,
     frequency_smoothing: str,
+    time_coordinate_swpos: int = 0,
 ) -> tuple[dict, dict, int]:
     """Get the mean and variance of the spectra.
 
@@ -205,9 +206,9 @@ def get_ave_and_var_spec(
     """
     logger.info(f"Reducing {load_name} spectra...")
     spec_anc = get_spectrum_ancillary(spec_obj, 0)
-    spec_timestamps = [
-        datetime.strptime(d, "%Y:%j:%H:%M:%S") for d in spec_anc["times"].astype(str)
-    ]
+    spec_timestamps = spec_obj[0].data.get_times(
+        str_times=spec_anc["times"], swpos=time_coordinate_swpos
+    )
     if ignore_times_percent > 100.0:
         # Interpret as a number of seconds.
         for i, t in enumerate(spec_timestamps):
@@ -240,7 +241,6 @@ def get_ave_and_var_spec(
         else:
             temp_range = temperature_range
 
-        print(len(thermistor.get_thermistor_indices(spec_timestamps)))
         temp_mask = np.zeros(spectra["Q"].shape[1], dtype=bool)
         for i, c in enumerate(thermistor.get_thermistor_indices(spec_timestamps)):
             if np.isnan(c):
@@ -404,6 +404,7 @@ class LoadSpectrum:
         temperature_range: float | tuple[float, float] | None = None,
         frequency_smoothing: str = "bin",
         temperature: float | None = None,
+        time_coordinate_swpos: int = 0,
         **kwargs,
     ):
         """Instantiate the class from a given load name and directory.
@@ -478,6 +479,7 @@ class LoadSpectrum:
             temperature_range=temperature_range,
             thermistor=thermistor,
             frequency_smoothing=frequency_smoothing,
+            time_coordinate_swpos=time_coordinate_swpos,
         )
 
         if temperature is None:
