@@ -28,7 +28,7 @@ from .tools import FrequencyRange
 def read_spectrum(
     spec_obj: Sequence[io.Spectrum],
     freq: FrequencyRange | None = None,
-    ignore_times_percent: float = 0,
+    ignore_times: float | int = 0,
 ) -> dict[str, np.ndarray]:
     """
     Read the contents of the spectrum files into memory.
@@ -56,7 +56,12 @@ def read_spectrum(
         "Q": np.empty((nfreq, n_times)),
     }
 
-    index_start_spectra = int((ignore_times_percent / 100) * n_times)
+    if ignore_times < 1:
+        index_start_spectra = int(ignore_times * n_times)
+    else:
+        assert isinstance(ignore_times, int)
+        index_start_spectra = ignore_times
+
     for key, val in out.items():
         nn = 0
         for d in data:
@@ -236,9 +241,7 @@ def get_ave_and_var_spec(
     else:
         ignore_ninteg = int(len(spec_timestamps) * ignore_times_percent / 100.0)
 
-    spectra = read_spectrum(
-        spec_obj=spec_obj, freq=freq, ignore_times_percent=ignore_times_percent
-    )
+    spectra = read_spectrum(spec_obj=spec_obj, freq=freq, ignore_times=ignore_ninteg)
     spec_anc = {k: v[ignore_ninteg:] for k, v in spec_anc.items()}
     spec_timestamps = spec_timestamps[ignore_ninteg:]
     thermistor_temp = thermistor.get_physical_temperature()
