@@ -225,8 +225,8 @@ def get_ave_and_var_spec(
             t0 = spec_timestamps[0]
         else:
             t0 = spec_obj[0].data.get_times(
-                str_times=spec_anc["times"], swpos=base_time
-            )
+                str_times=spec_anc["times"][:1], swpos=base_time
+            )[0]
 
         for i, t in enumerate(spec_timestamps):
             if (t - t0).seconds > ignore_times_percent:
