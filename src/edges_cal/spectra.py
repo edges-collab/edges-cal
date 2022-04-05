@@ -193,7 +193,7 @@ def get_ave_and_var_spec(
     temperature_range,
     thermistor,
     frequency_smoothing: str,
-    time_coordinate_swpos: int = 0,
+    time_coordinate_swpos: int | tuple[int, int] = 0,
 ) -> tuple[dict, dict, int]:
     """Get the mean and variance of the spectra.
 
@@ -206,13 +206,30 @@ def get_ave_and_var_spec(
     """
     logger.info(f"Reducing {load_name} spectra...")
     spec_anc = get_spectrum_ancillary(spec_obj, 0)
+
+    try:
+        base_time, time_coordinate_swpos = time_coordinate_swpos
+    except Exception:
+        base_time = time_coordinate_swpos
+
     spec_timestamps = spec_obj[0].data.get_times(
         str_times=spec_anc["times"], swpos=time_coordinate_swpos
     )
+
     if ignore_times_percent > 100.0:
         # Interpret as a number of seconds.
+
+        # The first time could be measured from a different swpos than the one we are
+        # measuring it to.
+        if base_time == time_coordinate_swpos:
+            t0 = spec_timestamps[0]
+        else:
+            t0 = spec_obj[0].data.get_times(
+                str_times=spec_anc["times"], swpos=base_time
+            )
+
         for i, t in enumerate(spec_timestamps):
-            if (t - spec_timestamps[0]).seconds > ignore_times_percent:
+            if (t - t0).seconds > ignore_times_percent:
                 break
         ignore_times_percent = 100 * i / len(spec_timestamps)
         ignore_ninteg = i
