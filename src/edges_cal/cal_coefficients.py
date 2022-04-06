@@ -473,6 +473,7 @@ class CalibrationObservation:
         sources: tuple[str] = ("ambient", "hot_load", "open", "short"),
         receiver_kwargs: dict[str, Any] | None = None,
         restrict_s11_model_freqs: bool = True,
+        hot_load_loss_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ) -> CalibrationObservation:
         """Create the object from an edges-io observation.
@@ -532,6 +533,7 @@ class CalibrationObservation:
         s11_kwargs = s11_kwargs or {}
         internal_switch_kwargs = internal_switch_kwargs or {}
         receiver_kwargs = receiver_kwargs or {}
+        hot_load_loss_kwargs = hot_load_loss_kwargs or {}
 
         for v in [spectrum_kwargs, s11_kwargs, internal_switch_kwargs, receiver_kwargs]:
             assert isinstance(v, dict)
@@ -578,7 +580,7 @@ class CalibrationObservation:
                     **spectrum_kwargs["default"],
                     **spectrum_kwargs.get(name, {}),
                 },
-                loss_kwargs={"path": semi_rigid_path},
+                loss_kwargs={**hot_load_loss_kwargs, **{"path": semi_rigid_path}},
                 ambient_temperature=ambient_temperature,
             )
 
