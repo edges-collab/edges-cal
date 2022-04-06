@@ -60,7 +60,10 @@ class HotLoadCorrection:
     raw_s12s21: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
     raw_s22: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
 
-    n_terms: int = attr.ib(default=21, converter=int)
+    model: mdl.Model = attr.ib(mdl.Polynomial(n_terms=21))
+    complex_model: type[mdl.ComplexRealImagModel] | type[
+        mdl.ComplexMagPhaseModel
+    ] = attr.ib(mdl.ComplexMagPhaseModel)
 
     @classmethod
     def from_file(
@@ -68,6 +71,7 @@ class HotLoadCorrection:
         path: tp.PathLike = ":semi_rigid_s_parameters_WITH_HEADER.txt",
         f_low: tp.FreqType = 0 * un.MHz,
         f_high: tp.FreqType = np.inf * un.MHz,
+        set_transform_range: bool = True,
         **kwargs,
     ):
         """Instantiate the HotLoadCorrection from file.
@@ -96,22 +100,37 @@ class HotLoadCorrection:
                     data[:, 4] + 1j * data[:, 5],
                 ]
             ).T
+
+        model = kwargs.get(
+            "model",
+            mdl.Polynomial(
+                n_terms=21,
+                transform=mdl.UnitTransform(
+                    range=(freq.min.to_value("MHz"), freq.max.to_value("MHz"))
+                ),
+            ),
+        )
+
+        if hasattr(model.transform, "range") and set_transform_range:
+            model = attr.evolve(
+                model,
+                transform=attr.evolve(
+                    model.transform,
+                    range=(freq.min.to_value("MHz"), freq.max.to_value("MHz")),
+                ),
+            )
+
         return cls(
             freq=freq,
             raw_s11=data[:, 0],
             raw_s12s21=data[:, 1],
             raw_s22=data[:, 2],
+            model=model,
             **kwargs,
         )
 
     def _get_model(self, raw_data: np.ndarray):
-        model = mdl.Polynomial(
-            n_terms=self.n_terms,
-            transform=mdl.UnitTransform(
-                range=(self.freq.min.to_value("MHz"), self.freq.max.to_value("MHz"))
-            ),
-        )
-        model = mdl.ComplexMagPhaseModel(mag=model, phs=model)
+        model = self.complex_model(self.model, self.model)
         return model.fit(xdata=self.freq.freq, ydata=raw_data)
 
     @cached_property
