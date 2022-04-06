@@ -101,7 +101,7 @@ class HotLoadCorrection:
                 ]
             ).T
 
-        model = kwargs.get(
+        model = kwargs.pop(
             "model",
             mdl.Polynomial(
                 n_terms=21,
