@@ -21,7 +21,7 @@ from astropy import units as un
 from cached_property import cached_property
 from edges_io import h5, io
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 from . import reflection_coefficient as rc
 from . import types as tp
@@ -31,6 +31,7 @@ from .modelling import (
     Fourier,
     Model,
     Modelable,
+    ModelTransform,
     Polynomial,
     UnitTransform,
     get_mdl,
@@ -208,7 +209,9 @@ class S11Model:
         ComplexRealImagModel
     ] = attr.ib()
     model_delay: tp.Time = attr.ib(0 * un.s)
-
+    model_transform: ModelTransform = attr.ib(default=UnitTransform(range=(0, 1)))
+    set_transform_range: bool = attr.ib(True, converter=bool)
+    model_kwargs: dict[str, Any] = attr.ib(default=attr.Factory(dict))
     metadata: dict = attr.ib(default=attr.Factory(dict), eq=False)
 
     @freq.validator
@@ -281,11 +284,18 @@ class S11Model:
         freq = freq or self.freq.freq
         n_terms = n_terms or self.n_terms
         model_type = get_mdl(model_type or self.model_type)
+
+        transform = self.model_transform
+
+        if self.set_transform_range and hasattr(transform, "range"):
+            transform = attr.evolve(
+                transform,
+                range=(self.freq.min.to_value("MHz"), self.freq.max.to_value("MHz")),
+            )
+
         model = model_type(
             n_terms=n_terms,
-            transform=UnitTransform(
-                range=[self.freq.min.to_value("MHz"), self.freq.max.to_value("MHz")]
-            ),
+            transform=transform,
         )
         emodel = model.at(x=freq.to_value("MHz"))
 
