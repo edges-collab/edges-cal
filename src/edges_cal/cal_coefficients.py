@@ -135,7 +135,7 @@ class HotLoadCorrection:
         return model.fit(xdata=self.freq.freq, ydata=raw_data)
 
     def _get_splines(self, data):
-        if self.complex_model_type == mdl.ComplexRealImagModel:
+        if self.complex_model == mdl.ComplexRealImagModel:
             return (
                 Spline(self.freq.freq.to_value("MHz"), np.real(data)),
                 Spline(self.freq.freq.to_value("MHz"), np.imag(data)),
@@ -148,7 +148,7 @@ class HotLoadCorrection:
 
     def _ev_splines(self, splines):
         rl, im = splines
-        if self.complex_model_type == mdl.ComplexRealImagModel:
+        if self.complex_model == mdl.ComplexRealImagModel:
             return lambda freq: rl(freq) + 1j * im(freq)
         else:
             return lambda freq: rl(freq) * np.exp(1j * im(freq))
