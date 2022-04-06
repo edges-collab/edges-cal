@@ -21,6 +21,7 @@ from astropy import units as un
 from cached_property import cached_property
 from edges_io import h5, io
 from pathlib import Path
+from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 from typing import Any, Callable, Sequence
 
 from . import reflection_coefficient as rc
@@ -212,6 +213,7 @@ class S11Model:
     model_transform: ModelTransform = attr.ib(default=UnitTransform(range=(0, 1)))
     set_transform_range: bool = attr.ib(True, converter=bool)
     model_kwargs: dict[str, Any] = attr.ib(default=attr.Factory(dict))
+    use_spline: bool = attr.ib(False)
     metadata: dict = attr.ib(default=attr.Factory(dict), eq=False)
 
     @freq.validator
@@ -310,14 +312,33 @@ class S11Model:
         """The S11 model."""
         return self.get_s11_model(self.raw_s11)
 
+    @cached_property
+    def _splines(self) -> callable:
+        if self.complex_model_type == ComplexRealImagModel:
+            return (
+                Spline(self.freq.freq.to_value("MHz"), np.real(self.raw_s11)),
+                Spline(self.freq.freq.to_value("MHz"), np.imag(self.raw_s11)),
+            )
+        else:
+            return (
+                Spline(self.freq.freq.to_value("MHz"), np.abs(self.raw_s11)),
+                Spline(self.freq.freq.to_value("MHz"), np.angle(self.raw_s11)),
+            )
+
     def s11_model(self, freq: np.ndarray | tp.FreqType) -> np.ndarray:
         """Compute the S11 at a specific set of frequencies."""
         if hasattr(freq, "unit"):
             freq = freq.to_value("MHz")
 
-        return self._s11_model(freq) * np.exp(
-            -1j * self.model_delay.to_value("microsecond") * freq
-        )
+        if not self.use_spline:
+            return self._s11_model(freq) * np.exp(
+                -1j * self.model_delay.to_value("microsecond") * freq
+            )
+        else:
+            if self.complex_model_type == ComplexRealImagModel:
+                return self._splines[0](freq) + 1j * self._splines[1](freq)
+            else:
+                return self._splines[0](freq) * np.exp(1j * self._splines[1](freq))
 
     def plot_residuals(
         self,
