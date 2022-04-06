@@ -64,6 +64,7 @@ class HotLoadCorrection:
     complex_model: type[mdl.ComplexRealImagModel] | type[
         mdl.ComplexMagPhaseModel
     ] = attr.ib(mdl.ComplexMagPhaseModel)
+    use_spline: bool = attr.ib(False)
 
     @classmethod
     def from_file(
@@ -133,20 +134,51 @@ class HotLoadCorrection:
         model = self.complex_model(self.model, self.model)
         return model.fit(xdata=self.freq.freq, ydata=raw_data)
 
+    def _get_splines(self, data):
+        if self.complex_model_type == mdl.ComplexRealImagModel:
+            return (
+                Spline(self.freq.freq.to_value("MHz"), np.real(data)),
+                Spline(self.freq.freq.to_value("MHz"), np.imag(data)),
+            )
+        else:
+            return (
+                Spline(self.freq.freq.to_value("MHz"), np.abs(data)),
+                Spline(self.freq.freq.to_value("MHz"), np.angle(data)),
+            )
+
+    def _ev_splines(self, splines):
+        rl, im = splines
+        if self.complex_model_type == mdl.ComplexRealImagModel:
+            return lambda freq: rl(freq) + 1j * im(freq)
+        else:
+            return lambda freq: rl(freq) * np.exp(1j * im(freq))
+
     @cached_property
     def s11_model(self):
         """The reflection coefficient."""
-        return self._get_model(self.raw_s11)
+        if not self.use_spline:
+            return self._get_model(self.raw_s11)
+        else:
+            splines = self._get_splines(self.raw_s11)
+            return self._ev_splines(splines)
 
     @cached_property
     def s12s21_model(self):
         """The transmission coefficient."""
-        return self._get_model(self.raw_s12s21)
+        if not self.use_spline:
+            return self._get_model(self.raw_s12s21)
+        else:
+            splines = self._get_splines(self.raw_s12s21)
+            return self._ev_splines(splines)
 
     @cached_property
     def s22_model(self):
         """The reflection coefficient from the other side."""
-        return self._get_model(self.raw_s22)
+        if not self.use_spline:
+            return self._get_model(self.raw_s22)
+        else:
+            splines = self._get_splines(self.raw_s22)
+            return self._ev_splines(splines)
 
     def power_gain(self, freq: tp.FreqType, hot_load_s11: s11.LoadS11) -> np.ndarray:
         """
@@ -446,7 +478,7 @@ class CalibrationObservation:
     """
 
     loads: dict[str, Load] = attr.ib()
-    receiver: s11.Receiver | s11.AveragedReceiver = attr.ib()
+    receiver: s11.Receiver = attr.ib()
     cterms: int = attr.ib(default=5, kw_only=True)
     wterms: int = attr.ib(default=7, kw_only=True)
 
