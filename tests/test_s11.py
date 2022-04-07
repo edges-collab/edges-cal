@@ -7,6 +7,8 @@ from edges_io import io
 from edges_cal import modelling as mdl
 from edges_cal import reflection_coefficient as rc
 from edges_cal import s11
+from edges_cal.cal_coefficients import HotLoadCorrection
+from edges_cal.tools import FrequencyRange
 
 
 def test_gamma_shift_zero():
@@ -270,3 +272,48 @@ def test_receiver_clone(calobs):
     new = calobs.receiver.with_new_calkit(ck)
 
     assert not np.allclose(calobs.receiver.raw_s11, new.raw_s11)
+
+
+def test_use_spline():
+    freq = FrequencyRange(np.linspace(50, 100, 100) * u.MHz)
+    mfreq = 75 * u.MHz
+    raw_data = (
+        (freq.freq / mfreq) ** -2.5
+        + 1j * (freq.freq / mfreq) ** 0.5
+        + np.random.normal(scale=0.1, size=100)
+    )
+
+    for complex_model in (mdl.ComplexMagPhaseModel, mdl.ComplexRealImagModel):
+        rcv = s11.Receiver(
+            freq=freq,
+            raw_s11=raw_data,
+            use_spline=True,
+            complex_model_type=complex_model,
+        )
+
+        assert np.allclose(rcv.s11_model(freq.freq), raw_data)
+
+
+def test_use_spline_hlc():
+    freq = FrequencyRange(np.linspace(50, 100, 100) * u.MHz)
+    mfreq = 75 * u.MHz
+    raw_data = (
+        (freq.freq / mfreq) ** -2.5
+        + 1j * (freq.freq / mfreq) ** 0.5
+        + np.random.normal(scale=0.1, size=100)
+    )
+
+    for complex_model in (mdl.ComplexMagPhaseModel, mdl.ComplexRealImagModel):
+
+        rcv = HotLoadCorrection(
+            freq=freq,
+            raw_s11=raw_data,
+            raw_s12s21=raw_data,
+            raw_s22=raw_data,
+            use_spline=True,
+            complex_model=complex_model,
+        )
+
+        assert np.allclose(rcv.s11_model(freq.freq), raw_data)
+        assert np.allclose(rcv.s12s21_model(freq.freq), raw_data)
+        assert np.allclose(rcv.s22_model(freq.freq), raw_data)

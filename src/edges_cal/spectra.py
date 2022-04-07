@@ -17,7 +17,10 @@ from typing import Any, Sequence
 
 from . import __version__
 from . import receiver_calibration_func as rcf
-from . import tools, xrfi
+from . import tools
+from . import types as tp
+from . import xrfi
+from .cached_property import cached_property
 from .config import config
 from .tools import FrequencyRange
 
@@ -25,7 +28,7 @@ from .tools import FrequencyRange
 def read_spectrum(
     spec_obj: Sequence[io.Spectrum],
     freq: FrequencyRange | None = None,
-    ignore_times_percent: float = 0,
+    ignore_times: float | int = 0,
 ) -> dict[str, np.ndarray]:
     """
     Read the contents of the spectrum files into memory.
@@ -53,7 +56,12 @@ def read_spectrum(
         "Q": np.empty((nfreq, n_times)),
     }
 
-    index_start_spectra = int((ignore_times_percent / 100) * n_times)
+    if ignore_times < 1:
+        index_start_spectra = int(ignore_times * n_times)
+    else:
+        assert isinstance(ignore_times, int)
+        index_start_spectra = ignore_times
+
     for key, val in out.items():
         nn = 0
         for d in data:
@@ -85,10 +93,20 @@ def get_spectrum_ancillary(
 @h5.hickleable()
 @attr.s
 class ThermistorReadings:
+    """
+    Object containing thermistor readings.
+
+    Parameters
+    ----------
+    data
+        The data array containing the readings.
+    ignore_times_percent
+        The fraction of readings to ignore at the start of the observation. If greater
+        than 100, will be interpreted as being a number of seconds to ignore.
+    """
+
     _data: np.ndarray = attr.ib()
-    ignore_times_percent: float = attr.ib(
-        0.0, validator=(attr.validators.ge(0.0), attr.validators.lt(100.0))
-    )
+    ignore_times_percent: float = attr.ib(0.0, validator=attr.validators.ge(0.0))
 
     @_data.validator
     def _data_vld(self, att, val):
@@ -99,10 +117,17 @@ class ThermistorReadings:
                         f"{key} must be in the data for ThermistorReadings"
                     )
 
-    @property
+    @cached_property
     def ignore_ntimes(self) -> int:
         """Number of time integrations to ignore from the start of the observation."""
-        return int(len(self._data) * self.ignore_times_percent / 100)
+        if self.ignore_times_percent <= 100.0:
+            return int(len(self._data) * self.ignore_times_percent / 100)
+        else:
+            ts = self.get_timestamps()
+            for i, t in enumerate(ts):
+                if (t - ts[0]).seconds > self.ignore_times_percent:
+                    break
+            return i
 
     @property
     def data(self):
@@ -116,7 +141,7 @@ class ThermistorReadings:
 
     def get_timestamps(self) -> list[datetime]:
         """Timestamps of all the thermistor measurements."""
-        if "time" in self.data.dtype.names:
+        if "time" in self._data.dtype.names:
             times = self.data["time"]
             dates = self.data["date"]
             times = [
@@ -126,7 +151,7 @@ class ThermistorReadings:
         else:
             times = [
                 datetime.strptime(d.split(".")[0], "%m/%d/%Y %H:%M:%S")
-                for d in self.data["start_time"].astype(str)
+                for d in self._data["start_time"].astype(str)
             ]
 
         return times
@@ -172,16 +197,53 @@ def get_ave_and_var_spec(
     rfi_kernel_width_freq,
     temperature_range,
     thermistor,
+    frequency_smoothing: str,
+    time_coordinate_swpos: int | tuple[int, int] = 0,
 ) -> tuple[dict, dict, int]:
-    """Get the mean and variance of the spectra."""
+    """Get the mean and variance of the spectra.
+
+    Parameters
+    ----------
+    freqeuncy_smoothing
+        How to average frequency bins together. Default is to merely bin them
+        directly. Other options are 'gauss' to do Gaussian filtering (this is the
+        same as Alan's C pipeline).
+    """
     logger.info(f"Reducing {load_name} spectra...")
-    spectra = read_spectrum(
-        spec_obj=spec_obj, freq=freq, ignore_times_percent=ignore_times_percent
+    spec_anc = get_spectrum_ancillary(spec_obj, 0)
+
+    try:
+        base_time, time_coordinate_swpos = time_coordinate_swpos
+    except Exception:
+        base_time = time_coordinate_swpos
+
+    spec_timestamps = spec_obj[0].data.get_times(
+        str_times=spec_anc["times"], swpos=time_coordinate_swpos
     )
-    spec_anc = get_spectrum_ancillary(spec_obj, ignore_times_percent)
-    spec_timestamps = [
-        datetime.strptime(d, "%Y:%j:%H:%M:%S") for d in spec_anc["times"].astype(str)
-    ]
+
+    if ignore_times_percent > 100.0:
+        # Interpret as a number of seconds.
+
+        # The first time could be measured from a different swpos than the one we are
+        # measuring it to.
+        if base_time == time_coordinate_swpos:
+            t0 = spec_timestamps[0]
+        else:
+            t0 = spec_obj[0].data.get_times(
+                str_times=spec_anc["times"][:1], swpos=base_time
+            )[0]
+
+        for i, t in enumerate(spec_timestamps):
+            if (t - t0).seconds > ignore_times_percent:
+                break
+        ignore_times_percent = 100 * i / len(spec_timestamps)
+        ignore_ninteg = i
+    else:
+        ignore_ninteg = int(len(spec_timestamps) * ignore_times_percent / 100.0)
+
+    spectra = read_spectrum(spec_obj=spec_obj, freq=freq, ignore_times=ignore_ninteg)
+    spec_anc = {k: v[ignore_ninteg:] for k, v in spec_anc.items()}
+    spec_timestamps = spec_timestamps[ignore_ninteg:]
     thermistor_temp = thermistor.get_physical_temperature()
     thermistor_times = thermistor.get_timestamps()
 
@@ -225,9 +287,21 @@ def get_ave_and_var_spec(
 
     for key, spec in spectra.items():
         # Weird thing where there are zeros in the spectra.
-        spec[spec == 0] = np.nan
+        # For the Q-ratio, zero values are perfectly fine.
+        if key.lower() != "q":
+            spec[spec == 0] = np.nan
 
-        spec = tools.bin_array(spec.T, size=freq_bin_size).T
+        if freq_bin_size > 1:
+            if frequency_smoothing == "bin":
+                spec = tools.bin_array(spec.T, size=freq_bin_size).T
+            elif frequency_smoothing == "gauss":
+                # We only really allow Gaussian smoothing so that we can match Alan's
+                # pipeline. In that case, the frequencies actually kept start from the
+                # 0th index, instead of taking the centre of each new bin. Thus we
+                # set decimate_at = 0.
+                spec = tools.gauss_smooth(spec.T, size=freq_bin_size, decimate_at=0).T
+            else:
+                raise ValueError("frequency_smoothing must be one of ('bin', 'gauss').")
         spec[:, ~temp_mask] = np.nan
 
         mean = np.nanmean(spec, axis=1)
@@ -292,6 +366,15 @@ class LoadSpectrum:
     t_load: float = attr.ib(400.0)
     _metadata: dict[str, Any] = attr.ib(default=attr.Factory(dict))
 
+    @q.validator
+    @variance.validator
+    def _q_vld(self, att, val):
+        if val.shape != (self.freq.n,):
+            raise ValueError(
+                f"{att.name} must be one-dimensional with same length as un-masked "
+                f"frequency. Got {val.shape}, needed ({self.freq.n},)"
+            )
+
     @property
     def metadata(self) -> dict[str, Any]:
         """Metadata associated with the object."""
@@ -333,11 +416,15 @@ class LoadSpectrum:
         load_name: str,
         f_low=40.0 * un.MHz,
         f_high=np.inf * un.MHz,
+        f_range_keep: tuple[tp.FreqType, tp.Freqtype] | None = None,
         freq_bin_size=1,
         ignore_times_percent: float = 5.0,
         rfi_threshold: float = 6.0,
         rfi_kernel_width_freq: int = 16,
         temperature_range: float | tuple[float, float] | None = None,
+        frequency_smoothing: str = "bin",
+        temperature: float | None = None,
+        time_coordinate_swpos: int = 0,
         **kwargs,
     ):
         """Instantiate the class from a given load name and directory.
@@ -352,6 +439,14 @@ class LoadSpectrum:
             The run number to use for the spectra.
         filetype : str
             The filetype to look for (acq or h5).
+        freqeuncy_smoothing
+            How to average frequency bins together. Default is to merely bin them
+            directly. Other options are 'gauss' to do Gaussian filtering (this is the
+            same as Alan's C pipeline).
+        ignore_times_percent
+            The fraction of readings to ignore at the start of the observation. If
+            greater than 100, will be interpreted as being a number of seconds to
+            ignore.
         kwargs :
             All other arguments to :class:`LoadSpectrum`.
 
@@ -363,7 +458,10 @@ class LoadSpectrum:
         res = getattr(io_obs.resistance, load_name)
 
         freq = FrequencyRange.from_edges(
-            f_low=f_low, f_high=f_high, bin_size=freq_bin_size
+            f_low=f_low,
+            f_high=f_high,
+            bin_size=freq_bin_size,
+            alan_mode=frequency_smoothing == "gauss",
         )
 
         sig = inspect.signature(cls.from_io)
@@ -400,16 +498,19 @@ class LoadSpectrum:
             rfi_kernel_width_freq=rfi_kernel_width_freq,
             temperature_range=temperature_range,
             thermistor=thermistor,
+            frequency_smoothing=frequency_smoothing,
+            time_coordinate_swpos=time_coordinate_swpos,
         )
 
-        temperature = thermistor.get_physical_temperature()
+        if temperature is None:
+            temperature = np.nanmean(thermistor.get_physical_temperature())
 
         out = cls(
             freq=freq,
             q=means["Q"],
             variance=variances["Q"],
             n_integrations=n_integ,
-            temp_ave=np.nanmean(temperature),
+            temp_ave=temperature,
             metadata={
                 "spectra_path": spec[0].path,
                 "resistance_path": res.path,
@@ -419,16 +520,30 @@ class LoadSpectrum:
                 "rfi_kernel_width_freq": rfi_kernel_width_freq,
                 "temperature_range": temperature_range,
                 "hash": hsh,
+                "frequency_smoothing": frequency_smoothing,
             },
             **kwargs,
         )
 
+        if f_range_keep is not None:
+            out = out.between_freqs(*f_range_keep)
+
         if cache_dir is not None:
             if not cache_dir.exists():
-                cache_dir.makedirs()
+                cache_dir.mkdir(parents=True)
             hickle.dump(out, fname)
 
         return out
+
+    def between_freqs(self, f_low: tp.FreqType, f_high: tp.FreqType = np.inf * un.MHz):
+        """Return a new LoadSpectrum that is masked between new frequencies."""
+        mask = (self.freq.freq >= f_low) & (self.freq.freq <= f_high)
+        return attr.evolve(
+            self,
+            freq=self.freq.with_new_mask(post_bin_f_low=f_low, post_bin_f_high=f_high),
+            q=self.q[mask],
+            variance=self.variance[mask],
+        )
 
     @property
     def averaged_Q(self) -> np.ndarray:
