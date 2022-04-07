@@ -8,6 +8,7 @@ ignore =
   D101    # Missing docstring in public class -- my docstrings are in the __init__ which seems to fail this ?
   RST210  # Otherwise it flags down **kwargs in docstrings.
   N815
+  N807    # Allow method names to start and end with __
 max-line-length = 88
 max-complexity = 21
 inline-quotes = double

@@ -60,7 +60,11 @@ class HotLoadCorrection:
     raw_s12s21: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
     raw_s22: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
 
-    n_terms: int = attr.ib(default=21, converter=int)
+    model: mdl.Model = attr.ib(mdl.Polynomial(n_terms=21))
+    complex_model: type[mdl.ComplexRealImagModel] | type[
+        mdl.ComplexMagPhaseModel
+    ] = attr.ib(mdl.ComplexMagPhaseModel)
+    use_spline: bool = attr.ib(False)
 
     @classmethod
     def from_file(
@@ -68,6 +72,7 @@ class HotLoadCorrection:
         path: tp.PathLike = ":semi_rigid_s_parameters_WITH_HEADER.txt",
         f_low: tp.FreqType = 0 * un.MHz,
         f_high: tp.FreqType = np.inf * un.MHz,
+        set_transform_range: bool = True,
         **kwargs,
     ):
         """Instantiate the HotLoadCorrection from file.
@@ -96,38 +101,84 @@ class HotLoadCorrection:
                     data[:, 4] + 1j * data[:, 5],
                 ]
             ).T
+
+        model = kwargs.pop(
+            "model",
+            mdl.Polynomial(
+                n_terms=21,
+                transform=mdl.UnitTransform(
+                    range=(freq.min.to_value("MHz"), freq.max.to_value("MHz"))
+                ),
+            ),
+        )
+
+        if hasattr(model.transform, "range") and set_transform_range:
+            model = attr.evolve(
+                model,
+                transform=attr.evolve(
+                    model.transform,
+                    range=(freq.min.to_value("MHz"), freq.max.to_value("MHz")),
+                ),
+            )
+
         return cls(
             freq=freq,
             raw_s11=data[:, 0],
             raw_s12s21=data[:, 1],
             raw_s22=data[:, 2],
+            model=model,
             **kwargs,
         )
 
     def _get_model(self, raw_data: np.ndarray):
-        model = mdl.Polynomial(
-            n_terms=self.n_terms,
-            transform=mdl.UnitTransform(
-                range=(self.freq.min.to_value("MHz"), self.freq.max.to_value("MHz"))
-            ),
-        )
-        model = mdl.ComplexMagPhaseModel(mag=model, phs=model)
+        model = self.complex_model(self.model, self.model)
         return model.fit(xdata=self.freq.freq, ydata=raw_data)
+
+    def _get_splines(self, data):
+        if self.complex_model == mdl.ComplexRealImagModel:
+            return (
+                Spline(self.freq.freq.to_value("MHz"), np.real(data)),
+                Spline(self.freq.freq.to_value("MHz"), np.imag(data)),
+            )
+        else:
+            return (
+                Spline(self.freq.freq.to_value("MHz"), np.abs(data)),
+                Spline(self.freq.freq.to_value("MHz"), np.angle(data)),
+            )
+
+    def _ev_splines(self, splines):
+        rl, im = splines
+        if self.complex_model == mdl.ComplexRealImagModel:
+            return lambda freq: rl(freq) + 1j * im(freq)
+        else:
+            return lambda freq: rl(freq) * np.exp(1j * im(freq))
 
     @cached_property
     def s11_model(self):
         """The reflection coefficient."""
-        return self._get_model(self.raw_s11)
+        if not self.use_spline:
+            return self._get_model(self.raw_s11)
+        else:
+            splines = self._get_splines(self.raw_s11)
+            return self._ev_splines(splines)
 
     @cached_property
     def s12s21_model(self):
         """The transmission coefficient."""
-        return self._get_model(self.raw_s12s21)
+        if not self.use_spline:
+            return self._get_model(self.raw_s12s21)
+        else:
+            splines = self._get_splines(self.raw_s12s21)
+            return self._ev_splines(splines)
 
     @cached_property
     def s22_model(self):
         """The reflection coefficient from the other side."""
-        return self._get_model(self.raw_s22)
+        if not self.use_spline:
+            return self._get_model(self.raw_s22)
+        else:
+            splines = self._get_splines(self.raw_s22)
+            return self._ev_splines(splines)
 
     def power_gain(self, freq: tp.FreqType, hot_load_s11: s11.LoadS11) -> np.ndarray:
         """
@@ -289,11 +340,19 @@ class Load:
                 ],
             )
 
+        # For the LoadSpectrum, we can specify both f_low/f_high and f_range_keep.
+        # The first pair is what defines what gets read in and smoothed/averaged.
+        # The second pair then selects a part of this range to keep for doing
+        # calibration with.
+        if "f_low" not in spec_kwargs:
+            spec_kwargs["f_low"] = f_low
+        if "f_high" not in spec_kwargs:
+            spec_kwargs["f_high"] = f_high
+
         spec = LoadSpectrum.from_io(
             io_obs=io_obj,
             load_name=load_name,
-            f_low=f_low,
-            f_high=f_high,
+            f_range_keep=(f_low, f_high),
             **spec_kwargs,
         )
 
@@ -312,8 +371,7 @@ class Load:
                 ambient_temperature = LoadSpectrum.from_io(
                     io_obj,
                     load_name="ambient",
-                    f_low=f_low,
-                    f_high=f_high,
+                    f_range_keep=(f_low, f_high),
                     **spec_kwargs,
                 ).temp_ave
 
@@ -420,7 +478,7 @@ class CalibrationObservation:
     """
 
     loads: dict[str, Load] = attr.ib()
-    receiver: s11.Receiver | s11.AveragedReceiver = attr.ib()
+    receiver: s11.Receiver = attr.ib()
     cterms: int = attr.ib(default=5, kw_only=True)
     wterms: int = attr.ib(default=7, kw_only=True)
 
@@ -430,6 +488,11 @@ class CalibrationObservation:
     def metadata(self):
         """Metadata associated with the object."""
         return self._metadata
+
+    def __attrs_post_init__(self):
+        """Set the loads as attributes directly."""
+        for k, v in self.loads.items():
+            setattr(self, k, v)
 
     @classmethod
     def from_io(
@@ -447,6 +510,7 @@ class CalibrationObservation:
         sources: tuple[str] = ("ambient", "hot_load", "open", "short"),
         receiver_kwargs: dict[str, Any] | None = None,
         restrict_s11_model_freqs: bool = True,
+        hot_load_loss_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ) -> CalibrationObservation:
         """Create the object from an edges-io observation.
@@ -506,6 +570,7 @@ class CalibrationObservation:
         s11_kwargs = s11_kwargs or {}
         internal_switch_kwargs = internal_switch_kwargs or {}
         receiver_kwargs = receiver_kwargs or {}
+        hot_load_loss_kwargs = hot_load_loss_kwargs or {}
 
         for v in [spectrum_kwargs, s11_kwargs, internal_switch_kwargs, receiver_kwargs]:
             assert isinstance(v, dict)
@@ -537,25 +602,33 @@ class CalibrationObservation:
         if "freq_bin_size" not in spectrum_kwargs["default"]:
             spectrum_kwargs["default"]["freq_bin_size"] = freq_bin_size
 
-        loads = {
-            source: Load.from_io(
+        def get_load(name, ambient_temperature=None):
+            return Load.from_io(
                 io_obj=io_obj,
-                load_name=source,
+                load_name=name,
                 f_low=f_low,
                 f_high=f_high,
                 reflection_kwargs={
                     **s11_kwargs.get("default", {}),
-                    **s11_kwargs.get(source, {}),
+                    **s11_kwargs.get(name, {}),
                     **{"internal_switch_kwargs": internal_switch_kwargs},
                 },
                 spec_kwargs={
                     **spectrum_kwargs["default"],
-                    **spectrum_kwargs.get(source, {}),
+                    **spectrum_kwargs.get(name, {}),
                 },
-                loss_kwargs={"path": semi_rigid_path},
+                loss_kwargs={**hot_load_loss_kwargs, **{"path": semi_rigid_path}},
+                ambient_temperature=ambient_temperature,
             )
-            for source in sources
-        }
+
+        loads = {}
+        for src in sources:
+            loads[src] = get_load(
+                src,
+                ambient_temperature=loads["ambient"].spectrum.temp_ave
+                if src == "hot_load"
+                else None,
+            )
 
         return cls(
             loads=loads,
@@ -571,13 +644,6 @@ class CalibrationObservation:
             },
             **kwargs,
         )
-
-    def __getattr__(self, name):
-        """Get loads as attributes."""
-        if name in self.loads:
-            return self.loads[name]
-
-        raise AttributeError(f"{name} does not exist in CalibrationObservation!")
 
     def with_load_calkit(self, calkit, loads: Sequence[str] = None):
         """Return a new observation with loads having given calkit."""
@@ -649,11 +715,19 @@ class CalibrationObservation:
         spec_kwargs["t_load"] = self.open.spectrum.t_load
         spec_kwargs["t_load_ns"] = self.open.spectrum.t_load_ns
 
+        if "frequency_smoothing" not in spec_kwargs:
+            spec_kwargs["frequency_smoothing"] = self.open.spectrum.metadata[
+                "frequency_smoothing"
+            ]
+
+        spec_kwargs["f_low"] = self.freq._f_low
+        spec_kwargs["f_high"] = self.freq._f_high
+
         return Load.from_io(
             io_obj=io_obj,
             load_name=load_name,
-            f_low=self.freq._f_low,
-            f_high=self.freq._f_high,
+            f_low=self.freq.post_bin_f_low,
+            f_high=self.freq.post_bin_f_high,
             reflection_kwargs=reflection_kwargs,
             spec_kwargs=spec_kwargs,
         )

@@ -9,6 +9,7 @@ from astropy import units as u
 from edges_io import h5
 from itertools import product
 from pathlib import Path
+from scipy.ndimage import convolve1d
 from typing import Any, Callable, Sequence
 
 from . import DATA_PATH
@@ -144,6 +145,10 @@ class FrequencyRange:
         A minimum frequency to keep in the array. Default is min(f).
     bin_size
         Bin input frequencies into bins of this size.
+    alan_mode
+        Only applicable if bin_size > 1. If True, then take every
+        bin_size frequency, starting from the 0th channel. Otherwise
+        take the mean of each bin as the resulting frequency.
     """
 
     _f: tp.FreqType = attr.ib(
@@ -156,6 +161,13 @@ class FrequencyRange:
         np.inf * u.MHz, validator=vld_unit("frequency"), kw_only=True
     )
     bin_size: int = attr.ib(default=1, converter=int, kw_only=True)
+    alan_mode: bool = attr.ib(default=False, converter=bool, kw_only=True)
+    post_bin_f_low: tp.Freqtype = attr.ib(
+        0 * u.MHz, validator=vld_unit("frequency"), kw_only=True
+    )
+    post_bin_f_high: float = attr.ib(
+        np.inf * u.MHz, validator=vld_unit("frequency"), kw_only=True
+    )
 
     @bin_size.validator
     def _bin_size_validator(self, att, val):
@@ -218,10 +230,19 @@ class FrequencyRange:
     @cached_property
     def freq(self):
         """The frequency array."""
-        return (
-            bin_array(self.freq_full[self.mask].value, self.bin_size)
-            * self.freq_full.unit
-        )
+        if self.alan_mode:
+            freq = self.freq_full[self.mask][:: self.bin_size]
+        else:
+            freq = (
+                bin_array(self.freq_full[self.mask].value, self.bin_size)
+                * self.freq_full.unit
+            )
+
+        # We have a secondary mask that is done after binning, because sometimes the
+        # binning changes the exact edges so you get different results for if you
+        # mask before or after binning.
+        secondary_mask = (freq >= self.post_bin_f_low) & (freq <= self.post_bin_f_high)
+        return freq[secondary_mask]
 
     @cached_property
     def range(self):
@@ -276,7 +297,13 @@ class FrequencyRange:
 
     @classmethod
     def from_edges(
-        cls, n_channels: int = 16384 * 2, max_freq: float = 200.0 * u.MHz, **kwargs
+        cls,
+        n_channels: int = 16384 * 2,
+        max_freq: float = 200.0 * u.MHz,
+        keep_full: bool = True,
+        f_low=0 * u.MHz,
+        f_high=np.inf * u.MHz,
+        **kwargs,
     ) -> FrequencyRange:
         """Construct a :class:`FrequencyRange` object with underlying EDGES freqs.
 
@@ -286,6 +313,11 @@ class FrequencyRange:
             Number of channels
         max_freq : float
             Maximum frequency in original measurement.
+        keep_full
+            Whether to keep the full underlying frequency array, or just the part
+            of the array inside the mask.
+        f_low, f_high
+            A frequency range to keep.
         kwargs
             All other arguments passed through to :class:`FrequencyRange`.
 
@@ -315,7 +347,10 @@ class FrequencyRange:
         # corresponds to the centre of the N+1 bin, which doesn't actually exist.
         f = np.arange(0, max_freq.value, df.value) * max_freq.unit
 
-        return cls(f=f, **kwargs)
+        if not keep_full:
+            f = f[(f >= f_low) * (f <= f_high)]
+
+        return cls(f=f, f_low=f_low, f_high=f_high, **kwargs)
 
     def clone(self, **kwargs):
         """Make a new frequency range object with updated parameters."""
@@ -365,3 +400,25 @@ def bin_array(x: np.ndarray, size: int = 1) -> np.ndarray:
     n = x.shape[-1]
     nn = size * (n // size)
     return np.nanmean(x[..., :nn].reshape(x.shape[:-1] + (-1, size)), axis=-1)
+
+
+def gauss_smooth(
+    x: np.ndarray, size: int, decimate_at: int | None = None
+) -> np.ndarray:
+    """Smooth x with a Gaussian function, and reduces the size of the array."""
+    assert isinstance(size, int)
+
+    if decimate_at is None:
+        decimate_at = int(size / 2)
+
+    assert isinstance(decimate_at, int)
+    assert decimate_at < size
+
+    # This choice of size scaling corresponds to Alan's C code.
+    y = np.arange(-size * 4, size * 4 + 1) * 2 / size
+    window = np.exp(-(y**2) * 0.69)
+
+    sums = convolve1d(x, window, mode="nearest")[..., decimate_at::size]
+    wghts = convolve1d(np.ones_like(x), window, mode="nearest")[..., decimate_at::size]
+
+    return sums / wghts

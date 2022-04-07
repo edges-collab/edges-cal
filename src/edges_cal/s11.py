@@ -21,7 +21,8 @@ from astropy import units as un
 from cached_property import cached_property
 from edges_io import h5, io
 from pathlib import Path
-from typing import Callable, Sequence
+from scipy.interpolate import InterpolatedUnivariateSpline as Spline
+from typing import Any, Callable, Sequence
 
 from . import reflection_coefficient as rc
 from . import types as tp
@@ -31,6 +32,7 @@ from .modelling import (
     Fourier,
     Model,
     Modelable,
+    ModelTransform,
     Polynomial,
     UnitTransform,
     get_mdl,
@@ -208,7 +210,10 @@ class S11Model:
         ComplexRealImagModel
     ] = attr.ib()
     model_delay: tp.Time = attr.ib(0 * un.s)
-
+    model_transform: ModelTransform = attr.ib(default=UnitTransform(range=(0, 1)))
+    set_transform_range: bool = attr.ib(True, converter=bool)
+    model_kwargs: dict[str, Any] = attr.ib(default=attr.Factory(dict))
+    use_spline: bool = attr.ib(False)
     metadata: dict = attr.ib(default=attr.Factory(dict), eq=False)
 
     @freq.validator
@@ -281,11 +286,18 @@ class S11Model:
         freq = freq or self.freq.freq
         n_terms = n_terms or self.n_terms
         model_type = get_mdl(model_type or self.model_type)
+
+        transform = self.model_transform
+
+        if self.set_transform_range and hasattr(transform, "range"):
+            transform = attr.evolve(
+                transform,
+                range=(self.freq.min.to_value("MHz"), self.freq.max.to_value("MHz")),
+            )
+
         model = model_type(
             n_terms=n_terms,
-            transform=UnitTransform(
-                range=[self.freq.min.to_value("MHz"), self.freq.max.to_value("MHz")]
-            ),
+            transform=transform,
         )
         emodel = model.at(x=freq.to_value("MHz"))
 
@@ -300,14 +312,33 @@ class S11Model:
         """The S11 model."""
         return self.get_s11_model(self.raw_s11)
 
+    @cached_property
+    def _splines(self) -> callable:
+        if self.complex_model_type == ComplexRealImagModel:
+            return (
+                Spline(self.freq.freq.to_value("MHz"), np.real(self.raw_s11)),
+                Spline(self.freq.freq.to_value("MHz"), np.imag(self.raw_s11)),
+            )
+        else:
+            return (
+                Spline(self.freq.freq.to_value("MHz"), np.abs(self.raw_s11)),
+                Spline(self.freq.freq.to_value("MHz"), np.angle(self.raw_s11)),
+            )
+
     def s11_model(self, freq: np.ndarray | tp.FreqType) -> np.ndarray:
         """Compute the S11 at a specific set of frequencies."""
         if hasattr(freq, "unit"):
             freq = freq.to_value("MHz")
 
-        return self._s11_model(freq) * np.exp(
-            -1j * self.model_delay.to_value("microsecond") * freq
-        )
+        if not self.use_spline:
+            return self._s11_model(freq) * np.exp(
+                -1j * self.model_delay.to_value("microsecond") * freq
+            )
+        else:
+            if self.complex_model_type == ComplexRealImagModel:
+                return self._splines[0](freq) + 1j * self._splines[1](freq)
+            else:
+                return self._splines[0](freq) * np.exp(1j * self._splines[1](freq))
 
     def plot_residuals(
         self,
