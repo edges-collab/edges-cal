@@ -315,3 +315,5 @@ def test_use_spline_hlc():
         )
 
         assert np.allclose(rcv.s11_model(freq.freq), raw_data)
+        assert np.allclose(rcv.s12s21_model(freq.freq), raw_data)
+        assert np.allclose(rcv.s22_model(freq.freq), raw_data)
