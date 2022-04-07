@@ -103,11 +103,11 @@ def test_physical_lin():
     )
 
     basis = m.basis
-    assert np.allclose(basis[0], [np.e ** 2.5, 1, np.e ** -2.5])
-    assert np.allclose(basis[1], [-np.e ** 2.5, 0, np.e ** -2.5])
-    assert np.allclose(basis[2], [np.e ** 2.5, 0, np.e ** -2.5])
-    assert np.allclose(basis[3], [np.e ** 4.5, 1, np.e ** -4.5])
-    assert np.allclose(basis[4], [np.e ** 2, 1, np.e ** -2])
+    assert np.allclose(basis[0], [np.e**2.5, 1, np.e**-2.5])
+    assert np.allclose(basis[1], [-np.e**2.5, 0, np.e**-2.5])
+    assert np.allclose(basis[2], [np.e**2.5, 0, np.e**-2.5])
+    assert np.allclose(basis[3], [np.e**4.5, 1, np.e**-4.5])
+    assert np.allclose(basis[4], [np.e**2, 1, np.e**-2])
 
 
 def test_linlog():
@@ -258,7 +258,7 @@ def test_composite_with_extra():
     mdl2 = mdl.Polynomial(n_terms=5, parameters=[0, 1, 2, 3, 4])
 
     cmp = mdl.CompositeModel(
-        models={"lin": mdl1, "pl": mdl2}, extra_basis={"lin": lambda x: x ** 2}
+        models={"lin": mdl1, "pl": mdl2}, extra_basis={"lin": lambda x: x**2}
     )
     assert not np.allclose(
         cmp.get_model("lin", x=np.linspace(10, 20, 10), with_extra=True),
@@ -271,7 +271,7 @@ def test_composite_with_n_terms():
     mdl2 = mdl.Polynomial(n_terms=5, parameters=[0, 1, 2, 3, 4])
 
     cmp = mdl.CompositeModel(
-        models={"lin": mdl1, "pl": mdl2}, extra_basis={"lin": lambda x: x ** 2}
+        models={"lin": mdl1, "pl": mdl2}, extra_basis={"lin": lambda x: x**2}
     )
 
     new = cmp.with_nterms("pl", n_terms=6, parameters=[0, 1, 2, 3, 4, 5])

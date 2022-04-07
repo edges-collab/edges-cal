@@ -1099,7 +1099,7 @@ class CalibrationObservation:
         for name, res in resids.items():
             if smooth > 1:
                 res = convolve(res, Gaussian1DKernel(stddev=smooth), boundary="extend")
-            out[name] = np.sqrt(np.nanmean(res ** 2))
+            out[name] = np.sqrt(np.nanmean(res**2))
         return out
 
     def plot_calibrated_temps(self, bins=64, fig=None, ax=None, **kwargs):
