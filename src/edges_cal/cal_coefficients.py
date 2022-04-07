@@ -489,6 +489,11 @@ class CalibrationObservation:
         """Metadata associated with the object."""
         return self._metadata
 
+    def __attrs_post_init__(self):
+        """Set the loads as attributes directly."""
+        for k, v in self.loads.items():
+            setattr(self, k, v)
+
     @classmethod
     def from_io(
         cls,
@@ -596,10 +601,6 @@ class CalibrationObservation:
 
         if "freq_bin_size" not in spectrum_kwargs["default"]:
             spectrum_kwargs["default"]["freq_bin_size"] = freq_bin_size
-
-        def __attrs_post_init__(self):
-            for k, v in self.loads.items():
-                setattr(self, k, v)
 
         def get_load(name, ambient_temperature=None):
             return Load.from_io(
