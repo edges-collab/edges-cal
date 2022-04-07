@@ -416,7 +416,7 @@ def gauss_smooth(
 
     # This choice of size scaling corresponds to Alan's C code.
     y = np.arange(-size * 4, size * 4 + 1) * 2 / size
-    window = np.exp(-(y ** 2) * 0.69)
+    window = np.exp(-(y**2) * 0.69)
 
     sums = convolve1d(x, window, mode="nearest")[..., decimate_at::size]
     wghts = convolve1d(np.ones_like(x), window, mode="nearest")[..., decimate_at::size]

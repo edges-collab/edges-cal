@@ -474,11 +474,11 @@ class PhysicalLin(Foreground):
         """Define the basis functions of the model."""
         if indx < 3:
             logy = np.log(x)
-            y25 = x ** -2.5
-            return y25 * logy ** indx
+            y25 = x**-2.5
+            return y25 * logy**indx
 
         elif indx == 3:
-            return x ** -4.5
+            return x**-4.5
         elif indx == 4:
             return 1 / (x * x)
         else:
@@ -549,7 +549,7 @@ class LinLog(Foreground):
     def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Define the basis functions of the model."""
         term = self._poly.get_basis_term_transformed(indx, x)
-        return term * x ** self.beta
+        return term * x**self.beta
 
 
 @h5.hickleable()
