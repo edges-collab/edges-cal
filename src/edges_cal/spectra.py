@@ -316,7 +316,7 @@ def get_ave_and_var_spec(
         resid = mean - xrfi.flagged_filter(mean, size=2 * width + 1)
         flags = np.logical_or(
             resid > rfi_threshold * np.sqrt(varfilt / nsample),
-            var - varfilt > rfi_threshold * np.sqrt(2 * varfilt ** 2 / (nsample - 1)),
+            var - varfilt > rfi_threshold * np.sqrt(2 * varfilt**2 / (nsample - 1)),
         )
 
         mean[flags] = np.nan
@@ -570,4 +570,4 @@ class LoadSpectrum:
     @property
     def variance_spectrum(self) -> np.ndarray:
         """Variance of uncalibrated spectrum across time (see averaged_spectrum)."""
-        return self.variance_Q * self.t_load_ns ** 2
+        return self.variance_Q * self.t_load_ns**2
