@@ -597,6 +597,10 @@ class CalibrationObservation:
         if "freq_bin_size" not in spectrum_kwargs["default"]:
             spectrum_kwargs["default"]["freq_bin_size"] = freq_bin_size
 
+        def __attrs_post_init__(self):
+            for k, v in self.loads.items():
+                setattr(self, k, v)
+
         def get_load(name, ambient_temperature=None):
             return Load.from_io(
                 io_obj=io_obj,
@@ -639,13 +643,6 @@ class CalibrationObservation:
             },
             **kwargs,
         )
-
-    def __getattr__(self, name):
-        """Get loads as attributes."""
-        if name in self.loads:
-            return self.loads[name]
-
-        raise AttributeError(f"{name} does not exist in CalibrationObservation!")
 
     def with_load_calkit(self, calkit, loads: Sequence[str] = None):
         """Return a new observation with loads having given calkit."""
