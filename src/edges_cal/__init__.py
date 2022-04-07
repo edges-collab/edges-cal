@@ -13,6 +13,7 @@ from pathlib import Path
 
 DATA_PATH = Path(__file__).parent / "data"
 
+from . import modelling  # noqa: E402
 from . import plot  # noqa: E402
 from .cal_coefficients import (  # noqa: E402
     CalibrationObservation,
