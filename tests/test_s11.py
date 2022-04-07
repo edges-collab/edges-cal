@@ -283,9 +283,15 @@ def test_use_spline():
         + np.random.normal(scale=0.1, size=100)
     )
 
-    rcv = s11.Receiver(freq=freq, raw_s11=raw_data, use_spline=True)
+    for complex_model in (mdl.ComplexMagPhaseModel, mdl.ComplexRealImagModel):
+        rcv = s11.Receiver(
+            freq=freq,
+            raw_s11=raw_data,
+            use_spline=True,
+            complex_model_type=complex_model,
+        )
 
-    assert np.allclose(rcv.s11_model(freq.freq), raw_data)
+        assert np.allclose(rcv.s11_model(freq.freq), raw_data)
 
 
 def test_use_spline_hlc():
@@ -297,12 +303,15 @@ def test_use_spline_hlc():
         + np.random.normal(scale=0.1, size=100)
     )
 
-    rcv = HotLoadCorrection(
-        freq=freq,
-        raw_s11=raw_data,
-        raw_s12s21=raw_data,
-        raw_s22=raw_data,
-        use_spline=True,
-    )
+    for complex_model in (mdl.ComplexMagPhaseModel, mdl.ComplexRealImagModel):
 
-    assert np.allclose(rcv.s11_model(freq.freq), raw_data)
+        rcv = HotLoadCorrection(
+            freq=freq,
+            raw_s11=raw_data,
+            raw_s12s21=raw_data,
+            raw_s22=raw_data,
+            use_spline=True,
+            complex_model=complex_model,
+        )
+
+        assert np.allclose(rcv.s11_model(freq.freq), raw_data)
