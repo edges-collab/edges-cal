@@ -1256,6 +1256,9 @@ def _model_yaml_representer(
 
 
 yaml.FullLoader.add_constructor("!Model", _model_yaml_constructor)
+yaml.Loader.add_constructor("!Model", _model_yaml_constructor)
+yaml.BaseLoader.add_constructor("!Model", _model_yaml_constructor)
+
 
 yaml.add_multi_representer(Model, _model_yaml_representer)
 yaml.add_multi_representer(ModelTransform, _transform_yaml_representer)
