@@ -1046,12 +1046,19 @@ class NoiseWaves:
         return attr.evolve(self, parameters=params)
 
     def get_data_from_calobs(
-        self, calobs, tns: Model | None = None, sim: bool = False
+        self,
+        calobs,
+        tns: Model | None = None,
+        sim: bool = False,
+        loads: dict | None = None,
     ) -> np.ndarray:
         """Generate input data to fit from a calibration observation."""
+        if loads is None:
+            loads = calobs.loads
+
         data = []
         for src in self.src_names:
-            load = calobs.loads[src]
+            load = loads[src]
             if tns is None:
                 _tns = calobs.C1() * calobs.t_load_ns
             else:
@@ -1068,13 +1075,21 @@ class NoiseWaves:
 
     @classmethod
     def from_calobs(
-        cls, calobs, cterms=None, wterms=None, sources=None, with_tload: bool = True
+        cls,
+        calobs,
+        cterms=None,
+        wterms=None,
+        sources=None,
+        with_tload: bool = True,
+        loads: dict | None = None,
     ) -> NoiseWaves:
         """Initialize a noise wave model from a calibration observation."""
-        if sources is None:
-            sources = calobs.load_names
+        if loads is None:
+            if sources is None:
+                sources = calobs.load_names
 
-        loads = {src: load for src, load in calobs.loads.items() if src in sources}
+            loads = {src: load for src, load in calobs.loads.items() if src in sources}
+
         freq = calobs.freq.freq.to_value("MHz")
 
         gamma_src = {name: source.s11_model(freq) for name, source in loads.items()}
