@@ -17,7 +17,6 @@ from __future__ import annotations
 import attr
 import matplotlib.pyplot as plt
 import numpy as np
-import receiver_calibration_func as rcf
 from astropy import units as un
 from cached_property import cached_property
 from edges_io import h5, io
@@ -25,6 +24,7 @@ from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 from typing import Any, Callable, Sequence
 
+from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
 from . import types as tp
 from .modelling import (
