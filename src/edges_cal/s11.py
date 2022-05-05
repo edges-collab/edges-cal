@@ -17,6 +17,7 @@ from __future__ import annotations
 import attr
 import matplotlib.pyplot as plt
 import numpy as np
+import receiver_calibration_func as rcf
 from astropy import units as un
 from cached_property import cached_property
 from edges_io import h5, io
@@ -858,4 +859,13 @@ class LoadS11(S11Model):
 
         return cls.from_load_and_internal_switch(
             load_s11=load_s11s, internal_switch=internal_switch, **kwargs
+        )
+
+    def get_k_matrix(self, receiver: Receiver, freq: tp.FreqType | None = None):
+        """Compute the K matrix for this source."""
+        if freq is None:
+            freq = self.freq.freq.to_value("MHz")
+
+        return rcf.get_K(
+            gamma_rec=receiver.s11_model(freq), gamma_ant=self.s11_model(freq)
         )
