@@ -569,7 +569,7 @@ def LogPoly(**kwargs):
             transform=Log10Transform(),
             offset=0,
             **kwargs)
-           
+
 =======
 
 @h5.hickleable()
