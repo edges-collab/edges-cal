@@ -561,24 +561,12 @@ class LinLog(Foreground):
         term = self._poly.get_basis_term_transformed(indx, x)
         return term * x**self.beta
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
-class LogPoly(Foreground):
-    #beta: float = attr.ib(default=-2.5, converter=float)
-
-    @property
-    def _poly(self):
-        return Polynomial(
-            transform=Log10Transform(scale=75.0),
+def LogPoly(**kwargs):
+    return Polynomial(
+            transform=Log10Transform(),
             offset=0,
-            n_terms=self.n_terms,
-            parameters=self.parameters,
-        )
-
-    def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
-        """Define the basis functions of the model."""
-        term = self._poly.get_basis_term_transformed(indx, x)
-        return 10**term #* x**self.beta
+            **kwargs)
+           
 
 @h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
