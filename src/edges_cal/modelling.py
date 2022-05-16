@@ -563,12 +563,10 @@ class LinLog(Foreground):
         term = self._poly.get_basis_term_transformed(indx, x)
         return term * x**self.beta
 
+
 def LogPoly(**kwargs):
-    return Polynomial(
-            transform=Log10Transform(),
-            offset=0,
-            **kwargs)
-           
+    return Polynomial(transform=Log10Transform(), offset=0, **kwargs)
+
 
 @h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
