@@ -1030,20 +1030,29 @@ class NoiseWaves:
         fit = self.linear_model.fit(ydata=data, weights=weights)
         return attr.evolve(self, parameters=fit.model_parameters)
 
-    def with_params_from_calobs(self, calobs) -> NoiseWaves:
+    def with_params_from_calobs(self, calobs, cterms=None, wterms=None) -> NoiseWaves:
         """Get a new noise wave model with parameters fitted using standard methods."""
-        params = (
-            calobs.Tunc_poly.coefficients[::-1].tolist()
-            + calobs.Tcos_poly.coefficients[::-1].tolist()
-            + calobs.Tsin_poly.coefficients[::-1].tolist()
-        )
+        cterms = cterms or calobs.cterms
+        wterms = wterms or calobs.wterms
+
+        def modify(thing, n):
+            if len(thing) < wterms:
+                return thing + [0] * (n - len(thing))
+            elif len(thing) > wterms:
+                return thing[:n]
+            else:
+                return thing
+
+        tu = modify(calobs.Tunc_poly.coefficients[::-1].tolist(), wterms)
+        tc = modify(calobs.Tcos_poly.coefficients[::-1].tolist(), wterms)
+        ts = modify(calobs.Tsin_poly.coefficients[::-1].tolist(), wterms)
 
         if self.with_tload:
             c2 = (-calobs.C2_poly.coefficients[::-1]).tolist()
             c2[0] += calobs.t_load
-            params += c2
+            c2 = modify(c2, cterms)
 
-        return attr.evolve(self, parameters=params)
+        return attr.evolve(self, parameters=tu + tc + ts + c2)
 
     def get_data_from_calobs(
         self,
@@ -1107,10 +1116,7 @@ class NoiseWaves:
             w_terms=wterms or calobs.wterms,
             with_tload=with_tload,
         )
-        if not cterms and not wterms:
-            return nw_model.with_params_from_calobs(calobs)
-        else:
-            return nw_model
+        return nw_model.with_params_from_calobs(calobs)
 
     def __call__(self, **kwargs) -> np.ndarray:
         """Call the underlying linear model."""
