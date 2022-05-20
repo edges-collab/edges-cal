@@ -1036,9 +1036,9 @@ class NoiseWaves:
         wterms = wterms or calobs.wterms
 
         def modify(thing, n):
-            if len(thing) < wterms:
+            if len(thing) < n:
                 return thing + [0] * (n - len(thing))
-            elif len(thing) > wterms:
+            elif len(thing) > n:
                 return thing[:n]
             else:
                 return thing
@@ -1116,7 +1116,7 @@ class NoiseWaves:
             w_terms=wterms or calobs.wterms,
             with_tload=with_tload,
         )
-        return nw_model.with_params_from_calobs(calobs)
+        return nw_model.with_params_from_calobs(calobs, cterms=cterms, wterms=wterms)
 
     def __call__(self, **kwargs) -> np.ndarray:
         """Call the underlying linear model."""
