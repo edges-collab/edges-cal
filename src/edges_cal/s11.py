@@ -864,7 +864,7 @@ class LoadS11(S11Model):
     def get_k_matrix(self, receiver: Receiver, freq: tp.FreqType | None = None):
         """Compute the K matrix for this source."""
         if freq is None:
-            freq = self.freq.freq.to_value("MHz")
+            freq = self.freq.freq
 
         return rcf.get_K(
             gamma_rec=receiver.s11_model(freq), gamma_ant=self.s11_model(freq)
