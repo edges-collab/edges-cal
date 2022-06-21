@@ -932,8 +932,14 @@ class NoiseWaves:
         """List of names of inputs sources (eg. ambient, hot_load, open, short)."""
         return tuple(self.gamma_src.keys())
 
-    def get_linear_model(self, with_k: bool = True):
-        """Define and return a Model."""
+    def get_linear_model(self, with_k: bool = True) -> CompositeModel:
+        """Define and return a Model.
+
+        Parameters
+        ----------
+        with_k
+            Whether to use the K matrix as an "extra basis" in the linear model.
+        """
         if with_k:
             # K should be a an array of shape (Nsrc Nnu x Nnoisewaveterms)
             K = np.hstack(
