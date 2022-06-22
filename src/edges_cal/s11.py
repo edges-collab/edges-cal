@@ -24,6 +24,7 @@ from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 from typing import Any, Callable, Sequence
 
+from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
 from . import types as tp
 from .modelling import (
@@ -858,4 +859,13 @@ class LoadS11(S11Model):
 
         return cls.from_load_and_internal_switch(
             load_s11=load_s11s, internal_switch=internal_switch, **kwargs
+        )
+
+    def get_k_matrix(self, receiver: Receiver, freq: tp.FreqType | None = None):
+        """Compute the K matrix for this source."""
+        if freq is None:
+            freq = self.freq.freq
+
+        return rcf.get_K(
+            gamma_rec=receiver.s11_model(freq), gamma_ant=self.s11_model(freq)
         )
