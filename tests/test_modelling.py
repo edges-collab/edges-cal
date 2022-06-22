@@ -66,6 +66,7 @@ def test_simple_fit():
     assert np.allclose(fit.residual, 0)
     assert np.allclose(fit.weighted_chi2, 0)
     assert np.allclose(fit.reduced_weighted_chi2(), 0)
+    assert fit.hessian.shape == (3, 3)
 
 
 def test_weighted_fit():
@@ -184,6 +185,9 @@ def test_noise_waves(calobs):
     assert len(nw.get_full_model("hot_load")) == calobs.freq.n
     assert nw.with_params_from_calobs(clb) == nw
     assert len(nw.get_data_from_calobs(clb)) == 4 * calobs.freq.n
+
+    nok = nw.get_linear_model(with_k=False)
+    assert not nok.model.extra_basis
 
 
 def test_complex_model():
