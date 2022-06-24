@@ -40,7 +40,7 @@ jobs:
           python -m ipykernel install --user --name edges --display-name "edges"
       - name: Run Tests
         run: |
-          coverage run python -m pytest --cov-config=.coveragerc --durations=25
+          coverage run -m pytest --durations=25
       - name: Coverage Report
         run: |
           coverage xml
