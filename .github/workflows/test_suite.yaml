@@ -40,8 +40,13 @@ jobs:
           python -m ipykernel install --user --name edges --display-name "edges"
       - name: Run Tests
         run: |
-          python -m pytest --cov=edges_cal --cov-config=.coveragerc --cov-report xml:./coverage.xml --durations=25
-      - uses: codecov/codecov-action@v1.5.2
+          coverage run python -m pytest --cov-config=.coveragerc --durations=25
+      - name: Coverage Report
+        run: |
+          coverage xml
+          coverage report
+      - uses: codecov/codecov-action@v2
         if: matrix.os == 'ubuntu-latest' && success()
         with:
           file: ./coverage.xml #optional
+          fail_if_ci_error: true
