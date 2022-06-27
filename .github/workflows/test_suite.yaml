@@ -43,7 +43,7 @@ jobs:
 
       - name: Run Tests
         run: |
-          coverage run -m pytest --durations=25
+          coverage run --parallel-mode -m pytest --durations=25
 
       - name: View Files
         run: |
@@ -93,7 +93,7 @@ jobs:
       - name: Run Tests
         run: |
           cd ../${{ matrix.package }}
-          coverage run --rcfile ../edges-cal/.coveragerc -m pytest
+          coverage run --parallel-mode --rcfile ../edges-cal/.coveragerc -m pytest
 
       - name: Upload coverage data
         uses: actions/upload-artifact@v3
