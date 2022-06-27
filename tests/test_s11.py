@@ -317,3 +317,22 @@ def test_use_spline_hlc():
         assert np.allclose(rcv.s11_model(freq.freq), raw_data)
         assert np.allclose(rcv.s12s21_model(freq.freq), raw_data)
         assert np.allclose(rcv.s22_model(freq.freq), raw_data)
+
+
+def test_get_k_matrix():
+    freq = FrequencyRange(np.linspace(50, 100, 100) * u.MHz)
+    mfreq = 75 * u.MHz
+    raw_data = (
+        (freq.freq / mfreq).value ** -2.5
+        + 1j * (freq.freq / mfreq).value ** 0.5
+        + np.random.normal(scale=0.1, size=100)
+    )
+
+    int_switch = s11.InternalSwitch(
+        s11_data=raw_data, s12_data=raw_data, s22_data=raw_data, freq=freq.freq
+    )
+    rcv = s11.Receiver(raw_s11=raw_data, freq=freq)
+    s11m = s11.LoadS11(freq=freq, raw_s11=raw_data, internal_switch=int_switch)
+
+    K = s11m.get_k_matrix(rcv)
+    assert np.array(K).shape == (4, freq.n)

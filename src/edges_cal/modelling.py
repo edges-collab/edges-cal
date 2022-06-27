@@ -941,60 +941,82 @@ class NoiseWaves:
     c_terms: int = attr.ib(default=5)
     w_terms: int = attr.ib(default=6)
     parameters: Sequence | None = attr.ib(default=None)
+    with_tload: bool = attr.ib(default=True)
 
     @cached_property
     def src_names(self) -> tuple[str]:
         """List of names of inputs sources (eg. ambient, hot_load, open, short)."""
         return tuple(self.gamma_src.keys())
 
-    @cached_property
-    def linear_model(self) -> CompositeModel:
-        """The actual composite linear model object associated with the noise waves."""
-        # K should be a an array of shape (Nsrc Nnu x Nnoisewaveterms)
-        K = np.hstack(
-            tuple(
-                rcf.get_K(gamma_rec=self.gamma_rec, gamma_ant=s11src)
-                for s11src in self.gamma_src.values()
+    def get_linear_model(self, with_k: bool = True) -> CompositeModel:
+        """Define and return a Model.
+
+        Parameters
+        ----------
+        with_k
+            Whether to use the K matrix as an "extra basis" in the linear model.
+        """
+        if with_k:
+            # K should be a an array of shape (Nsrc Nnu x Nnoisewaveterms)
+            K = np.hstack(
+                tuple(
+                    rcf.get_K(gamma_rec=self.gamma_rec, gamma_ant=s11src)
+                    for s11src in self.gamma_src.values()
+                )
             )
-        )
 
         # x is the frequencies repeated for every input source
         x = np.tile(self.freq, len(self.gamma_src))
         tr = UnitTransform(range=(x.min(), x.max()))
 
-        return CompositeModel(
-            models={
-                "tunc": Polynomial(
-                    n_terms=self.w_terms,
-                    parameters=self.parameters[: self.w_terms]
-                    if self.parameters is not None
-                    else None,
-                    transform=tr,
-                ),
-                "tcos": Polynomial(
-                    n_terms=self.w_terms,
-                    parameters=self.parameters[self.w_terms : 2 * self.w_terms]
-                    if self.parameters is not None
-                    else None,
-                    transform=tr,
-                ),
-                "tsin": Polynomial(
-                    n_terms=self.w_terms,
-                    parameters=self.parameters[2 * self.w_terms : 3 * self.w_terms]
-                    if self.parameters is not None
-                    else None,
-                    transform=tr,
-                ),
-                "tload": Polynomial(
-                    n_terms=self.c_terms,
-                    parameters=self.parameters[3 * self.w_terms :]
-                    if self.parameters is not None
-                    else None,
-                    transform=tr,
-                ),
-            },
-            extra_basis={"tunc": K[1], "tcos": K[2], "tsin": K[3], "tload": -1},
-        ).at(x=x)
+        models = {
+            "tunc": Polynomial(
+                n_terms=self.w_terms,
+                parameters=self.parameters[: self.w_terms]
+                if self.parameters is not None
+                else None,
+                transform=tr,
+            ),
+            "tcos": Polynomial(
+                n_terms=self.w_terms,
+                parameters=self.parameters[self.w_terms : 2 * self.w_terms]
+                if self.parameters is not None
+                else None,
+                transform=tr,
+            ),
+            "tsin": Polynomial(
+                n_terms=self.w_terms,
+                parameters=self.parameters[2 * self.w_terms : 3 * self.w_terms]
+                if self.parameters is not None
+                else None,
+                transform=tr,
+            ),
+        }
+
+        if with_k:
+            extra_basis = {"tunc": K[1], "tcos": K[2], "tsin": K[3]}
+
+        if self.with_tload:
+            models["tload"] = Polynomial(
+                n_terms=self.c_terms,
+                parameters=self.parameters[3 * self.w_terms :]
+                if self.parameters is not None
+                else None,
+                transform=tr,
+            )
+
+            if with_k:
+                extra_basis["tload"] = -1 * np.ones(len(x))
+
+        if with_k:
+            return CompositeModel(models=models, extra_basis=extra_basis).at(x=x)
+        else:
+            return CompositeModel(models=models).at(x=x)
+
+    @cached_property
+    def linear_model(self) -> CompositeModel:
+        """The actual composite linear model object associated with the noise waves."""
+        return self.get_linear_model()
 
     def get_noise_wave(
         self,
@@ -1030,27 +1052,44 @@ class NoiseWaves:
         fit = self.linear_model.fit(ydata=data, weights=weights)
         return attr.evolve(self, parameters=fit.model_parameters)
 
-    def with_params_from_calobs(self, calobs) -> NoiseWaves:
+    def with_params_from_calobs(self, calobs, cterms=None, wterms=None) -> NoiseWaves:
         """Get a new noise wave model with parameters fitted using standard methods."""
-        c2 = (-calobs.C2_poly.coefficients[::-1]).tolist()
-        c2[0] += calobs.t_load
+        cterms = cterms or calobs.cterms
+        wterms = wterms or calobs.wterms
 
-        params = (
-            calobs.Tunc_poly.coefficients[::-1].tolist()
-            + calobs.Tcos_poly.coefficients[::-1].tolist()
-            + calobs.Tsin_poly.coefficients[::-1].tolist()
-            + c2
-        )
+        def modify(thing, n):
+            if len(thing) < n:
+                return thing + [0] * (n - len(thing))
+            elif len(thing) > n:
+                return thing[:n]
+            else:
+                return thing
 
-        return attr.evolve(self, parameters=params)
+        tu = modify(calobs.Tunc_poly.coefficients[::-1].tolist(), wterms)
+        tc = modify(calobs.Tcos_poly.coefficients[::-1].tolist(), wterms)
+        ts = modify(calobs.Tsin_poly.coefficients[::-1].tolist(), wterms)
+
+        if self.with_tload:
+            c2 = (-calobs.C2_poly.coefficients[::-1]).tolist()
+            c2[0] += calobs.t_load
+            c2 = modify(c2, cterms)
+
+        return attr.evolve(self, parameters=tu + tc + ts + c2)
 
     def get_data_from_calobs(
-        self, calobs, tns: Model | None = None, sim: bool = False
+        self,
+        calobs,
+        tns: Model | None = None,
+        sim: bool = False,
+        loads: dict | None = None,
     ) -> np.ndarray:
         """Generate input data to fit from a calibration observation."""
+        if loads is None:
+            loads = calobs.loads
+
         data = []
         for src in self.src_names:
-            load = calobs.loads[src]
+            load = loads[src]
             if tns is None:
                 _tns = calobs.C1() * calobs.t_load_ns
             else:
@@ -1066,12 +1105,22 @@ class NoiseWaves:
         return np.concatenate(tuple(data))
 
     @classmethod
-    def from_calobs(cls, calobs, cterms=None, wterms=None, sources=None) -> NoiseWaves:
+    def from_calobs(
+        cls,
+        calobs,
+        cterms=None,
+        wterms=None,
+        sources=None,
+        with_tload: bool = True,
+        loads: dict | None = None,
+    ) -> NoiseWaves:
         """Initialize a noise wave model from a calibration observation."""
-        if sources is None:
-            sources = calobs.load_names
+        if loads is None:
+            if sources is None:
+                sources = calobs.load_names
 
-        loads = {src: load for src, load in calobs.loads.items() if src in sources}
+            loads = {src: load for src, load in calobs.loads.items() if src in sources}
+
         freq = calobs.freq.freq.to_value("MHz")
 
         gamma_src = {name: source.s11_model(freq) for name, source in loads.items()}
@@ -1087,11 +1136,9 @@ class NoiseWaves:
             gamma_rec=lna_s11,
             c_terms=cterms or calobs.cterms,
             w_terms=wterms or calobs.wterms,
+            with_tload=with_tload,
         )
-        if not cterms and not wterms:
-            return nw_model.with_params_from_calobs(calobs)
-        else:
-            return nw_model
+        return nw_model.with_params_from_calobs(calobs, cterms=cterms, wterms=wterms)
 
     def __call__(self, **kwargs) -> np.ndarray:
         """Call the underlying linear model."""
@@ -1238,7 +1285,9 @@ class ModelFit:
     @cached_property
     def hessian(self):
         """The Hessian matrix of the linear parameters."""
-        return (self.model.basis * self.weights).dot(self.model.basis.T)
+        b = self.model.basis
+        w = self.weights
+        return (b * w).dot(b.T)
 
     @cached_property
     def parameter_covariance(self) -> np.ndarray:
