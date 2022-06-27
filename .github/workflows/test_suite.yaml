@@ -37,6 +37,11 @@ jobs:
         run: |
           pip install -U coverage
           pip install .[dev]
+
+      - name: Install ipykernel
+        if: matrix.package == 'edges-cal'
+        run: python -m ipykernel install --user --name edges --display-name "edges"
+
       - name: Run Tests
         run: |
           coverage run -m pytest --durations=25
