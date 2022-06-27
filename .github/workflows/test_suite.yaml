@@ -43,7 +43,7 @@ jobs:
 
       - name: Run Tests
         run: |
-          coverage run --parallel-mode -m pytest --durations=25
+          coverage run --parallel-mode -m pytest
 
       - name: View Files
         run: |
@@ -54,7 +54,7 @@ jobs:
         with:
           name: coverage-data
           path: ".coverage.*"
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   downstream:
     env:
@@ -92,15 +92,14 @@ jobs:
         run: pip freeze | grep -E "edges-|read-acq"
       - name: Run Tests
         run: |
-          cd ../${{ matrix.package }}
-          coverage run --parallel-mode --rcfile ../edges-cal/.coveragerc -m pytest
+          coverage run --parallel-mode -m pytest ../${{ matrix.package }}/tests
 
       - name: Upload coverage data
         uses: actions/upload-artifact@v3
         with:
           name: coverage-data
           path: ".coverage.*"
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   codecov:
     needs: [downstream, tests]
