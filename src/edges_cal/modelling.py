@@ -262,6 +262,18 @@ class LogTransform(ModelTransform):
 
 @h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
+class Log10Transform(ModelTransform):
+    """A transform that takes the logarithm of the input."""
+
+    scale: float = attr.ib(1.0)
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        return np.log10(x / self.scale)
+
+
+@h5.hickleable()
+@attr.s(frozen=True, kw_only=True)
 class ZerotooneTransform(ModelTransform):
     """A transform that takes an input range down to (0,1)."""
 
@@ -550,6 +562,11 @@ class LinLog(Foreground):
         """Define the basis functions of the model."""
         term = self._poly.get_basis_term_transformed(indx, x)
         return term * x**self.beta
+
+
+def LogPoly(**kwargs):  # noqa: N802
+    """A factory function for a LogPoly model."""
+    return Polynomial(transform=Log10Transform(), offset=0, **kwargs)
 
 
 @h5.hickleable()
@@ -1305,6 +1322,9 @@ def _model_yaml_representer(
 
 
 yaml.FullLoader.add_constructor("!Model", _model_yaml_constructor)
+yaml.Loader.add_constructor("!Model", _model_yaml_constructor)
+yaml.BaseLoader.add_constructor("!Model", _model_yaml_constructor)
+
 
 yaml.add_multi_representer(Model, _model_yaml_representer)
 yaml.add_multi_representer(ModelTransform, _transform_yaml_representer)

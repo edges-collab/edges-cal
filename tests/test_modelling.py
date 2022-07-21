@@ -295,3 +295,11 @@ def test_complex_at():
     fit2 = cmplx_fixed.fit(y)
 
     assert np.allclose(fit1.real.parameters, fit2.real.parameters)
+
+
+def test_logpoly():
+    m = mdl.LogPoly(n_terms=5, parameters=[1, 0, 0, 0, 0])
+    x = np.linspace(1, 2, 10)
+    assert m(x).shape == (10,)
+    assert np.allclose(m(x), np.ones(10))
+    assert np.allclose(m(x, parameters=[0, 1, 0, 0, 0]), np.log10(x))
