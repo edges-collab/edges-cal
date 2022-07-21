@@ -142,7 +142,7 @@ def simulate_qant_from_calobs(
 
     scale = scale_model(freq) if scale_model is not None else calobs.C1(freq)
 
-    ant_temp = loss * ant_temp / bm_corr + (1 - loss) * t_amb
+    ant_temp = loss * ant_temp * bm_corr + (1 - loss) * t_amb
 
     lna_s11 = (
         calobs.receiver_s11(freq)
