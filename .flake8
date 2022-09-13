@@ -15,7 +15,7 @@ inline-quotes = double
 docstring-convention=numpy
 rst-roles =
   class
-  method
+  meth
   func
   attr
   mod
