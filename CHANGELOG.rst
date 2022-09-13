@@ -1,6 +1,14 @@
 Changelog
 =========
 
+dev
+---
+
+Fixed
+~~~~~
+
+- ``edges-cal report`` now uses ``make_pdf`` properly.
+
 v3.2.0
 ------
 
