@@ -11,11 +11,13 @@ from dataclasses import dataclass, field
 from matplotlib import pyplot as plt
 from scipy import ndimage
 from typing import Any, Literal
+import logging
 
 from . import modelling as mdl
 from . import types as tp
 from .modelling import Model, ModelFit
 
+logger = logging.getLogger(__name__)
 
 class NoDataError(Exception):
     pass
@@ -1039,6 +1041,7 @@ def model_filter(
         # decrease the flagging threshold if we want to for next iteration
         threshold = max(threshold - decrement_threshold, min_threshold)
 
+        logger.info(f"{counter} rms {model_std[-1]} {np.sum(flags)}")
         # Append info to lists for the user's benefit
         n_flags_changed_list.append(n_flags_changed)
         total_flags_list.append(np.sum(flags))
