@@ -29,7 +29,7 @@ from . import reflection_coefficient as rc
 from . import s11
 from . import types as tp
 from .cached_property import cached_property, safe_property
-from .spectra import LoadSpectrum
+from .spectra import LoadSpectrum, UnaveragedLoadSpectrum
 from .tools import FrequencyRange, bin_array, get_data_path
 
 
@@ -263,7 +263,7 @@ class Load:
         If this is a hot load, need to provide an ambient spectrum to correct it.
     """
 
-    spectrum: LoadSpectrum = attr.ib()
+    spectrum: LoadSpectrum | UnaveragedLoadSpectrum = attr.ib()
     reflections: s11.LoadS11 = attr.ib()
     _loss_model: Callable[
         [np.ndarray], np.ndarray
@@ -294,6 +294,7 @@ class Load:
         spec_kwargs: dict | None = None,
         loss_kwargs: dict | None = None,
         ambient_temperature: float | None = None,
+        unaveraged: bool = None,
     ):
         """
         Define a full :class:`Load` from a path and name.
@@ -349,12 +350,26 @@ class Load:
         if "f_high" not in spec_kwargs:
             spec_kwargs["f_high"] = f_high
 
-        spec = LoadSpectrum.from_io(
-            io_obs=io_obj,
-            load_name=load_name,
-            f_range_keep=(f_low, f_high),
-            **spec_kwargs,
-        )
+        if unaveraged is None:
+            if LoadSpectrum._check_if_exists(
+                io_obj, load_name, f_range_keep=(f_low, f_high), **spec_kwargs
+            ):
+                unaveraged = False
+
+        if not unaveraged:
+            spec = LoadSpectrum.from_io(
+                io_obs=io_obj,
+                load_name=load_name,
+                f_range_keep=(f_low, f_high),
+                **spec_kwargs,
+            )
+        else:
+            spec = UnaveragedLoadSpectrum.from_io(
+                io_obs=io_obj,
+                load_name=load_name,
+                f_range_keep=(f_low, f_high),
+                **spec_kwargs,
+            )
 
         refl = s11.LoadS11.from_io(
             io_obj.s11,
@@ -403,22 +418,7 @@ class Load:
     @property
     def averaged_Q(self) -> np.ndarray:
         """The average spectrum power ratio, Q (over time)."""
-        return self.spectrum.q
-
-    @property
-    def averaged_spectrum(self) -> np.ndarray:
-        """The average uncalibrated spectrum (over time)."""
-        return self.spectrum.averaged_spectrum
-
-    @property
-    def t_load(self) -> float:
-        """The assumed temperature of the internal load."""
-        return self.spectrum.t_load
-
-    @property
-    def t_load_ns(self) -> float:
-        """The assumed temperature of the internal load + noise source."""
-        return self.spectrum.t_load_ns
+        return self.spectrum.averaged_Q
 
     @property
     def s11_model(self) -> Callable[[np.ndarray], np.ndarray]:
@@ -481,6 +481,8 @@ class CalibrationObservation:
     receiver: s11.Receiver = attr.ib()
     cterms: int = attr.ib(default=5, kw_only=True)
     wterms: int = attr.ib(default=7, kw_only=True)
+    t_load: float = attr.ib(default=300, kw_only=True)
+    t_load_ns: float = attr.ib(default=400, kw_only=True)
 
     _metadata: dict[str, Any] = attr.ib(default=attr.Factory(dict), kw_only=True)
 
@@ -511,6 +513,7 @@ class CalibrationObservation:
         receiver_kwargs: dict[str, Any] | None = None,
         restrict_s11_model_freqs: bool = True,
         hot_load_loss_kwargs: dict[str, Any] | None = None,
+        unaveraged_spectra: bool = None,
         **kwargs,
     ) -> CalibrationObservation:
         """Create the object from an edges-io observation.
@@ -619,6 +622,7 @@ class CalibrationObservation:
                 },
                 loss_kwargs={**hot_load_loss_kwargs, **{"path": semi_rigid_path}},
                 ambient_temperature=ambient_temperature,
+                unaveraged=unaveraged_spectra,
             )
 
         loads = {}
@@ -659,16 +663,6 @@ class CalibrationObservation:
 
         return attr.evolve(self, loads=loads)
 
-    @safe_property
-    def t_load(self) -> float:
-        """Assumed temperature of the load."""
-        return self.loads[list(self.loads.keys())[0]].t_load
-
-    @safe_property
-    def t_load_ns(self) -> float:
-        """Assumed temperature of the load + noise source."""
-        return self.loads[list(self.loads.keys())[0]].t_load_ns
-
     @cached_property
     def freq(self) -> FrequencyRange:
         """The frequencies at which spectra were measured."""
@@ -690,6 +684,7 @@ class CalibrationObservation:
         io_obj: io.CalibrationObservation,
         reflection_kwargs: dict | None = None,
         spec_kwargs: dict | None = None,
+        unaveraged: bool = None,
     ):
         """Create a new load with the given load name.
 
@@ -712,8 +707,6 @@ class CalibrationObservation:
         spec_kwargs = spec_kwargs or {}
 
         spec_kwargs["freq_bin_size"] = self.freq.bin_size
-        spec_kwargs["t_load"] = self.open.spectrum.t_load
-        spec_kwargs["t_load_ns"] = self.open.spectrum.t_load_ns
 
         if "frequency_smoothing" not in spec_kwargs:
             spec_kwargs["frequency_smoothing"] = self.open.spectrum.metadata[
@@ -730,6 +723,7 @@ class CalibrationObservation:
             f_high=self.freq.post_bin_f_high,
             reflection_kwargs=reflection_kwargs,
             spec_kwargs=spec_kwargs,
+            unaveraged=unaveraged,
         )
 
     def plot_raw_spectra(self, fig=None, ax=None) -> plt.Figure:
@@ -754,7 +748,7 @@ class CalibrationObservation:
             )
 
         for i, (name, load) in enumerate(self.loads.items()):
-            ax[i].plot(load.freq.freq, load.averaged_spectrum)
+            ax[i].plot(load.freq.freq, load.averaged_Q * self.t_load_ns + self.t_load)
             ax[i].set_ylabel("$T^*$ [K]")
             ax[i].set_title(name)
             ax[i].grid(True)
@@ -808,7 +802,10 @@ class CalibrationObservation:
         ):
             ave_spec = self._injected_averaged_spectra
         else:
-            ave_spec = {k: source.averaged_spectrum for k, source in self.loads.items()}
+            ave_spec = {
+                k: source.averaged_Q * self.t_load_ns + self.t_load
+                for k, source in self.loads.items()
+            }
 
         scale, off, Tu, TC, TS = rcf.get_calibration_quantities_iterative(
             self.freq.freq_recentred,
@@ -998,10 +995,11 @@ class CalibrationObservation:
         load = self._load_str_to_load(load)
         a, b = self.get_linear_coefficients(load)
 
-        if q is not None:
+        if q is None and temp is None:
+            q = load.averaged_Q
+
+        if temp is None:
             temp = self.t_load_ns * q + self.t_load
-        elif temp is None:
-            temp = load.averaged_spectrum
 
         return a * temp + b
 
@@ -1079,10 +1077,8 @@ class CalibrationObservation:
         ax=None,
         xlabel=True,
         ylabel=True,
-        label: str = "",
         as_residuals: bool = False,
-        load_in_title: bool = False,
-        rms_in_label: bool = True,
+        make_legend: bool = True,
     ):
         """
         Make a plot of calibrated temperature for a given source.
@@ -1112,10 +1108,13 @@ class CalibrationObservation:
         if fig is None and ax is None:
             fig, ax = plt.subplots(1, 1, facecolor="w")
 
+        temp_ave = self.source_thermistor_temps.get(load.load_name, load.temp_ave)
+
         # binning
         temp_calibrated = self.calibrate(load)
-        if bins > 0:
+        if bins > 1:
             freq_ave_cal = bin_array(temp_calibrated, size=bins)
+            temp_ave = bin_array(temp_ave, size=bins)
             f = bin_array(self.freq.freq.to_value("MHz"), size=bins)
         else:
             freq_ave_cal = temp_calibrated
@@ -1123,24 +1122,23 @@ class CalibrationObservation:
 
         freq_ave_cal[np.isinf(freq_ave_cal)] = np.nan
 
-        rms = np.sqrt(np.mean((freq_ave_cal - np.mean(freq_ave_cal)) ** 2))
+        rms = np.sqrt(np.nanmean((freq_ave_cal - temp_ave) ** 2)) * 1000
 
+        y = freq_ave_cal - temp_ave if as_residuals else freq_ave_cal
         ax.plot(
             f,
-            freq_ave_cal,
-            label=f"Calibrated {load.load_name} [RMS = {rms:.3f}]",
+            y,
+            label=f"RMS = {rms:.3f} mK",
         )
 
-        temp_ave = self.source_thermistor_temps.get(load.load_name, load.temp_ave)
+        if not as_residuals:
+            ax.plot(
+                f,
+                temp_ave,
+                color="C2",
+                label="Average thermistor temp",
+            )
 
-        ax.plot(
-            self.freq.freq,
-            temp_ave,
-            color="C2",
-            label="Average thermistor temp",
-        )
-
-        ax.set_ylim([np.nanmin(freq_ave_cal), np.nanmax(freq_ave_cal)])
         if xlabel:
             ax.set_xlabel("Frequency [MHz]")
 
@@ -1149,7 +1147,8 @@ class CalibrationObservation:
 
         plt.ticklabel_format(useOffset=False)
         ax.grid()
-        ax.legend()
+        if make_legend:
+            ax.legend()
 
         return plt.gcf()
 
@@ -1367,12 +1366,15 @@ class CalibrationObservation:
         return new
 
     @classmethod
-    def from_yaml(cls, config: tp.PathLike | dict, obs_path: tp.PathLike | None = None):
+    def from_yaml(
+        cls, config: tp.PathLike | dict, obs_path: tp.PathLike | None = None, **kwargs
+    ):
         """Create the calibration observation from a YAML configuration."""
         if not isinstance(config, dict):
             with open(config) as yml:
                 config = ayaml.load(yml)
 
+        config.update(**kwargs)
         iokw = config.pop("data", {})
 
         if not obs_path:
@@ -1600,7 +1602,7 @@ class Calibrator:
 
         Notes
         -----
-        Using this and then :method:`calibrate_temp` immediately should be an identity
+        Using this and then :meth:`calibrate_temp` immediately should be an identity
         operation.
         """
         a, b = self._linear_coefficients(freq, ant_s11)

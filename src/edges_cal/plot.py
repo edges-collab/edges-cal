@@ -10,7 +10,15 @@ from . import receiver_calibration_func as rcf
 
 
 def plot_raw_spectrum(
-    spectrum, freq=None, fig=None, ax=None, xlabel=True, ylabel=True, **kwargs
+    spectrum,
+    t_load: float = 300.0,
+    t_load_ns: float = 400.0,
+    freq=None,
+    fig=None,
+    ax=None,
+    xlabel=True,
+    ylabel=True,
+    **kwargs,
 ):
     """
     Make a plot of the averaged uncalibrated spectrum associated with this load.
@@ -30,9 +38,9 @@ def plot_raw_spectrum(
     kwargs :
         All other arguments are passed to `plt.subplots()`.
     """
-    if isinstance(spectrum, cc.LoadSpectrum):
+    if isinstance(spectrum, (cc.LoadSpectrum, cc.UnaveragedLoadSpectrum)):
         freq = spectrum.freq.freq
-        spectrum = spectrum.averaged_spectrum
+        spectrum = spectrum.averaged_Q * t_load_ns + t_load
     else:
         assert freq is not None
 

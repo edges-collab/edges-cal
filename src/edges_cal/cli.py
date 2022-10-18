@@ -175,7 +175,7 @@ def sweep(
 @click.option(
     "-o",
     "--out",
-    type=click.Path(dir_okay=True, file_okay=False, exists=True),
+    type=click.Path(dir_okay=True, file_okay=True, exists=False),
     default=None,
     help="output directory",
 )
@@ -186,32 +186,19 @@ def sweep(
     default=None,
     help="json string representing global configuration options",
 )
-@click.option("-r/-R", "--report/--no-report", default=True)
-@click.option("-u/-U", "--upload/--no-upload", default=False, help="auto-upload file")
-@click.option("-t", "--title", type=str, help="title of the memo", default=None)
 @click.option(
-    "-a",
-    "--author",
+    "-k",
+    "--kernel",
     type=str,
-    help="adds an author to the author list",
-    default=None,
-    multiple=True,
+    default="edges",
+    help="which ipython kernel to use",
 )
-@click.option("-n", "--memo", type=int, help="which memo number to use", default=None)
-@click.option("-q/-Q", "--quiet/--loud", default=False)
-@click.option("-p/-P", "--pdf/--no-pdf", default=True)
 def report(
     cal_settings,
     path,
     out,
     global_config,
-    report,
-    upload,
-    title,
-    author,
-    memo,
-    quiet,
-    pdf,
+    kernel,
 ):
     """Make a full notebook report on a given calibration."""
     single_notebook = Path(__file__).parent / "notebooks/calibrate-observation.ipynb"
@@ -221,15 +208,15 @@ def report(
     path = Path(path)
 
     if out is None:
-        out = path / "outputs"
+        out = path / "outputs" / f"{path.name}.ipynb"
     else:
         out = Path(out)
 
-    if not out.exists():
-        out.mkdir()
+        if out.is_dir():
+            out /= f"{path.name}.ipynb"
 
-    # Describe the filename...
-    fname = Path(f"calibration_{datetime.now().strftime('%Y-%m-%d-%H.%M.%S')}.ipynb")
+    if not out.parent.exists():
+        out.parent.mkdir(exist_ok=True, parents=True)
 
     if global_config:
         global_config = json.loads(global_config)
@@ -249,18 +236,13 @@ def report(
     # This actually runs the notebook itself.
     pm.execute_notebook(
         str(single_notebook),
-        out / fname,
+        out,
         parameters=settings,
-        kernel_name="edges",
+        kernel_name=kernel,
         log_output=True,
     )
 
-    console.print(f"Saved interactive notebook to '{out/fname}'")
-
-    if pdf:  # pragma: no cover
-        make_pdf(out / fname)
-        if upload:
-            upload_memo(out / fname.with_suffix(".pdf"), title, memo, quiet)
+    console.print(f"Saved interactive notebook to '{out}'")
 
 
 @main.command()
