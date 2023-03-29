@@ -446,9 +446,10 @@ class Model(metaclass=ABCMeta):
         xdata: np.ndarray,
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
+        **kwargs,
     ) -> ModelFit:
         """Create a linear-regression fit object."""
-        return self.at(x=xdata).fit(ydata, weights=weights)
+        return self.at(x=xdata).fit(ydata, weights=weights, **kwargs)
 
 
 def get_mdl(model: str | type[Model]) -> type[Model]:
@@ -800,9 +801,10 @@ class CompositeModel:
         xdata: np.ndarray,
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
+        **kwargs,
     ) -> ModelFit:
         """Create a linear-regression fit object."""
-        return self.at(x=xdata).fit(ydata, weights=weights)
+        return self.at(x=xdata).fit(ydata, weights=weights, **kwargs)
 
 
 @h5.hickleable()
@@ -862,6 +864,7 @@ class ComplexRealImagModel(yaml.YAMLObject):
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
         xdata: np.ndarray | None = None,
+        **kwargs,
     ):
         """Create a linear-regression fit object."""
         if isinstance(self.real, FixedLinearModel):
@@ -874,8 +877,8 @@ class ComplexRealImagModel(yaml.YAMLObject):
         else:
             imag = self.imag.at(x=xdata)
 
-        real = real.fit(np.real(ydata), weights=weights).fit
-        imag = imag.fit(np.imag(ydata), weights=weights).fit
+        real = real.fit(np.real(ydata), weights=weights, **kwargs).fit
+        imag = imag.fit(np.imag(ydata), weights=weights, **kwargs).fit
         return attr.evolve(self, real=real, imag=imag)
 
 
@@ -939,6 +942,7 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
         xdata: np.ndarray | None = None,
+        **kwargs,
     ):
         """Create a linear-regression fit object."""
         if isinstance(self.mag, FixedLinearModel):
@@ -951,8 +955,8 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
         else:
             phs = self.phs.at(x=xdata)
 
-        mag = mag.fit(np.abs(ydata), weights=weights).fit
-        phs = phs.fit(np.unwrap(np.angle(ydata)), weights=weights).fit
+        mag = mag.fit(np.abs(ydata), weights=weights, **kwargs).fit
+        phs = phs.fit(np.unwrap(np.angle(ydata)), weights=weights, **kwargs).fit
         return attr.evolve(self, mag=mag, phs=phs)
 
 
@@ -1070,10 +1074,10 @@ class NoiseWaves:
         return out[indx * len(self.freq) : (indx + 1) * len(self.freq)]
 
     def get_fitted(
-        self, data: np.ndarray, weights: np.ndarray | None = None
+        self, data: np.ndarray, weights: np.ndarray | None = None, **kwargs
     ) -> NoiseWaves:
         """Get a new noise wave model with fitted parameters."""
-        fit = self.linear_model.fit(ydata=data, weights=weights)
+        fit = self.linear_model.fit(ydata=data, weights=weights, **kwargs)
         return attr.evolve(self, parameters=fit.model_parameters)
 
     def with_params_from_calobs(self, calobs, cterms=None, wterms=None) -> NoiseWaves:

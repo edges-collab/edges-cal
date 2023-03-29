@@ -65,6 +65,7 @@ class HotLoadCorrection:
         mdl.ComplexMagPhaseModel
     ] = attr.ib(mdl.ComplexMagPhaseModel)
     use_spline: bool = attr.ib(False)
+    model_method: str = attr.ib("lstsq")
 
     @classmethod
     def from_file(
@@ -130,9 +131,9 @@ class HotLoadCorrection:
             **kwargs,
         )
 
-    def _get_model(self, raw_data: np.ndarray):
+    def _get_model(self, raw_data: np.ndarray, **kwargs):
         model = self.complex_model(self.model, self.model)
-        return model.fit(xdata=self.freq.freq, ydata=raw_data)
+        return model.fit(xdata=self.freq.freq, ydata=raw_data, method=self.model_method)
 
     def _get_splines(self, data):
         if self.complex_model == mdl.ComplexRealImagModel:

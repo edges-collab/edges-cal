@@ -216,6 +216,7 @@ class S11Model:
     model_kwargs: dict[str, Any] = attr.ib(default=attr.Factory(dict))
     use_spline: bool = attr.ib(False)
     metadata: dict = attr.ib(default=attr.Factory(dict), eq=False)
+    fit_kwargs: dict[str, Any] = attr.ib(default=attr.Factory(dict))
 
     @freq.validator
     def _fv(self, att, val):
@@ -305,7 +306,8 @@ class S11Model:
         cmodel = self.complex_model_type(emodel, emodel)
 
         return cmodel.fit(
-            ydata=raw_s11 * np.exp(1j * self.model_delay * freq).to_value("")
+            ydata=raw_s11 * np.exp(1j * self.model_delay * freq).to_value(""),
+            **self.fit_kwargs,
         )
 
     @cached_property
@@ -522,6 +524,7 @@ class InternalSwitch:
     model: Model = attr.ib()
     n_terms: tuple[int, int, int] | int = attr.ib(default=(7, 7, 7), converter=_tuplify)
     metadata: dict = attr.ib(default=attr.Factory(dict), eq=False)
+    fit_kwargs: dict = attr.ib(default=attr.Factory(dict), eq=False)
 
     @property
     def freq(self):
@@ -679,7 +682,7 @@ class InternalSwitch:
         # 'kind' should be 's11', 's12' or 's22'
         data = getattr(self, f"{kind}_data")
         return getattr(self, f"_{kind}_model").fit(
-            xdata=self.freq.freq.to_value("MHz"), ydata=data
+            xdata=self.freq.freq.to_value("MHz"), ydata=data, **self.fit_kwargs
         )
 
 
