@@ -96,7 +96,7 @@ def as_readonly(x: np.ndarray) -> np.ndarray:
 
 
 def dct_of_list_to_list_of_dct(dct: dict[str, Sequence]) -> list[dict]:
-    """Take a dict of key: list pairs and turn it into a list of all combinations of dicts.
+    """Take a dict of key:list pairs and convert to a list of all combinations of dicts.
 
     Parameters
     ----------

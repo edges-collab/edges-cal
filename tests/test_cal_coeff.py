@@ -29,7 +29,6 @@ def test_new_load(calobs, io_obs):
 
 
 def test_cal_uncal_round_trip(calobs):
-
     tcal = calobs.calibrate("ambient")
     raw = calobs.decalibrate(tcal, "ambient")
     mask = ~np.isnan(raw)
@@ -61,7 +60,6 @@ def test_update(calobs):
 
 
 def test_calibration_init(calobs, tmpdir: Path):
-
     calobs.write(tmpdir / "calfile.h5")
 
     cal = cc.Calibrator.from_calfile(tmpdir / "calfile.h5")

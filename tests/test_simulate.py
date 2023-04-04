@@ -13,7 +13,6 @@ def test_simulate_q(calobs: CalibrationObservation):
 
 
 def test_simulate_qant(calobs: CalibrationObservation):
-
     q = simulate_qant_from_calobs(
         calobs,
         ant_s11=np.zeros(calobs.freq.n),
