@@ -928,7 +928,6 @@ def model_filter(
             and np.sum(~flags) > model.n_terms * 2
         )
     ):
-
         weights = np.where(flags, 0, orig_weights)
 
         # Get a model fit to the unflagged data.
@@ -1049,7 +1048,6 @@ def model_filter(
             f"max iterations ({max_iter}) reached, not all RFI might have been caught."
         )
         if flag_if_broken:
-
             flags[:] = True
 
     elif np.sum(~flags) <= model.n_terms * 2:
@@ -1058,7 +1056,6 @@ def model_filter(
             "check data."
         )
         if flag_if_broken:
-
             flags[:] = True
 
     return (

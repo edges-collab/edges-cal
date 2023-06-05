@@ -167,7 +167,6 @@ def test_calkit_quantities_open_trivial():
 
 
 def test_s1p_freq(cal_data):
-
     vna = s11.VNAReading.from_s1p(cal_data / "S11/ReceiverReading01/Match01.s1p")
     assert vna.freq.n > 0
     assert np.all(vna.freq.freq > 20.0 * u.MHz)
@@ -304,7 +303,6 @@ def test_use_spline_hlc():
     )
 
     for complex_model in (mdl.ComplexMagPhaseModel, mdl.ComplexRealImagModel):
-
         rcv = HotLoadCorrection(
             freq=freq,
             raw_s11=raw_data,
