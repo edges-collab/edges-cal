@@ -303,3 +303,9 @@ def test_logpoly():
     assert m(x).shape == (10,)
     assert np.allclose(m(x), np.ones(10))
     assert np.allclose(m(x, parameters=[0, 1, 0, 0, 0]), np.log10(x))
+
+
+def test_shift_transform():
+    x = np.linspace(0, 1, 10)
+    t = mdl.ShiftTransform(shift=1)
+    assert np.allclose(t.transform(x), x - 1)
