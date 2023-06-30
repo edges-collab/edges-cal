@@ -36,6 +36,13 @@ def test_gamma_embed_rountrip():
     )
 
 
+def test_load_calkit_with_resistance():
+    new = rc.get_calkit(rc.AGILENT_85033E, resistance_of_match=49.0 * u.Ohm)
+    default = rc.get_calkit(rc.AGILENT_85033E)
+    assert new.match.resistance == 49.0 * u.Ohm
+    assert default.match.resistance == 50.0 * u.Ohm
+
+
 def test_calkit_standard_name():
     assert rc.CalkitStandard(resistance=50).name == "match"
 
