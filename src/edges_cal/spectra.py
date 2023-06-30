@@ -142,8 +142,8 @@ class ThermistorReadings:
     def get_timestamps(self) -> list[datetime]:
         """Timestamps of all the thermistor measurements."""
         if "time" in self._data.dtype.names:
-            times = self.data["time"]
-            dates = self.data["date"]
+            times = self._data["time"]
+            dates = self._data["date"]
             times = [
                 datetime.strptime(d + ":" + t, "%m/%d/%Y:%H:%M:%S")
                 for d, t in zip(dates.astype(str), times.astype(str))

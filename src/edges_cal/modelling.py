@@ -257,6 +257,16 @@ class CentreTransform(ModelTransform):
 
 @h5.hickleable()
 @attr.s(frozen=True, kw_only=True)
+class ShiftTransform(ModelTransform):
+    shift: float = attr.ib(converter=float, default=0.0)
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        return x - self.shift
+
+
+@h5.hickleable()
+@attr.s(frozen=True, kw_only=True)
 class UnitTransform(ModelTransform):
     """A transform that takes the input range down to -1 to 1."""
 

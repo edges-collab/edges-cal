@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import h5py
+import logging
 import numpy as np
 import warnings
 import yaml
@@ -15,6 +16,8 @@ from typing import Any, Literal
 from . import modelling as mdl
 from . import types as tp
 from .modelling import Model, ModelFit
+
+logger = logging.getLogger(__name__)
 
 
 class NoDataError(Exception):
@@ -1014,7 +1017,8 @@ def model_filter(
             )
         else:
             raise ValueError(
-                "std_estimator must be one of 'medfilt', 'model','std' or 'mad'."
+                "std_estimator must be one of 'medfilt', 'model','std', "
+                "'sliding_rms' or 'mad'."
             )
 
         std_list.append(model_std)
@@ -1045,6 +1049,11 @@ def model_filter(
         # decrease the flagging threshold if we want to for next iteration
         threshold = max(threshold - decrement_threshold, min_threshold)
 
+        logger.info(
+            f"{counter} rms {model_std[-1]} {np.sum(flags)} resid {res.min()} "
+            f"{res.max()} z {zscore.min()} {zscore.max()} std {model_std.min()} "
+            f"{model_std.max()}"
+        )
         # Append info to lists for the user's benefit
         n_flags_changed_list.append(n_flags_changed)
         total_flags_list.append(np.sum(flags))

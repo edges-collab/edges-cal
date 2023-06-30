@@ -568,7 +568,7 @@ def get_calkit(
         Dictionary of parameters to overwrite the match standard.
     """
     match = match or {}
-    if resistance_of_match:
+    if resistance_of_match is not None:
         match.update(resistance=resistance_of_match)
     return base.clone(short=short, open=open, match=match)
 
