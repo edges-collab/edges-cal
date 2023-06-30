@@ -139,7 +139,6 @@ def make_comparison_data(obspath):
     f = np.linspace(50, 100, 100) * u.MHz
 
     with h5py.File("data/2015-09-data/reference.h5", "w") as fl:
-
         fl["freq"] = f
 
         fl["c1"] = calobs.C1(f)
