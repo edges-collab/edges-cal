@@ -8,10 +8,11 @@ import inspect
 import numpy as np
 from astropy import units as un
 from datetime import datetime, timedelta
-from edges_io import h5, io
+from edges_io import io
 from edges_io import utils as iou
 from edges_io.logging import logger
 from functools import partial
+from hickleable import hickleable
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -90,7 +91,7 @@ def get_spectrum_ancillary(
     }
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s
 class ThermistorReadings:
     """
@@ -327,7 +328,7 @@ def get_ave_and_var_spec(
     return means, variances, n_intg
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s(kw_only=True, frozen=True)
 class LoadSpectrum:
     """A class representing a measured spectrum from some Load averaged over time.

@@ -19,7 +19,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy import units as un
 from cached_property import cached_property
-from edges_io import h5, io
+from edges_io import io
+from hickleable import hickleable
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 from typing import Any, Callable, Sequence
@@ -180,7 +181,7 @@ class StandardsReadings:
         )
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s(kw_only=True, frozen=True)
 class S11Model:
     """
@@ -412,7 +413,7 @@ class S11Model:
         return fig
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s(kw_only=True)
 class Receiver(S11Model):
     """A special case of :class:`SwitchCorrection` for the LNA.
@@ -510,7 +511,7 @@ class Receiver(S11Model):
         )
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s
 class InternalSwitch:
     _freq: tp.Freqtype = attr.ib(
@@ -683,7 +684,7 @@ class InternalSwitch:
         )
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s(kw_only=True, frozen=True)
 class LoadPlusSwitchS11:
     """S11 for a lab calibration load including the internal switch.
@@ -764,7 +765,7 @@ class LoadPlusSwitchS11:
         return self.standards.open.freq
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s
 class LoadS11(S11Model):
     """S11 of an input Load."""
