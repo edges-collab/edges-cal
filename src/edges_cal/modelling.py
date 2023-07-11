@@ -1,6 +1,7 @@
 """Functions for generating least-squares model fits for linear models."""
 from __future__ import annotations
 
+import attr
 import attrs
 import numpy as np
 import yaml
@@ -300,7 +301,7 @@ class ZerotooneTransform(ModelTransform):
 
 @hickleable()
 @register_h5type
-@attrs.define(frozen=True, kw_only=True, slots=False)
+@attr.s(frozen=True, kw_only=True, slots=False)
 class Model(metaclass=ABCMeta):
     """A base class for a linear model."""
 
@@ -326,7 +327,7 @@ class Model(metaclass=ABCMeta):
         if self.parameters is not None:
             return len(self.parameters)
         else:
-            return self.default_n_terms
+            return self.__class__.default_n_terms
 
     @n_terms.validator
     def _n_terms_validator(self, att, val):
@@ -464,7 +465,7 @@ def get_mdl_inst(model: str | Model | type[Model], **kwargs) -> Model:
 
 
 @hickleable()
-@attrs.define(frozen=True, kw_only=True, slots=False)
+@attr.s(frozen=True, kw_only=True, slots=False)
 class Foreground(Model, is_meta=True):
     """
     Base class for Foreground models.
@@ -489,7 +490,7 @@ class Foreground(Model, is_meta=True):
 
 
 @hickleable()
-@attrs.define(frozen=True, kw_only=True, slots=False)
+@attr.s(frozen=True, kw_only=True, slots=False)
 class PhysicalLin(Foreground):
     """Foreground model using a linearized physical model of the foregrounds."""
 
