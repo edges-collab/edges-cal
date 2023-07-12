@@ -14,9 +14,10 @@ import warnings
 from astropy import units as un
 from astropy.convolution import Gaussian1DKernel, convolve
 from astropy.io.misc import yaml as ayaml
-from edges_io import h5, io
+from edges_io import io
 from edges_io.logging import logger
 from functools import partial
+from hickleable import hickleable
 from matplotlib import pyplot as plt
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
@@ -33,7 +34,7 @@ from .spectra import LoadSpectrum
 from .tools import FrequencyRange, bin_array, get_data_path
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s(kw_only=True)
 class HotLoadCorrection:
     """
@@ -246,7 +247,7 @@ class HotLoadCorrection:
         )
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s(kw_only=True)
 class Load:
     """Wrapper class containing all relevant information for a given load.
@@ -451,7 +452,7 @@ class Load:
         )
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s
 class CalibrationObservation:
     """
@@ -1388,7 +1389,7 @@ class CalibrationObservation:
         return cls.from_io(io_obs, **config)
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s(kw_only=True)
 class Calibrator:
     freq: FrequencyRange = attr.ib()
