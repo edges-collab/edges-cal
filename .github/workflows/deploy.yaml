@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@master
       # https://github.com/ansible/pylibssh/blob/1e7b17f/.github/workflows/build-test-n-publish.yml#L146-L151
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: 3.x
       - name: Create setuptools_scm env variable
