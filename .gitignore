@@ -56,3 +56,5 @@ src/edges_cal/notebooks/*.h5
 prof/
 docs/reference/_autosummary/
 /*.h5
+
+tmp*
