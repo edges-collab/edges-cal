@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: [3.8, 3.9, "3.10"]
+        python-version: [3.8, 3.9, "3.10", "3.11"]
         exclude:
           - os: macos-latest
             python-version: 3.8
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@master
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
       - name: set PY
@@ -70,7 +70,7 @@ jobs:
       - uses: actions/checkout@master
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON }}
       - name: set PY
@@ -113,7 +113,7 @@ jobs:
         with:
           name: coverage-data
 
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v4
         with:
           python-version: 3.9
 

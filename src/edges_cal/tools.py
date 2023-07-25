@@ -6,7 +6,7 @@ import numpy as np
 import warnings
 from astropy import units
 from astropy import units as u
-from edges_io import h5
+from hickleable import hickleable
 from itertools import product
 from pathlib import Path
 from scipy.ndimage import convolve1d
@@ -127,7 +127,7 @@ def dct_of_list_to_list_of_dct(dct: dict[str, Sequence]) -> list[dict]:
     return [dict(zip(dct.keys(), p)) for p in prod]
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s
 class FrequencyRange:
     """
