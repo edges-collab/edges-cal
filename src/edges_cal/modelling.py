@@ -10,8 +10,8 @@ from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
 from copy import copy
 from edges_io.h5 import register_h5type
-from typing import Literal, Sequence, Type, Union
 from hickleable import hickleable
+from typing import Literal, Sequence, Type, Union
 
 from . import receiver_calibration_func as rcf
 from .simulate import simulate_q_from_calobs
@@ -973,6 +973,7 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
         mag = mag.fit(np.abs(ydata), weights=weights, **kwargs).fit
         phs = phs.fit(np.unwrap(np.angle(ydata)), weights=weights, **kwargs).fit
         return attrs.evolve(self, mag=mag, phs=phs)
+
 
 @hickleable()
 @attrs.define(frozen=True, kw_only=True, slots=False)
