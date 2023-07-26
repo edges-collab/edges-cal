@@ -4,13 +4,14 @@ from __future__ import annotations
 import attr
 import attrs
 import numpy as np
+import scipy as sp
 import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
 from copy import copy
 from edges_io.h5 import register_h5type
 from hickleable import hickleable
-from typing import Sequence, Type, Union
+from typing import Literal, Sequence, Type, Union
 
 from . import receiver_calibration_func as rcf
 from .simulate import simulate_q_from_calobs
@@ -121,13 +122,35 @@ class FixedLinearModel(yaml.YAMLObject):
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
         xdata: np.ndarray | None = None,
-    ):
-        """Create a linear-regression fit object."""
+        **kwargs,
+    ) -> ModelFit:
+        """Create a linear-regression fit object.
+
+        Parameters
+        ----------
+        ydata
+            The data to fit.
+        weights
+            The weights to apply to the data.
+        xdata
+            The co-ordinates at which to fit the data. If not given, use ``self.x``.
+
+        Other Parameters
+        ----------------
+        All other parameters used to construct the :class:`ModelFit` object. Includes
+        ``method`` to specify the lstsq solving method.
+
+        Returns
+        -------
+        fit
+            The :class:`ModelFit` object.
+        """
         thing = self.at_x(xdata) if xdata is not None else self
         return ModelFit(
             thing,
             ydata=ydata,
             weights=weights,
+            **kwargs,
         )
 
     def at_x(self, x: np.ndarray) -> FixedLinearModel:
@@ -438,9 +461,10 @@ class Model(metaclass=ABCMeta):
         xdata: np.ndarray,
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
+        **kwargs,
     ) -> ModelFit:
         """Create a linear-regression fit object."""
-        return self.at(x=xdata).fit(ydata, weights=weights)
+        return self.at(x=xdata).fit(ydata, weights=weights, **kwargs)
 
 
 def get_mdl(model: str | type[Model]) -> type[Model]:
@@ -792,9 +816,10 @@ class CompositeModel:
         xdata: np.ndarray,
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
+        **kwargs,
     ) -> ModelFit:
         """Create a linear-regression fit object."""
-        return self.at(x=xdata).fit(ydata, weights=weights)
+        return self.at(x=xdata).fit(ydata, weights=weights, **kwargs)
 
 
 @hickleable()
@@ -854,6 +879,7 @@ class ComplexRealImagModel(yaml.YAMLObject):
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
         xdata: np.ndarray | None = None,
+        **kwargs,
     ):
         """Create a linear-regression fit object."""
         if isinstance(self.real, FixedLinearModel):
@@ -866,8 +892,8 @@ class ComplexRealImagModel(yaml.YAMLObject):
         else:
             imag = self.imag.at(x=xdata)
 
-        real = real.fit(np.real(ydata), weights=weights).fit
-        imag = imag.fit(np.imag(ydata), weights=weights).fit
+        real = real.fit(np.real(ydata), weights=weights, **kwargs).fit
+        imag = imag.fit(np.imag(ydata), weights=weights, **kwargs).fit
         return attrs.evolve(self, real=real, imag=imag)
 
 
@@ -931,6 +957,7 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
         xdata: np.ndarray | None = None,
+        **kwargs,
     ):
         """Create a linear-regression fit object."""
         if isinstance(self.mag, FixedLinearModel):
@@ -943,8 +970,8 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
         else:
             phs = self.phs.at(x=xdata)
 
-        mag = mag.fit(np.abs(ydata), weights=weights).fit
-        phs = phs.fit(np.unwrap(np.angle(ydata)), weights=weights).fit
+        mag = mag.fit(np.abs(ydata), weights=weights, **kwargs).fit
+        phs = phs.fit(np.unwrap(np.angle(ydata)), weights=weights, **kwargs).fit
         return attrs.evolve(self, mag=mag, phs=phs)
 
 
@@ -1062,10 +1089,10 @@ class NoiseWaves:
         return out[indx * len(self.freq) : (indx + 1) * len(self.freq)]
 
     def get_fitted(
-        self, data: np.ndarray, weights: np.ndarray | None = None
+        self, data: np.ndarray, weights: np.ndarray | None = None, **kwargs
     ) -> NoiseWaves:
         """Get a new noise wave model with fitted parameters."""
-        fit = self.linear_model.fit(ydata=data, weights=weights)
+        fit = self.linear_model.fit(ydata=data, weights=weights, **kwargs)
         return attrs.evolve(self, parameters=fit.model_parameters)
 
     def with_params_from_calobs(self, calobs, cterms=None, wterms=None) -> NoiseWaves:
@@ -1177,6 +1204,12 @@ class ModelFit:
         *variance* of the measurement (not the standard deviation). This is
         appropriate if the weights represent the number of measurements going into
         each piece of data.
+    method
+        The method to solve the linear least squares problem. This can be either
+        'lstsq', 'qr' or 'alan-qrd'. The 'leastsq' method uses the np.linalg.lstsq
+        function, while the 'qr' method uses the np.linalg.solve function after
+        scipy.linalg.qr. The 'alan-qr' method is a python-port of the QR decomposition
+        algorithm found in Alan's C Codebase.
 
     Raises
     ------
@@ -1188,6 +1221,9 @@ class ModelFit:
     ydata: np.ndarray = attrs.field()
     weights: np.ndarray | float = attrs.field(
         default=1.0, validator=attrs.validators.instance_of((np.ndarray, float))
+    )
+    method: Literal["lstsq", "qr", "alan-qrd"] = attr.ib(
+        default="lstsq", validator=attr.validators.in_(["lstsq", "qr", "alan-qrd"])
     )
 
     @ydata.validator
@@ -1207,13 +1243,71 @@ class ModelFit:
     @cached_property
     def fit(self) -> FixedLinearModel:
         """A model that has parameters set based on the best fit to this data."""
-        if np.isscalar(self.weights):
-            pars = self._ls(self.model.basis, self.ydata)
-        else:
-            pars = self._wls(self.model.basis, self.ydata, w=self.weights)
+        if self.method == "lstsq":
+            if np.isscalar(self.weights):
+                pars = self._ls(self.model.basis, self.ydata)
+            else:
+                pars = self._wls(self.model.basis, self.ydata, w=self.weights)
+        elif self.method == "qr":
+            pars = self._qr(self.model.basis, self.ydata, w=self.weights)
+        elif self.method == "alan-qrd":
+            pars = self._alan_qrd(self.model.basis, self.ydata, w=self.weights)
 
         # Create a new model with the same parameters but specific parameters and xdata.
         return self.model.with_params(parameters=pars)
+
+    def _qr(self, basis: np.ndarray, y: np.ndarray, w: np.ndarray) -> np.ndarray:
+        """Solve a linear system using QR decomposition.
+
+        Here the system is defined as A*theta = y, where A is an (n, m) matrix of basis
+        vectors, y is an (n,) vector of data, and theta is an (m,) vector of parameters.
+
+        See: http://www2.imm.dtu.dk/pubdb/views/edoc_download.php/2804/pdf/imm2804.pdf
+        """
+        if np.isscalar(w):
+            w = np.eye(len(y))
+        elif np.ndim(w) == 1:
+            w = np.diag(w)
+
+        # sqrt of weight matrix
+        sqrtw = np.sqrt(w)
+
+        # A and ydata "tilde"
+        sqrt_wa = np.dot(sqrtw, basis.T)
+        w_ydata = np.dot(sqrtw, y)
+
+        # solving system using 'short' QR decomposition (see R. Butt, Num. Anal.
+        # Using MATLAB)
+        q, r = sp.linalg.qr(sqrt_wa, mode="economic")
+        return sp.linalg.solve(r, np.dot(q.T, w_ydata))
+
+    def _alan_qrd(self, basis: np.ndarray, y: np.ndarray, w: np.ndarray) -> np.ndarray:
+        """Solve a linear system using QR decomposition.
+
+        This solves the system in the same way as Alan Roger's original C-code that was
+        used for Bowman+2018. See
+        https://github.com/edges-collab/alans-pipeline/blob/
+        0e41156ddc7aaa3dd4b37cd1ee1ada971e68d728/src/edges2k.c#L2735
+        for the C-Code.
+        """
+        if np.isscalar(w):
+            w = np.eye(len(y))
+        elif np.ndim(w) == 1:
+            w = np.diag(w)
+
+        npar, ndata = basis.shape
+
+        wa = np.dot(basis, w)
+
+        bbrr = np.dot(wa, y)
+        aarr = np.dot(wa, basis.T)
+        assert bbrr.shape == (npar,)
+        assert aarr.shape == (npar, npar)
+
+        # solve the system
+        _alan_qrd(aarr.astype(np.longdouble), bbrr)
+
+        return bbrr
 
     def _wls(self, van, y, w):
         """Ripped straight outta numpy for speed.
@@ -1345,3 +1439,77 @@ yaml.add_multi_representer(Model, _model_yaml_representer)
 yaml.add_multi_representer(ModelTransform, _transform_yaml_representer)
 
 Modelable = Union[str, Type[Model]]
+
+
+def _alan_qrd(a: np.ndarray, b: np.ndarray):
+    """Solve a linear system using QR decomposition.
+
+    This solves the system in the same way as Alan Roger's original C-code that was
+    used for Bowman+2018.
+    """
+    n = a.shape[0]
+    c = np.zeros(n, dtype=np.longdouble)
+    d = np.zeros(n, dtype=np.longdouble)
+    qt = np.zeros((n, n), np.longdouble)
+    u = np.zeros((n, n), np.longdouble)
+
+    for k in range(n - 1):
+        scale = np.longdouble(0.0)
+        for i in range(k, n):
+            if np.abs(a[k, i]):
+                scale = np.abs(a[k, i])
+        if scale == 0.0:
+            # SINGULAR!
+            c[k] = d[k] = 0.0
+        else:
+            a[k, k:] /= scale
+            sm = np.sum(a[k, k:] ** 2)
+            sigma = np.sqrt(sm) if a[k, k] > 0 else -np.sqrt(sm)
+            a[k, k] += sigma
+            c[k] = sigma * a[k, k]
+            d[k] = -scale * sigma
+            for j in range(k + 1, n):
+                sm = np.sum(a[k, k:] * a[j, k:])
+                tau = sm / c[k]
+                a[j, k:] -= tau * a[k, k:]
+
+    d[-1] = a[-1, -1]
+
+    qt = np.eye(n)
+
+    for k in range(n - 1):
+        if c[k] != 0.0:
+            for j in range(n):
+                sm = np.sum(a[k, k:] * qt[k:, j]) / c[k]
+                qt[k:, j] -= sm * a[k, k:]
+
+    for j in range(n - 1):
+        sm = np.sum(a[j, j:] * b[j:])
+        tau = sm / c[j]
+        b[j:] -= tau * a[j, j:]
+
+    b[-1] /= d[-1]
+    for i in range(n - 2, -1, -1):
+        sm = np.sum(a[(i + 1) :, i] * b[(i + 1) :])
+        b[i] = (b[i] - sm) / d[i]
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            u[i, j] = a[j, i]
+        u[i, i] = d[i]
+
+    for k in range(n):
+        if u[k, k] == 0:
+            return
+        else:
+            u[k, k] = 1.0 / u[k, k]
+
+    for i in range(n - 2, 0, -1):
+        for j in range(n - 1, i, -1):
+            sm = np.sum(u[i, i + 1 : j] * u[i + 1 : j, j])
+            u[i, j] = -u[i, i] * sm
+
+    for i in range(n):
+        for j in range(n):
+            sm = np.dot(u[i], qt[:, j])
+            a[j, i] = sm

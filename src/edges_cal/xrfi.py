@@ -728,6 +728,7 @@ def _flag_a_window(
     threshold,
     watershed,
     std_estimator=2,
+    fit_kwargs=None,
 ):
     # NOTE: line profiling reveals that the fitting takes ~50% of the time of this
     #       function, and taking the std takes ~20%. The next biggest are taking the
@@ -736,6 +737,7 @@ def _flag_a_window(
     flags_changed = 1
     new_flags = flags[window]
     d = spectrum[window].copy()
+    fit_kwargs = fit_kwargs or {}
 
     while counter < max_iter and flags_changed > 0:
         w = np.where(new_flags, 0, weights[window])
@@ -743,7 +745,7 @@ def _flag_a_window(
         mask = ~new_flags
 
         if np.sum(mask) > model.n_terms:
-            fit = model.fit(ydata=d, weights=w)
+            fit = model.fit(ydata=d, weights=w, **fit_kwargs)
         else:
             raise NoDataError
 
@@ -802,6 +804,7 @@ def model_filter(
     std_estimator: Literal["model", "medfilt", "std", "mad", "sliding_rms"] = "model",
     medfilt_width: int = 100,
     sliding_rms_width: int = 100,
+    fit_kwargs: dict | None = None,
 ):
     """
     Flag data by subtracting a smooth model and iteratively removing outliers.
@@ -861,6 +864,8 @@ def model_filter(
     flags
         Boolean array of the same shape as ``data``.
     """
+    fit_kwargs = fit_kwargs or {}
+
     threshold = threshold or (
         min_threshold
         if not decrement_threshold
@@ -935,7 +940,7 @@ def model_filter(
 
         # Get a model fit to the unflagged data.
         # Could be polynomial or fourier (or something else...)
-        mdl = model.fit(ydata=data, weights=weights)
+        mdl = model.fit(ydata=data, weights=weights, **fit_kwargs)
 
         if any(
             len(p.parameters) == len(mdl.model_parameters)
@@ -977,7 +982,9 @@ def model_filter(
                 res_model = res_model.with_nterms(
                     max(min_resid_terms, model.n_terms + n_resid)
                 )
-            res_mdl = res_model.fit(ydata=np.log(absres**2), weights=weights).fit
+            res_mdl = res_model.fit(
+                ydata=np.log(absres**2), weights=weights, **fit_kwargs
+            ).fit
             model_std = np.sqrt(np.exp(res_mdl())) / 0.53
             res_models.append(res_mdl.model)
 
