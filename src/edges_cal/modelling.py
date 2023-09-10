@@ -520,16 +520,17 @@ class PhysicalLin(Foreground):
 
     n_terms_max: int = 5
     default_n_terms: int = 5
+    spectral_index: float = attrs.field(default=-2.5, converter=float)
 
     def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Define the basis functions of the model."""
         if indx < 3:
             logy = np.log(x)
-            y25 = x**-2.5
+            y25 = x**self.spectral_index
             return y25 * logy**indx
 
         elif indx == 3:
-            return x**-4.5
+            return x ** (self.spectral_index - 2)
         elif indx == 4:
             return 1 / (x * x)
         else:
