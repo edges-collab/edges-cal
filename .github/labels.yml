@@ -4,7 +4,7 @@
 #
 # The repository labels will be automatically configured using this file and
 # the GitHub Action https://github.com/marketplace/actions/github-labeler.
-- name: API breaking
+- name: API Breaking
   description: Breaking Changes
   color: e305fc
 - name: good first issue
