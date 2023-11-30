@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import attr
+import attrs
 import numpy as np
+import scipy as sp
 import yaml
 from abc import ABCMeta, abstractmethod
 from cached_property import cached_property
 from copy import copy
-from edges_io import h5
 from edges_io.h5 import register_h5type
-from typing import Sequence, Type, Union
+from hickleable import hickleable
+from typing import Literal, Sequence, Type, Union
 
 from . import receiver_calibration_func as rcf
 from .simulate import simulate_q_from_calobs
@@ -19,8 +21,8 @@ F_CENTER = 75.0
 _MODELS = {}
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class FixedLinearModel(yaml.YAMLObject):
     """
     A base class for a linear model fixed at a certain set of co-ordinates.
@@ -41,10 +43,10 @@ class FixedLinearModel(yaml.YAMLObject):
 
     yaml_tag = "!Model"
 
-    model: Model = attr.ib()
-    x: np.ndarray = attr.ib(converter=np.asarray)
-    _init_basis: np.ndarray | None = attr.ib(
-        default=None, converter=attr.converters.optional(np.asarray)
+    model: Model = attrs.field()
+    x: np.ndarray = attrs.field(converter=np.asarray)
+    _init_basis: np.ndarray | None = attrs.field(
+        default=None, converter=attrs.converters.optional(np.asarray)
     )
 
     @classmethod
@@ -120,18 +122,40 @@ class FixedLinearModel(yaml.YAMLObject):
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
         xdata: np.ndarray | None = None,
-    ):
-        """Create a linear-regression fit object."""
+        **kwargs,
+    ) -> ModelFit:
+        """Create a linear-regression fit object.
+
+        Parameters
+        ----------
+        ydata
+            The data to fit.
+        weights
+            The weights to apply to the data.
+        xdata
+            The co-ordinates at which to fit the data. If not given, use ``self.x``.
+
+        Other Parameters
+        ----------------
+        All other parameters used to construct the :class:`ModelFit` object. Includes
+        ``method`` to specify the lstsq solving method.
+
+        Returns
+        -------
+        fit
+            The :class:`ModelFit` object.
+        """
         thing = self.at_x(xdata) if xdata is not None else self
         return ModelFit(
             thing,
             ydata=ydata,
             weights=weights,
+            **kwargs,
         )
 
     def at_x(self, x: np.ndarray) -> FixedLinearModel:
         """Return a new :class:`FixedLinearModel` at given co-ordinates."""
-        return attr.evolve(self, x=x, init_basis=None)
+        return attrs.evolve(self, x=x, init_basis=None)
 
     def with_nterms(
         self, n_terms: int, parameters: Sequence | None = None
@@ -139,7 +163,7 @@ class FixedLinearModel(yaml.YAMLObject):
         """Return a new :class:`FixedLinearModel` with given nterms and parameters."""
         init_basis = as_readonly(self.basis[: min(self.model.n_terms, n_terms)])
         model = self.model.with_nterms(n_terms=n_terms, parameters=parameters)
-        return attr.evolve(self, model=model, init_basis=init_basis)
+        return attrs.evolve(self, model=model, init_basis=init_basis)
 
     def with_params(self, parameters: Sequence) -> FixedLinearModel:
         """Return a new :class:`FixedLinearModel` with givne parameters."""
@@ -147,7 +171,7 @@ class FixedLinearModel(yaml.YAMLObject):
 
         init_basis = as_readonly(self.basis)
         model = self.model.with_params(parameters=parameters)
-        return attr.evolve(self, model=model, init_basis=init_basis)
+        return attrs.evolve(self, model=model, init_basis=init_basis)
 
     @property
     def parameters(self) -> np.ndarray | None:
@@ -165,12 +189,12 @@ def _transform_yaml_constructor(
 def _transform_yaml_representer(
     dumper: yaml.SafeDumper, tr: ModelTransform
 ) -> yaml.nodes.MappingNode:
-    dct = attr.asdict(tr, recurse=False)
+    dct = attrs.asdict(tr, recurse=False)
     return dumper.represent_mapping(f"!{tr.__class__.__name__}", dct)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class ModelTransform(metaclass=ABCMeta):
     _models = {}
 
@@ -197,19 +221,23 @@ class ModelTransform(metaclass=ABCMeta):
         """Transform the coordinates."""
         return self.transform(x)
 
+    def __getstate__(self):
+        """Get the state for pickling."""
+        return attrs.asdict(self)
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class IdentityTransform(ModelTransform):
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return x
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class ScaleTransform(ModelTransform):
-    scale: float = attr.ib(converter=float)
+    scale: float = attrs.field(converter=float)
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
@@ -221,23 +249,33 @@ def tuple_converter(x):
     return tuple(float(xx) for xx in x)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class CentreTransform(ModelTransform):
-    range: tuple[float, float] = attr.ib(converter=tuple_converter)
-    centre: float = attr.ib(default=0.0, converter=float)
+    range: tuple[float, float] = attrs.field(converter=tuple_converter)
+    centre: float = attrs.field(default=0.0, converter=float)
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return x - self.range[0] - (self.range[1] - self.range[0]) / 2 + self.centre
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
+class ShiftTransform(ModelTransform):
+    shift: float = attrs.field(converter=float, default=0.0)
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Transform the coordinates."""
+        return x - self.shift
+
+
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class UnitTransform(ModelTransform):
     """A transform that takes the input range down to -1 to 1."""
 
-    range: tuple[float, float] = attr.ib(converter=tuple_converter)
+    range: tuple[float, float] = attrs.field(converter=tuple_converter)
 
     @cached_property
     def _centre(self):
@@ -248,45 +286,45 @@ class UnitTransform(ModelTransform):
         return 2 * self._centre.transform(x) / (self.range[1] - self.range[0])
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class LogTransform(ModelTransform):
     """A transform that takes the logarithm of the input."""
 
-    scale: float = attr.ib(1.0)
+    scale: float = attrs.field(default=1.0)
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return np.log(x)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class Log10Transform(ModelTransform):
     """A transform that takes the logarithm of the input."""
 
-    scale: float = attr.ib(1.0)
+    scale: float = attrs.field(default=1.0)
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return np.log10(x / self.scale)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class ZerotooneTransform(ModelTransform):
     """A transform that takes an input range down to (0,1)."""
 
-    range: tuple[float, float] = attr.ib(converter=tuple_converter)
+    range: tuple[float, float] = attrs.field(converter=tuple_converter)
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return (x - self.range[0]) / (self.range[1] - self.range[0])
 
 
-@h5.hickleable()
+@hickleable()
 @register_h5type
-@attr.s(frozen=True, kw_only=True)
+@attr.s(frozen=True, kw_only=True, slots=False)
 class Model(metaclass=ABCMeta):
     """A base class for a linear model."""
 
@@ -294,12 +332,12 @@ class Model(metaclass=ABCMeta):
     n_terms_min: int = 1
     n_terms_max: int = 1000000
 
-    parameters: Sequence | None = attr.ib(
+    parameters: Sequence | None = attrs.field(
         default=None,
-        converter=attr.converters.optional(tuple),
+        converter=attrs.converters.optional(tuple),
     )
-    n_terms: int = attr.ib(converter=attr.converters.optional(int))
-    transform: ModelTransform = attr.ib(default=IdentityTransform())
+    n_terms: int = attrs.field(converter=attrs.converters.optional(int))
+    transform: ModelTransform = attrs.field(default=IdentityTransform())
 
     def __init_subclass__(cls, is_meta=False, **kwargs):
         """Initialize a subclass and add it to the registered models."""
@@ -312,7 +350,7 @@ class Model(metaclass=ABCMeta):
         if self.parameters is not None:
             return len(self.parameters)
         else:
-            return self.default_n_terms
+            return self.__class__.default_n_terms
 
     @n_terms.validator
     def _n_terms_validator(self, att, val):
@@ -348,7 +386,7 @@ class Model(metaclass=ABCMeta):
         if parameters is not None:
             n_terms = len(parameters)
 
-        return attr.evolve(self, n_terms=n_terms, parameters=parameters)
+        return attrs.evolve(self, n_terms=n_terms, parameters=parameters)
 
     def with_params(self, parameters: Sequence | None):
         """Get new model with different parameters."""
@@ -423,9 +461,10 @@ class Model(metaclass=ABCMeta):
         xdata: np.ndarray,
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
+        **kwargs,
     ) -> ModelFit:
         """Create a linear-regression fit object."""
-        return self.at(x=xdata).fit(ydata, weights=weights)
+        return self.at(x=xdata).fit(ydata, weights=weights, **kwargs)
 
 
 def get_mdl(model: str | type[Model]) -> type[Model]:
@@ -442,15 +481,15 @@ def get_mdl_inst(model: str | Model | type[Model], **kwargs) -> Model:
     """Get a model instance from given string input."""
     if isinstance(model, Model):
         if kwargs:
-            return attr.evolve(model, **kwargs)
+            return attrs.evolve(model, **kwargs)
         else:
             return model
 
     return get_mdl(model)(**kwargs)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attr.s(frozen=True, kw_only=True, slots=False)
 class Foreground(Model, is_meta=True):
     """
     Base class for Foreground models.
@@ -465,40 +504,41 @@ class Foreground(Model, is_meta=True):
         Whether to add a simple CMB component to the foreground.
     """
 
-    with_cmb: bool = attr.ib(default=False, converter=bool)
-    f_center: float = attr.ib(F_CENTER, converter=float)
-    transform: ModelTransform = attr.ib()
+    with_cmb: bool = attrs.field(default=False, converter=bool)
+    f_center: float = attrs.field(default=F_CENTER, converter=float)
+    transform: ModelTransform = attrs.field()
 
     @transform.default
     def _tr_default(self):
         return ScaleTransform(scale=self.f_center)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attr.s(frozen=True, kw_only=True, slots=False)
 class PhysicalLin(Foreground):
     """Foreground model using a linearized physical model of the foregrounds."""
 
     n_terms_max: int = 5
     default_n_terms: int = 5
+    spectral_index: float = attrs.field(default=-2.5, converter=float)
 
     def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Define the basis functions of the model."""
         if indx < 3:
             logy = np.log(x)
-            y25 = x**-2.5
+            y25 = x**self.spectral_index
             return y25 * logy**indx
 
         elif indx == 3:
-            return x**-4.5
+            return x ** (self.spectral_index - 2)
         elif indx == 4:
             return 1 / (x * x)
         else:
             raise ValueError("too many terms supplied!")
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class Polynomial(Model):
     r"""A polynomial foreground model.
 
@@ -520,15 +560,15 @@ class Polynomial(Model):
     where ``y`` is ``log(x)`` if ``log_x=True`` and simply ``x`` otherwise.
     """
 
-    offset: float = attr.ib(default=0, converter=float)
+    offset: float = attrs.field(default=0, converter=float)
 
     def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Define the basis functions of the model."""
         return x ** (indx + self.offset)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class EdgesPoly(Polynomial):
     """
     Polynomial with an offset corresponding to approximate galaxy spectral index.
@@ -541,13 +581,13 @@ class EdgesPoly(Polynomial):
         All other arguments are passed through to :class:`Polynomial`.
     """
 
-    offset: float = attr.ib(default=-2.5, converter=float)
+    offset: float = attrs.field(default=-2.5, converter=float)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True)
 class LinLog(Foreground):
-    beta: float = attr.ib(default=-2.5, converter=float)
+    beta: float = attrs.field(default=-2.5, converter=float)
 
     @property
     def _poly(self):
@@ -569,12 +609,12 @@ def LogPoly(**kwargs):  # noqa: N802
     return Polynomial(transform=Log10Transform(), offset=0, **kwargs)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class Fourier(Model):
     """A Fourier-basis model."""
 
-    period: float = attr.ib(default=2 * np.pi, converter=float)
+    period: float = attrs.field(default=2 * np.pi, converter=float)
 
     @cached_property
     def _period_fac(self):
@@ -590,8 +630,8 @@ class Fourier(Model):
             return np.sin(self._period_fac * ((indx + 1) // 2) * x)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class FourierDay(Model):
     """A Fourier-basis model with period of 24 (hours)."""
 
@@ -604,11 +644,11 @@ class FourierDay(Model):
         return self._fourier.get_basis_term(indx, x)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class CompositeModel:
-    models: dict[str, Model] = attr.ib()
-    extra_basis: dict[str, np.ndarray] = attr.ib(factory=dict)
+    models: dict[str, Model] = attrs.field()
+    extra_basis: dict[str, np.ndarray] = attrs.field(factory=dict)
 
     @extra_basis.validator
     def _eb_vld(self, att, val):
@@ -723,7 +763,7 @@ class CompositeModel:
 
         model_ = model_.with_nterms(n_terms=n_terms, parameters=parameters)
 
-        return attr.evolve(self, models={**self.models, **{model: model_}})
+        return attrs.evolve(self, models={**self.models, **{model: model_}})
 
     def with_params(self, parameters: Sequence):
         """Get a new model with specified parameters."""
@@ -734,7 +774,7 @@ class CompositeModel:
             )
             for name, model in self.models.items()
         }
-        return attr.evolve(self, models=models)
+        return attrs.evolve(self, models=models)
 
     def at(self, **kwargs) -> FixedLinearModel:
         """Get an evaluated linear model."""
@@ -777,24 +817,25 @@ class CompositeModel:
         xdata: np.ndarray,
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
+        **kwargs,
     ) -> ModelFit:
         """Create a linear-regression fit object."""
-        return self.at(x=xdata).fit(ydata, weights=weights)
+        return self.at(x=xdata).fit(ydata, weights=weights, **kwargs)
 
 
-@h5.hickleable()
-@attr.s(frozen=True)
+@hickleable()
+@attrs.define(frozen=True, slots=False)
 class ComplexRealImagModel(yaml.YAMLObject):
     """A composite model that is specifically for complex functions in real/imag."""
 
     yaml_tag = "ComplexRealImagModel"
 
-    real: Model | FixedLinearModel = attr.ib()
-    imag: Model | FixedLinearModel = attr.ib()
+    real: Model | FixedLinearModel = attrs.field()
+    imag: Model | FixedLinearModel = attrs.field()
 
     def at(self, **kwargs) -> FixedLinearModel:
         """Get an evaluated linear model."""
-        return attr.evolve(
+        return attrs.evolve(
             self,
             real=self.real.at(**kwargs),
             imag=self.imag.at(**kwargs),
@@ -839,6 +880,7 @@ class ComplexRealImagModel(yaml.YAMLObject):
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
         xdata: np.ndarray | None = None,
+        **kwargs,
     ):
         """Create a linear-regression fit object."""
         if isinstance(self.real, FixedLinearModel):
@@ -851,24 +893,24 @@ class ComplexRealImagModel(yaml.YAMLObject):
         else:
             imag = self.imag.at(x=xdata)
 
-        real = real.fit(np.real(ydata), weights=weights).fit
-        imag = imag.fit(np.imag(ydata), weights=weights).fit
-        return attr.evolve(self, real=real, imag=imag)
+        real = real.fit(np.real(ydata), weights=weights, **kwargs).fit
+        imag = imag.fit(np.imag(ydata), weights=weights, **kwargs).fit
+        return attrs.evolve(self, real=real, imag=imag)
 
 
-@h5.hickleable()
-@attr.s(frozen=True)
+@hickleable()
+@attrs.define(frozen=True, slots=False)
 class ComplexMagPhaseModel(yaml.YAMLObject):
     """A composite model that is specifically for complex functions in mag/phase."""
 
     yaml_tag = "ComplexMagPhaseModel"
 
-    mag: Model | FixedLinearModel = attr.ib()
-    phs: Model | FixedLinearModel = attr.ib()
+    mag: Model | FixedLinearModel = attrs.field()
+    phs: Model | FixedLinearModel = attrs.field()
 
     def at(self, **kwargs) -> FixedLinearModel:
         """Get an evaluated linear model."""
-        return attr.evolve(
+        return attrs.evolve(
             self,
             mag=self.mag.at(**kwargs),
             phs=self.phs.at(**kwargs),
@@ -916,6 +958,7 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
         ydata: np.ndarray,
         weights: np.ndarray | float = 1.0,
         xdata: np.ndarray | None = None,
+        **kwargs,
     ):
         """Create a linear-regression fit object."""
         if isinstance(self.mag, FixedLinearModel):
@@ -928,21 +971,21 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
         else:
             phs = self.phs.at(x=xdata)
 
-        mag = mag.fit(np.abs(ydata), weights=weights).fit
-        phs = phs.fit(np.unwrap(np.angle(ydata)), weights=weights).fit
-        return attr.evolve(self, mag=mag, phs=phs)
+        mag = mag.fit(np.abs(ydata), weights=weights, **kwargs).fit
+        phs = phs.fit(np.unwrap(np.angle(ydata)), weights=weights, **kwargs).fit
+        return attrs.evolve(self, mag=mag, phs=phs)
 
 
-@h5.hickleable()
-@attr.s(frozen=True, kw_only=True)
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
 class NoiseWaves:
-    freq: np.ndarray = attr.ib()
-    gamma_src: dict[str, np.ndarray] = attr.ib()
-    gamma_rec: np.ndarray = attr.ib()
-    c_terms: int = attr.ib(default=5)
-    w_terms: int = attr.ib(default=6)
-    parameters: Sequence | None = attr.ib(default=None)
-    with_tload: bool = attr.ib(default=True)
+    freq: np.ndarray = attrs.field()
+    gamma_src: dict[str, np.ndarray] = attrs.field()
+    gamma_rec: np.ndarray = attrs.field()
+    c_terms: int = attrs.field(default=5)
+    w_terms: int = attrs.field(default=6)
+    parameters: Sequence | None = attrs.field(default=None)
+    with_tload: bool = attrs.field(default=True)
 
     @cached_property
     def src_names(self) -> tuple[str]:
@@ -1047,11 +1090,11 @@ class NoiseWaves:
         return out[indx * len(self.freq) : (indx + 1) * len(self.freq)]
 
     def get_fitted(
-        self, data: np.ndarray, weights: np.ndarray | None = None
+        self, data: np.ndarray, weights: np.ndarray | None = None, **kwargs
     ) -> NoiseWaves:
         """Get a new noise wave model with fitted parameters."""
-        fit = self.linear_model.fit(ydata=data, weights=weights)
-        return attr.evolve(self, parameters=fit.model_parameters)
+        fit = self.linear_model.fit(ydata=data, weights=weights, **kwargs)
+        return attrs.evolve(self, parameters=fit.model_parameters)
 
     def with_params_from_calobs(self, calobs, cterms=None, wterms=None) -> NoiseWaves:
         """Get a new noise wave model with parameters fitted using standard methods."""
@@ -1075,7 +1118,7 @@ class NoiseWaves:
             c2[0] += calobs.t_load
             c2 = modify(c2, cterms)
 
-        return attr.evolve(self, parameters=tu + tc + ts + c2)
+        return attrs.evolve(self, parameters=tu + tc + ts + c2)
 
     def get_data_from_calobs(
         self,
@@ -1146,8 +1189,8 @@ class NoiseWaves:
         return self.linear_model(**kwargs)
 
 
-@h5.hickleable()
-@attr.s(frozen=True)
+@hickleable()
+@attrs.define(frozen=True, slots=False)
 class ModelFit:
     """A class representing a fit of model to data.
 
@@ -1162,6 +1205,12 @@ class ModelFit:
         *variance* of the measurement (not the standard deviation). This is
         appropriate if the weights represent the number of measurements going into
         each piece of data.
+    method
+        The method to solve the linear least squares problem. This can be either
+        'lstsq', 'qr' or 'alan-qrd'. The 'leastsq' method uses the np.linalg.lstsq
+        function, while the 'qr' method uses the np.linalg.solve function after
+        scipy.linalg.qr. The 'alan-qr' method is a python-port of the QR decomposition
+        algorithm found in Alan's C Codebase.
 
     Raises
     ------
@@ -1169,10 +1218,13 @@ class ModelFit:
         If model_type is not str, or a subclass of :class:`Model`.
     """
 
-    model: FixedLinearModel = attr.ib()
-    ydata: np.ndarray = attr.ib()
-    weights: np.ndarray | float = attr.ib(
-        default=1.0, validator=attr.validators.instance_of((np.ndarray, float))
+    model: FixedLinearModel = attrs.field()
+    ydata: np.ndarray = attrs.field()
+    weights: np.ndarray | float = attrs.field(
+        default=1.0, validator=attrs.validators.instance_of((np.ndarray, float))
+    )
+    method: Literal["lstsq", "qr", "alan-qrd"] = attr.ib(
+        default="lstsq", validator=attr.validators.in_(["lstsq", "qr", "alan-qrd"])
     )
 
     @ydata.validator
@@ -1192,13 +1244,71 @@ class ModelFit:
     @cached_property
     def fit(self) -> FixedLinearModel:
         """A model that has parameters set based on the best fit to this data."""
-        if np.isscalar(self.weights):
-            pars = self._ls(self.model.basis, self.ydata)
-        else:
-            pars = self._wls(self.model.basis, self.ydata, w=self.weights)
+        if self.method == "lstsq":
+            if np.isscalar(self.weights):
+                pars = self._ls(self.model.basis, self.ydata)
+            else:
+                pars = self._wls(self.model.basis, self.ydata, w=self.weights)
+        elif self.method == "qr":
+            pars = self._qr(self.model.basis, self.ydata, w=self.weights)
+        elif self.method == "alan-qrd":
+            pars = self._alan_qrd(self.model.basis, self.ydata, w=self.weights)
 
         # Create a new model with the same parameters but specific parameters and xdata.
         return self.model.with_params(parameters=pars)
+
+    def _qr(self, basis: np.ndarray, y: np.ndarray, w: np.ndarray) -> np.ndarray:
+        """Solve a linear system using QR decomposition.
+
+        Here the system is defined as A*theta = y, where A is an (n, m) matrix of basis
+        vectors, y is an (n,) vector of data, and theta is an (m,) vector of parameters.
+
+        See: http://www2.imm.dtu.dk/pubdb/views/edoc_download.php/2804/pdf/imm2804.pdf
+        """
+        if np.isscalar(w):
+            w = np.eye(len(y))
+        elif np.ndim(w) == 1:
+            w = np.diag(w)
+
+        # sqrt of weight matrix
+        sqrtw = np.sqrt(w)
+
+        # A and ydata "tilde"
+        sqrt_wa = np.dot(sqrtw, basis.T)
+        w_ydata = np.dot(sqrtw, y)
+
+        # solving system using 'short' QR decomposition (see R. Butt, Num. Anal.
+        # Using MATLAB)
+        q, r = sp.linalg.qr(sqrt_wa, mode="economic")
+        return sp.linalg.solve(r, np.dot(q.T, w_ydata))
+
+    def _alan_qrd(self, basis: np.ndarray, y: np.ndarray, w: np.ndarray) -> np.ndarray:
+        """Solve a linear system using QR decomposition.
+
+        This solves the system in the same way as Alan Roger's original C-code that was
+        used for Bowman+2018. See
+        https://github.com/edges-collab/alans-pipeline/blob/
+        0e41156ddc7aaa3dd4b37cd1ee1ada971e68d728/src/edges2k.c#L2735
+        for the C-Code.
+        """
+        if np.isscalar(w):
+            w = np.eye(len(y))
+        elif np.ndim(w) == 1:
+            w = np.diag(w)
+
+        npar, ndata = basis.shape
+
+        wa = np.dot(basis, w)
+
+        bbrr = np.dot(wa, y)
+        aarr = np.dot(wa, basis.T)
+        assert bbrr.shape == (npar,)
+        assert aarr.shape == (npar, npar)
+
+        # solve the system
+        _alan_qrd(aarr.astype(np.longdouble), bbrr)
+
+        return bbrr
 
     def _wls(self, van, y, w):
         """Ripped straight outta numpy for speed.
@@ -1313,7 +1423,7 @@ def _model_yaml_constructor(
 def _model_yaml_representer(
     dumper: yaml.SafeDumper, model: Model
 ) -> yaml.nodes.MappingNode:
-    model_dct = attr.asdict(model, recurse=False)
+    model_dct = attrs.asdict(model, recurse=False)
     model_dct.update(model=model.__class__.__name__.lower())
     if model_dct["parameters"] is not None:
         model_dct["parameters"] = tuple(float(x) for x in model_dct["parameters"])
@@ -1330,3 +1440,77 @@ yaml.add_multi_representer(Model, _model_yaml_representer)
 yaml.add_multi_representer(ModelTransform, _transform_yaml_representer)
 
 Modelable = Union[str, Type[Model]]
+
+
+def _alan_qrd(a: np.ndarray, b: np.ndarray):
+    """Solve a linear system using QR decomposition.
+
+    This solves the system in the same way as Alan Roger's original C-code that was
+    used for Bowman+2018.
+    """
+    n = a.shape[0]
+    c = np.zeros(n, dtype=np.longdouble)
+    d = np.zeros(n, dtype=np.longdouble)
+    qt = np.zeros((n, n), np.longdouble)
+    u = np.zeros((n, n), np.longdouble)
+
+    for k in range(n - 1):
+        scale = np.longdouble(0.0)
+        for i in range(k, n):
+            if np.abs(a[k, i]):
+                scale = np.abs(a[k, i])
+        if scale == 0.0:
+            # SINGULAR!
+            c[k] = d[k] = 0.0
+        else:
+            a[k, k:] /= scale
+            sm = np.sum(a[k, k:] ** 2)
+            sigma = np.sqrt(sm) if a[k, k] > 0 else -np.sqrt(sm)
+            a[k, k] += sigma
+            c[k] = sigma * a[k, k]
+            d[k] = -scale * sigma
+            for j in range(k + 1, n):
+                sm = np.sum(a[k, k:] * a[j, k:])
+                tau = sm / c[k]
+                a[j, k:] -= tau * a[k, k:]
+
+    d[-1] = a[-1, -1]
+
+    qt = np.eye(n)
+
+    for k in range(n - 1):
+        if c[k] != 0.0:
+            for j in range(n):
+                sm = np.sum(a[k, k:] * qt[k:, j]) / c[k]
+                qt[k:, j] -= sm * a[k, k:]
+
+    for j in range(n - 1):
+        sm = np.sum(a[j, j:] * b[j:])
+        tau = sm / c[j]
+        b[j:] -= tau * a[j, j:]
+
+    b[-1] /= d[-1]
+    for i in range(n - 2, -1, -1):
+        sm = np.sum(a[(i + 1) :, i] * b[(i + 1) :])
+        b[i] = (b[i] - sm) / d[i]
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            u[i, j] = a[j, i]
+        u[i, i] = d[i]
+
+    for k in range(n):
+        if u[k, k] == 0:
+            return
+        else:
+            u[k, k] = 1.0 / u[k, k]
+
+    for i in range(n - 2, 0, -1):
+        for j in range(n - 1, i, -1):
+            sm = np.sum(u[i, i + 1 : j] * u[i + 1 : j, j])
+            u[i, j] = -u[i, i] * sm
+
+    for i in range(n):
+        for j in range(n):
+            sm = np.dot(u[i], qt[:, j])
+            a[j, i] = sm

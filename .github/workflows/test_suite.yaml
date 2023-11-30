@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: [3.8, 3.9, "3.10"]
+        python-version: [3.8, 3.9, "3.10", "3.11"]
         exclude:
           - os: macos-latest
             python-version: 3.8
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@master
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
       - name: set PY
@@ -58,7 +58,7 @@ jobs:
 
   downstream:
     env:
-      PYTHON: 3.8
+      PYTHON: 3.11
       OS: ubuntu-latest
     name: Downstream
     runs-on: ubuntu-latest
@@ -70,7 +70,7 @@ jobs:
       - uses: actions/checkout@master
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON }}
       - name: set PY
@@ -106,16 +106,16 @@ jobs:
     name: Codecov Reporting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Download coverage data.
         uses: actions/download-artifact@v3
         with:
           name: coverage-data
 
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v4
         with:
-          python-version: 3.9
+          python-version: 3.11
 
       - name: Install coverage
         run: pip install coverage
@@ -127,7 +127,7 @@ jobs:
           coverage combine
           coverage xml
 
-      - uses: codecov/codecov-action@v2
+      - uses: codecov/codecov-action@v3
         with:
           fail_ci_if_error: true
           verbose: true

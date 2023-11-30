@@ -19,7 +19,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy import units as un
 from cached_property import cached_property
-from edges_io import h5, io
+from edges_io import io
+from hickleable import hickleable
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 from typing import Any, Callable, Sequence
@@ -180,7 +181,7 @@ class StandardsReadings:
         )
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s(kw_only=True, frozen=True)
 class S11Model:
     """
@@ -216,6 +217,7 @@ class S11Model:
     model_kwargs: dict[str, Any] = attr.ib(default=attr.Factory(dict))
     use_spline: bool = attr.ib(False)
     metadata: dict = attr.ib(default=attr.Factory(dict), eq=False)
+    fit_kwargs: dict[str, Any] = attr.ib(default=attr.Factory(dict))
 
     @freq.validator
     def _fv(self, att, val):
@@ -305,7 +307,8 @@ class S11Model:
         cmodel = self.complex_model_type(emodel, emodel)
 
         return cmodel.fit(
-            ydata=raw_s11 * np.exp(1j * self.model_delay * freq).to_value("")
+            ydata=raw_s11 * np.exp(1j * self.model_delay * freq).to_value(""),
+            **self.fit_kwargs,
         )
 
     @cached_property
@@ -412,7 +415,7 @@ class S11Model:
         return fig
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s(kw_only=True)
 class Receiver(S11Model):
     """A special case of :class:`SwitchCorrection` for the LNA.
@@ -510,7 +513,7 @@ class Receiver(S11Model):
         )
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s
 class InternalSwitch:
     _freq: tp.Freqtype = attr.ib(
@@ -522,6 +525,7 @@ class InternalSwitch:
     model: Model = attr.ib()
     n_terms: tuple[int, int, int] | int = attr.ib(default=(7, 7, 7), converter=_tuplify)
     metadata: dict = attr.ib(default=attr.Factory(dict), eq=False)
+    fit_kwargs: dict = attr.ib(default=attr.Factory(dict), eq=False)
 
     @property
     def freq(self):
@@ -679,11 +683,11 @@ class InternalSwitch:
         # 'kind' should be 's11', 's12' or 's22'
         data = getattr(self, f"{kind}_data")
         return getattr(self, f"_{kind}_model").fit(
-            xdata=self.freq.freq.to_value("MHz"), ydata=data
+            xdata=self.freq.freq.to_value("MHz"), ydata=data, **self.fit_kwargs
         )
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s(kw_only=True, frozen=True)
 class LoadPlusSwitchS11:
     """S11 for a lab calibration load including the internal switch.
@@ -764,7 +768,7 @@ class LoadPlusSwitchS11:
         return self.standards.open.freq
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s
 class LoadS11(S11Model):
     """S11 of an input Load."""

@@ -6,7 +6,7 @@ import numpy as np
 import warnings
 from astropy import units
 from astropy import units as u
-from edges_io import h5
+from hickleable import hickleable
 from itertools import product
 from pathlib import Path
 from scipy.ndimage import convolve1d
@@ -96,7 +96,7 @@ def as_readonly(x: np.ndarray) -> np.ndarray:
 
 
 def dct_of_list_to_list_of_dct(dct: dict[str, Sequence]) -> list[dict]:
-    """Take a dict of key: list pairs and turn it into a list of all combinations of dicts.
+    """Take a dict of key: list pairs and turn it into a list of all combos of dicts.
 
     Parameters
     ----------
@@ -124,10 +124,10 @@ def dct_of_list_to_list_of_dct(dct: dict[str, Sequence]) -> list[dict]:
 
     prod = product(*lists)
 
-    return [{k: v for k, v in zip(dct.keys(), p)} for p in prod]
+    return [dict(zip(dct.keys(), p)) for p in prod]
 
 
-@h5.hickleable()
+@hickleable()
 @attr.s
 class FrequencyRange:
     """
