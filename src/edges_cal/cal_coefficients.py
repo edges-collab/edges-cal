@@ -1602,7 +1602,7 @@ class Calibrator:
 
         Notes
         -----
-        Using this and then :method:`calibrate_temp` immediately should be an identity
+        Using this and then :meth:`calibrate_temp` immediately should be an identity
         operation.
         """
         a, b = self._linear_coefficients(freq, ant_s11)
