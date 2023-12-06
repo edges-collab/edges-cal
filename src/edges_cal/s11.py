@@ -268,7 +268,7 @@ class S11Model:
     ) -> ComplexMagPhaseModel | ComplexRealImagModel:
         """Generate a callable model for the S11.
 
-        This should closely match :method:`s11_correction`.
+        This should closely match :meth:`s11_correction`.
 
         Parameters
         ----------

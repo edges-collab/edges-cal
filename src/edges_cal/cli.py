@@ -258,7 +258,7 @@ def report(
     console.print(f"Saved interactive notebook to '{out/fname}'")
 
     if pdf:  # pragma: no cover
-        make_pdf(out, fname)
+        make_pdf(out / fname)
         if upload:
             upload_memo(out / fname.with_suffix(".pdf"), title, memo, quiet)
 
