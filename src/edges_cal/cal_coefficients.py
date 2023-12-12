@@ -1431,7 +1431,7 @@ class Calibrator:
             if not hasattr(val, f"{key}_model") or not callable(
                 getattr(val, f"{key}_model")
             ):
-                raise ValueError(f"internal_switch must provide {key}_model method")
+                warnings.warn(f"internal_switch does not provide {key}_model method")
 
     def _call_func(self, freq: tp.FreqType | None = None, *, key=None, norm=False):
         if freq is None:
