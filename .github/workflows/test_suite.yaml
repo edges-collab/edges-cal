@@ -50,7 +50,7 @@ jobs:
           ls -al
 
       - name: Upload coverage data
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-data
           path: ".coverage.*"
@@ -95,7 +95,7 @@ jobs:
           coverage run --parallel-mode -m pytest ../${{ matrix.package }}/tests
 
       - name: Upload coverage data
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-data
           path: ".coverage.*"
