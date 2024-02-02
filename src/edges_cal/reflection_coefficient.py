@@ -15,10 +15,11 @@ import attr
 import numpy as np
 import warnings
 from astropy import units
+from astropy.constants import c as speed_of_light
+from edges_io import types as tp
 from hickleable import hickleable
 
 from . import modelling as mdl
-from . import types as tp
 from .tools import unit_converter
 
 
@@ -458,6 +459,10 @@ class CalkitStandard:
         """Obtain the combined reflection coefficient of the standard.
 
         See Eq. 18 of M16.
+
+        Note that, despite looking different to Alan's implementation, this is exactly
+        the same as his agilent() function EXCEPT that he doesn't seem to use the
+        loss / capacitance models.
         """
         ex = np.exp(-2 * self.gl(freq))
         r1 = self.offset_gamma(freq)
@@ -544,6 +549,30 @@ AGILENT_85033E = Calkit(
     ),
 )
 
+AGILENT_ALAN = Calkit(
+    open=CalkitOpen(
+        offset_impedance=50.0 * units.ohm,
+        offset_delay=33 * units.picosecond,
+        offset_loss=2.3 * units.Gohm / units.s,
+        capacitance_model=mdl.Polynomial(
+            parameters=[49.43e-15, -310.1e-27, 23.17e-36, -0.1597e-45]
+        ),
+    ),
+    short=CalkitShort(
+        offset_impedance=50.0 * units.ohm,
+        offset_delay=33 * units.picosecond,
+        offset_loss=2.3 * units.Gohm / units.s,
+        inductance_model=mdl.Polynomial(
+            parameters=[2.077e-12, -108.5e-24, 2.171e-33, -0.01e-42]
+        ),
+    ),
+    match=CalkitMatch(
+        offset_impedance=50.0 * units.ohm,
+        offset_delay=33.0 * units.picosecond,
+        offset_loss=2.3 * units.Gohm / units.s,
+    ),
+)
+
 
 def get_calkit(
     base,
@@ -619,3 +648,75 @@ def agilent_85033E(  # noqa: N802
         calkit.short.reflection_coefficient(f * units.MHz),
         calkit.match.reflection_coefficient(f * units.MHz),
     )
+
+
+def path_length_correction_edges3(
+    freq: tp.FreqType, delay: tp.TimeType, gamma_in: float, lossf: float, dielf: float
+) -> tuple[float, float, float]:
+    """
+    Calculate the path length correction for the EDGES-3 LNA.
+
+    Notes
+    -----
+    The 8-position switch memo is 303 and the correction for the path to the
+    LNA for the calibration of the LNA s11 is described in memos 367 and 392.
+
+    corrcsv.c corrects lna s11 file for the different vna path to lna args:
+    s11.csv -cablen -cabdiel -cabloss outputs c_s11.csv
+
+    The actual numbers are slightly temperature dependent
+
+    corrcsv s11.csv -cablen 4.26 -cabdiel -1.24 -cabloss -91.5
+
+    and need to be determined using a calibration test like that described in
+    memos 369 and 361. Basically the path length corrections can be "tuned" by
+    minimizing the ripple on the calibrated spectrum of the open or shorted
+    cable.
+
+    cablen --> length in inches
+    cabloss --> loss correction percentage
+    cabdiel --> dielectric correction in percentage
+
+    """
+    freq = freq.to("Hz").value
+    length = (delay * speed_of_light).to_value("m")
+
+    b = 0.1175 * 2.54e-2 * 0.5
+    a = 0.0362 * 2.54e-2 * 0.5
+    diel = 2.05 * dielf  # UT-141C-SP
+    # for tinned copper
+    d2 = np.sqrt(1.0 / (np.pi * 4.0 * np.pi * 1e-7 * 5.96e07 * 0.8 * lossf))
+    # skin depth at 1 Hz for copper
+    d = np.sqrt(1.0 / (np.pi * 4.0 * np.pi * 1e-7 * 5.96e07 * lossf))
+
+    L = (4.0 * np.pi * 1e-7 / (2.0 * np.pi)) * np.log(b / a)
+    C = 2.0 * np.pi * 8.854e-12 * diel / np.log(b / a)
+
+    La = 4.0 * np.pi * 1e-7 * d / (4.0 * np.pi * a)
+    Lb = 4.0 * np.pi * 1e-7 * d2 / (4.0 * np.pi * b)
+    disp = (La + Lb) / L
+    R = 2.0 * np.pi * L * disp * np.sqrt(freq)
+    L = L * (1.0 + disp / np.sqrt(freq))
+    G = 0
+
+    if diel > 1.2:
+        G = 2.0 * np.pi * C * freq * 2e-4  # // 2e-4 is the loss tangent for teflon
+
+    Zcab = np.sqrt((1j * 2 * np.pi * freq * L + R) / (1j * 2 * np.pi * freq * C + G))
+    g = np.sqrt((1j * 2 * np.pi * freq * L + R) * (1j * 2 * np.pi * freq * C + G))
+
+    T = (50.0 - Zcab) / (50.0 + Zcab)
+    Vin = np.exp(+g * length) + T * np.exp(-g * length)
+    Iin = (np.exp(+g * length) - T * np.exp(-g * length)) / Zcab
+    Vout = 1 + T  # Iout = (1 - T)/Zcab
+    s11 = ((Vin / Iin) - 50) / ((Vin / Iin) + 50)  # same as s22
+    VVin = Vin + 50.0 * Iin
+    s12 = 2 * Vout / VVin  # same as s21
+
+    Z = 50.0 * (1 + gamma_in) / (1 - gamma_in)
+    T = (Z - Zcab) / (Z + Zcab)
+    T = T * np.exp(-g * 2 * length)
+    Z = Zcab * (1 + T) / (1 - T)
+    T = (Z - 50.0) / (Z + 50.0)
+
+    return T, s11, s12

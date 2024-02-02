@@ -14,7 +14,8 @@ import warnings
 from astropy import units as un
 from astropy.convolution import Gaussian1DKernel, convolve
 from astropy.io.misc import yaml as ayaml
-from edges_io import io
+from edges_io import io, io3
+from edges_io import types as tp
 from edges_io.logging import logger
 from functools import partial
 from hickleable import hickleable
@@ -28,7 +29,6 @@ from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
 from . import s11
-from . import types as tp
 from .cached_property import cached_property, safe_property
 from .spectra import LoadSpectrum
 from .tools import FrequencyRange, bin_array, get_data_path
@@ -288,7 +288,7 @@ class Load:
     @classmethod
     def from_io(
         cls,
-        io_obj: io.CalibrationObservation,
+        io_obj: io.CalibrationObservation | io3.CalibrationObservation,
         load_name: str,
         f_low: tp.FreqType = 40 * un.MHz,
         f_high: tp.FreqType = np.inf * un.MHz,
@@ -385,6 +385,87 @@ class Load:
             )
         else:
             return cls(spectrum=spec, reflections=refl)
+
+    @classmethod
+    def from_edges3(
+        cls,
+        io_obj: io3.CalibrationObservation,
+        load_name: str,
+        f_low: tp.FreqType = 40 * un.MHz,
+        f_high: tp.FreqType = np.inf * un.MHz,
+        reflection_kwargs: dict | None = None,
+        spec_kwargs: dict | None = None,
+        loss_kwargs: dict | None = None,
+        ambient_temperature: float | None = None,
+    ):
+        """
+        Define a full :class:`Load` from a path and name.
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to the top-level calibration observation.
+        load_name : str
+            Name of a load to define.
+        f_low, f_high : float
+            Min/max frequencies to keep in measurements.
+        reflection_kwargs : dict
+            Extra arguments to pass through to :class:`SwitchCorrection`.
+        spec_kwargs : dict
+            Extra arguments to pass through to :class:`LoadSpectrum`.
+        ambient_temperature
+            The ambient temperature to use for the loss, if required (required for new
+            hot loads). By default, read an ambient load's actual temperature reading
+            from the io object.
+
+        Returns
+        -------
+        load : :class:`Load`
+            The load object, containing all info about spectra and S11's for that load.
+        """
+        if not spec_kwargs:
+            spec_kwargs = {}
+        if not reflection_kwargs:
+            reflection_kwargs = {}
+        loss_kwargs = loss_kwargs or {}
+        # Fill up kwargs with keywords from this instance
+        # TODO: here we only use the calkit defined for the FIRST switching_state,
+        # instead of using each calkit for each switching_state. To fix this, we require
+        # having meta information inside the S11/ directory.
+
+        # if "calkit" not in reflection_kwargs["internal_switch_kwargs"]:
+        #     reflection_kwargs["internal_switch_kwargs"]["calkit"] = rc.get_calkit(
+        #         rc.AGILENT_85033E,
+        #         resistance_of_match=io_obj.definition["measurements"]["resistance_m"][
+        #             io_obj.s11.switching_state[0].run_num
+        #         ],
+        #     )
+
+        # For the LoadSpectrum, we can specify both f_low/f_high and f_range_keep.
+        # The first pair is what defines what gets read in and smoothed/averaged.
+        # The second pair then selects a part of this range to keep for doing
+        # calibration with.
+        if "f_low" not in spec_kwargs:
+            spec_kwargs["f_low"] = f_low
+        if "f_high" not in spec_kwargs:
+            spec_kwargs["f_high"] = f_high
+
+        spec = LoadSpectrum.from_edges3(
+            io_obs=io_obj,
+            load_name=load_name,
+            f_range_keep=(f_low, f_high),
+            **spec_kwargs,
+        )
+
+        refl = s11.LoadS11.from_edges3(
+            obs=io_obj,
+            load_name=load_name,
+            f_low=f_low,
+            f_high=f_high,
+            **reflection_kwargs,
+        )
+
+        return cls(spectrum=spec, reflections=refl)
 
     def get_temp_with_loss(self, freq: tp.FreqType | None = None):
         """Calculate the temperature of the load accounting for loss."""
@@ -499,14 +580,13 @@ class CalibrationObservation:
     @classmethod
     def from_io(
         cls,
-        io_obj: io.CalibrationObservation,
+        io_obj: io.CalibrationObservation | io3.CalibrationObservation,
         *,
         semi_rigid_path: tp.PathLike = ":semi_rigid_s_parameters_WITH_HEADER.txt",
         freq_bin_size: int = 1,
         spectrum_kwargs: dict[str, dict[str, Any]] | None = None,
         s11_kwargs: dict[str, dict[str, Any]] | None = None,
         internal_switch_kwargs: dict[str, Any] | None = None,
-        lna_kwargs: dict[str, Any] | None = None,
         f_low: tp.FreqType = 40.0 * un.MHz,
         f_high: tp.FreqType = np.inf * un.MHz,
         sources: tuple[str] = ("ambient", "hot_load", "open", "short"),
@@ -561,12 +641,6 @@ class CalibrationObservation:
         """
         if f_high < f_low:
             raise ValueError("f_high must be larger than f_low!")
-
-        if lna_kwargs is not None:
-            warnings.warn(
-                "Use of 'lna_kwargs' is deprecated, use 'receiver_kwargs' instead."
-            )
-            receiver_kwargs = lna_kwargs
 
         spectrum_kwargs = spectrum_kwargs or {}
         s11_kwargs = s11_kwargs or {}
@@ -638,7 +712,136 @@ class CalibrationObservation:
             metadata={
                 "path": io_obj.path,
                 "s11_kwargs": s11_kwargs,
-                "lna_kwargs": lna_kwargs,
+                "lna_kwargs": receiver_kwargs,
+                "spectra": {
+                    name: load.spectrum.metadata for name, load in loads.items()
+                },
+                "io": io_obj,
+            },
+            **kwargs,
+        )
+
+    @classmethod
+    def from_edges3(
+        cls,
+        io_obj: io3.CalibrationObservation,
+        *,
+        freq_bin_size: int = 1,
+        spectrum_kwargs: dict[str, dict[str, Any]] | None = None,
+        s11_kwargs: dict[str, dict[str, Any]] | None = None,
+        internal_switch_kwargs: dict[str, Any] | None = None,
+        f_low: tp.FreqType = 40.0 * un.MHz,
+        f_high: tp.FreqType = np.inf * un.MHz,
+        sources: tuple[str] = ("ambient", "hot_load", "open", "short"),
+        receiver_kwargs: dict[str, Any] | None = None,
+        restrict_s11_model_freqs: bool = True,
+        hot_load_loss_kwargs: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> CalibrationObservation:
+        """Create the object from an edges-io observation.
+
+        Parameters
+        ----------
+        io_obj
+            An calibration observation object from which all the data can be read.
+        freq_bin_size
+            The size of each frequency bin (of the spectra) in units of the raw size.
+        spectrum_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`LoadSpectrum`
+            objects. See its documentation for relevant parameters. Parameters specified
+            here are used for _all_ calibrator sources.
+        s11_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`LoadS11`
+            objects. See its documentation for relevant parameters. Parameters specified
+            here are used for _all_ calibrator sources.
+        internal_switch_kwargs
+            Keyword arguments used to instantiate the :class:`~s11.InternalSwitch`
+            objects. See its documentation for relevant parameters. The same internal
+            switch is used to calibrate the S11 for each input source.
+        f_low : float
+            Minimum frequency to keep for all loads (and their S11's). If for some
+            reason different frequency bounds are desired per-load, one can pass in
+            full load objects through ``load_spectra``.
+        f_high : float
+            Maximum frequency to keep for all loads (and their S11's). If for some
+            reason different frequency bounds are desired per-load, one can pass in
+            full load objects through ``load_spectra``.
+        sources
+            A sequence of strings specifying which loads to actually use in the
+            calibration. Default is all four standard calibrators.
+        receiver_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`~s11.Receiver`
+            objects. See its documentation for relevant parameters. ``lna_kwargs`` is a
+            deprecated alias.
+        restrict_s11_model_freqs
+            Whether to restrict the S11 modelling (i.e. smoothing) to the given freq
+            range. The final output will be calibrated only between the given freq
+            range, but the S11 models themselves can be fit over a broader set of
+            frequencies.
+        """
+        if f_high < f_low:
+            raise ValueError("f_high must be larger than f_low!")
+
+        spectrum_kwargs = spectrum_kwargs or {}
+        s11_kwargs = s11_kwargs or {}
+        internal_switch_kwargs = internal_switch_kwargs or {}
+        receiver_kwargs = receiver_kwargs or {}
+        hot_load_loss_kwargs = hot_load_loss_kwargs or {}
+
+        for v in [spectrum_kwargs, s11_kwargs, internal_switch_kwargs, receiver_kwargs]:
+            assert isinstance(v, dict)
+
+        f_low = f_low.to("MHz", copy=False)
+        f_high = f_high.to("MHz", copy=False)
+
+        if "calkit" not in receiver_kwargs:
+            receiver_kwargs["calkit"] = rc.get_calkit(
+                rc.AGILENT_ALAN,
+                resistance_of_match=49.962 * un.Ohm,
+            )
+
+        receiver = s11.Receiver.from_edges3(
+            obs=io_obj,
+            f_low=f_low if restrict_s11_model_freqs else 0 * un.MHz,
+            f_high=f_high if restrict_s11_model_freqs else np.inf * un.MHz,
+            **receiver_kwargs,
+        )
+
+        f_low = max(receiver.freq.min, f_low)
+        f_high = min(receiver.freq.max, f_high)
+
+        if "default" not in spectrum_kwargs:
+            spectrum_kwargs["default"] = {}
+
+        if "freq_bin_size" not in spectrum_kwargs["default"]:
+            spectrum_kwargs["default"]["freq_bin_size"] = freq_bin_size
+
+        def get_load(name, ambient_temperature=None):
+            return Load.from_edges3(
+                io_obj=io_obj,
+                load_name=name,
+                f_low=f_low,
+                f_high=f_high,
+                reflection_kwargs={
+                    **s11_kwargs.get("default", {}),
+                    **s11_kwargs.get(name, {}),
+                },
+                spec_kwargs={
+                    **spectrum_kwargs["default"],
+                    **spectrum_kwargs.get(name, {}),
+                },
+                ambient_temperature=ambient_temperature,
+            )
+
+        loads = {src: get_load(src) for src in sources}
+
+        return cls(
+            loads=loads,
+            receiver=receiver,
+            metadata={
+                "path": io_obj.temperature_file.parent.parent,
+                "s11_kwargs": s11_kwargs,
+                "lna_kwargs": receiver_kwargs,
                 "spectra": {
                     name: load.spectrum.metadata for name, load in loads.items()
                 },

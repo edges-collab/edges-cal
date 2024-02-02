@@ -18,8 +18,10 @@ import attr
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy import units as un
+from astropy.constants import c as speed_of_light
 from cached_property import cached_property
-from edges_io import io
+from edges_io import io, io3
+from edges_io import types as tp
 from hickleable import hickleable
 from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
@@ -27,7 +29,6 @@ from typing import Any, Callable, Sequence
 
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
-from . import types as tp
 from .modelling import (
     ComplexMagPhaseModel,
     ComplexRealImagModel,
@@ -492,6 +493,68 @@ class Receiver(S11Model):
             raw_s11=np.mean(s11s, axis=0), freq=freq, metadata=metadata, **kwargs
         )
 
+    @classmethod
+    def from_edges3(
+        cls,
+        obs: io3.CalibrationObservation,
+        calkit: rc.Calkit = rc.AGILENT_ALAN,
+        f_low=0.0 * un.MHz,
+        f_high=np.inf * un.MHz,
+        cable_length: tp.LengthType = 0.0 * un.cm,
+        cable_loss_percent: float = 0.0,
+        cable_dielectric_percent: float = 0.0,
+        **kwargs,
+    ):
+        """Create a Receiver object from the EDGES-3 receiver."""
+        # TODO: remember to use resistance_of_math=49.962
+        standards = StandardsReadings(
+            open=VNAReading.from_s1p(
+                obs.s11_files["lna"]["open"], f_low=f_low, f_high=f_high
+            ),
+            short=VNAReading.from_s1p(
+                obs.s11_files["lna"]["short"], f_low=f_low, f_high=f_high
+            ),
+            match=VNAReading.from_s1p(
+                obs.s11_files["lna"]["match"], f_low=f_low, f_high=f_high
+            ),
+        )
+
+        receiver_reading = VNAReading.from_s1p(
+            obs.s11_files["lna"]["input"], f_low=f_low, f_high=f_high
+        )
+
+        freq = standards.freq
+
+        calibrated_s11_raw = rc.de_embed(
+            calkit.open.reflection_coefficient(freq.freq),
+            calkit.short.reflection_coefficient(freq.freq),
+            calkit.match.reflection_coefficient(freq.freq),
+            standards.open.s11,
+            standards.short.s11,
+            standards.match.s11,
+            receiver_reading.s11,
+        )[0]
+
+        T, s11, s12 = rc.path_length_correction_edges3(
+            freq=freq.freq,
+            delay=cable_length / speed_of_light,
+            gamma_in=0,
+            lossf=1 + cable_loss_percent * 0.01,
+            dielf=1 + cable_dielectric_percent * 0.01,
+        )
+
+        s22 = s11
+        Ta = calibrated_s11_raw
+
+        if cable_length > 0.0:
+            Ta = s11 + (s12 * s12 * Ta) / (1 - s22 * Ta)
+        elif cable_length < 0.0:
+            Ta = (Ta - s11) / (s12 * s12 - s11 * s22 + s22 * Ta)
+
+        metadata = {"calkit": calkit}
+
+        return cls(raw_s11=Ta, freq=freq, metadata=metadata, **kwargs)
+
     def with_new_calkit(self, calkit: rc.Calkit):
         """Get a new Receiver with different calkit."""
         if "devices" not in self.metadata:
@@ -863,6 +926,49 @@ class LoadS11(S11Model):
 
         return cls.from_load_and_internal_switch(
             load_s11=load_s11s, internal_switch=internal_switch, **kwargs
+        )
+
+    @classmethod
+    def from_edges3(
+        cls,
+        obs: io3.CalibrationObservation,
+        load_name: str,
+        calkit: rc.Calkit = rc.AGILENT_ALAN,
+        f_low: tp.FreqType = 0 * un.MHz,
+        f_high: tp.FreqType = np.inf * un.MHz,
+        **kwargs,
+    ):
+        """Create a LoadS11 object from the EDGES-3 CalibrationObservation."""
+        # TODO: remember to use resistance_of_math=49.962
+        files = obs.s11_files[load_name]
+        standards = StandardsReadings(
+            open=VNAReading.from_s1p(files["open"], f_low=f_low, f_high=f_high),
+            short=VNAReading.from_s1p(files["short"], f_low=f_low, f_high=f_high),
+            match=VNAReading.from_s1p(files["match"], f_low=f_low, f_high=f_high),
+        )
+
+        load = VNAReading.from_s1p(files["input"], f_low=f_low, f_high=f_high)
+
+        freq = standards.freq
+
+        calibrated_s11_raw = rc.de_embed(
+            calkit.open.reflection_coefficient(freq.freq),
+            calkit.short.reflection_coefficient(freq.freq),
+            calkit.match.reflection_coefficient(freq.freq),
+            standards.open.s11,
+            standards.short.s11,
+            standards.match.s11,
+            load.s11,
+        )[0]
+
+        metadata = {"calkit": calkit}
+        return cls(
+            freq=freq,
+            raw_s11=calibrated_s11_raw,
+            metadata=metadata,
+            load_name=load_name,
+            internal_switch=None,
+            **kwargs,
         )
 
     def get_k_matrix(self, receiver: Receiver, freq: tp.FreqType | None = None):

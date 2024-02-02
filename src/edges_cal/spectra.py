@@ -7,8 +7,10 @@ import hickle
 import inspect
 import numpy as np
 from astropy import units as un
+from astropy.time import Time
 from datetime import datetime, timedelta
-from edges_io import io
+from edges_io import io, io3
+from edges_io import types as tp
 from edges_io import utils as iou
 from edges_io.logging import logger
 from functools import partial
@@ -18,9 +20,7 @@ from typing import Any, Sequence
 
 from . import __version__
 from . import receiver_calibration_func as rcf
-from . import tools
-from . import types as tp
-from . import xrfi
+from . import tools, xrfi
 from .cached_property import cached_property
 from .config import config
 from .tools import FrequencyRange
@@ -412,7 +412,7 @@ class LoadSpectrum:
     @classmethod
     def from_io(
         cls,
-        io_obs: io.CalibrationObservation,
+        io_obs: io.CalibrationObservation | io3.CalibrationObservation,
         load_name: str,
         f_low=40.0 * un.MHz,
         f_high=np.inf * un.MHz,
@@ -454,8 +454,17 @@ class LoadSpectrum:
         -------
         :class:`LoadSpectrum`.
         """
-        spec = getattr(io_obs.spectra, load_name)
-        res = getattr(io_obs.resistance, load_name)
+        if isinstance(io_obs, io.CalibrationObservation):
+            spec = getattr(io_obs.spectra, load_name)
+            res = getattr(io_obs.resistance, load_name)
+        else:
+            spec = io_obs.spectra[load_name]
+            res = io3.get_mean_temperature(
+                io_obs.temperature_table,
+                load=load_name,
+                start_time=spec["ancillary"]["time"][0],
+                end_time=spec["ancillary"]["time"][-1],
+            )
 
         freq = FrequencyRange.from_edges(
             f_low=f_low,
@@ -514,6 +523,121 @@ class LoadSpectrum:
             metadata={
                 "spectra_path": spec[0].path,
                 "resistance_path": res.path,
+                "freq_bin_size": freq_bin_size,
+                "ignore_times_percent": ignore_times_percent,
+                "rfi_threshold": rfi_threshold,
+                "rfi_kernel_width_freq": rfi_kernel_width_freq,
+                "temperature_range": temperature_range,
+                "hash": hsh,
+                "frequency_smoothing": frequency_smoothing,
+            },
+            **kwargs,
+        )
+
+        if f_range_keep is not None:
+            out = out.between_freqs(*f_range_keep)
+
+        if cache_dir is not None:
+            if not cache_dir.exists():
+                cache_dir.mkdir(parents=True)
+            hickle.dump(out, fname)
+
+        return out
+
+    @classmethod
+    def from_edges3(
+        cls,
+        io_obs: io3.CalibrationObservation,
+        load_name: str,
+        f_low=40.0 * un.MHz,
+        f_high=np.inf * un.MHz,
+        f_range_keep: tuple[tp.FreqType, tp.Freqtype] | None = None,
+        freq_bin_size=1,
+        ignore_times_percent: float = 5.0,
+        rfi_threshold: float = 6.0,
+        rfi_kernel_width_freq: int = 16,
+        temperature_range: float | tuple[float, float] | None = None,
+        frequency_smoothing: str = "bin",
+        temperature: float | None = None,
+        time_coordinate_swpos: int = 0,
+        **kwargs,
+    ):
+        """Instantiate the class from a given load name and directory.
+
+        Parameters
+        ----------
+        load_name : str
+            The load name (one of 'ambient', 'hot_load', 'open' or 'short').
+        direc : str or Path
+            The top-level calibration observation directory.
+        run_num : int
+            The run number to use for the spectra.
+        filetype : str
+            The filetype to look for (acq or h5).
+        freqeuncy_smoothing
+            How to average frequency bins together. Default is to merely bin them
+            directly. Other options are 'gauss' to do Gaussian filtering (this is the
+            same as Alan's C pipeline).
+        ignore_times_percent
+            The fraction of readings to ignore at the start of the observation. If
+            greater than 100, will be interpreted as being a number of seconds to
+            ignore.
+        kwargs :
+            All other arguments to :class:`LoadSpectrum`.
+
+        Returns
+        -------
+        :class:`LoadSpectrum`.
+        """
+        spec: io.HDF5RawSpectrum = io_obs.get_spectra(load_name).data
+        if temperature is None:
+            temperature = io3.get_mean_temperature(
+                io_obs.get_temperature_table(),
+                load=load_name,
+                start_time=Time(spec["time_ancillary"]["times"][0, 0], format="yday"),
+                end_time=Time(spec["time_ancillary"]["times"][-1, -1], format="yday"),
+            )
+
+        freq = FrequencyRange.from_edges(
+            f_low=f_low,
+            f_high=f_high,
+            bin_size=freq_bin_size,
+            alan_mode=frequency_smoothing == "gauss",
+        )
+
+        sig = inspect.signature(cls.from_edges3)
+        lc = locals()
+        defining_dict = {p: lc[p] for p in sig.parameters if p not in ["cls", "io_obs"]}
+        defining_dict["spec"] = spec
+        defining_dict["mean_temp"] = temperature
+
+        hsh = iou.stable_hash(
+            tuple(defining_dict.values()) + (__version__.split(".")[0],)
+        )
+
+        cache_dir = config["cal"]["cache-dir"]
+        if cache_dir is not None:
+            cache_dir = Path(cache_dir)
+            fname = cache_dir / f"{load_name}_{hsh}.h5"
+
+            if fname.exists():
+                logger.info(
+                    f"Reading in previously-created integrated {load_name} spectra..."
+                )
+                return hickle.load(fname)
+
+        q = spec["spectra"]["Q"][freq.mask]
+        print(q.shape)
+
+        out = cls(
+            freq=freq,
+            q=q.mean(axis=1),
+            variance=np.var(q, axis=1),
+            n_integrations=q.shape[0],
+            temp_ave=temperature,
+            metadata={
+                "spectra_path": io_obs.acq_files[load_name],
+                "s11_paths": io_obs.s11_files[load_name],
                 "freq_bin_size": freq_bin_size,
                 "ignore_times_percent": ignore_times_percent,
                 "rfi_threshold": rfi_threshold,

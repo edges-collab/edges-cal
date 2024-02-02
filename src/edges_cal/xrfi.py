@@ -9,12 +9,12 @@ import yaml
 from astropy.convolution import Box1DKernel, convolve_fft
 from cached_property import cached_property
 from dataclasses import dataclass, field
+from edges_io import types as tp
 from matplotlib import pyplot as plt
 from scipy import ndimage
 from typing import Any, Literal
 
 from . import modelling as mdl
-from . import types as tp
 from .modelling import Model, ModelFit
 
 logger = logging.getLogger(__name__)
