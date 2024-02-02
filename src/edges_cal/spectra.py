@@ -560,6 +560,7 @@ class LoadSpectrum:
         frequency_smoothing: str = "bin",
         temperature: float | None = None,
         time_coordinate_swpos: int = 0,
+        allow_closest_time: bool = False,
         **kwargs,
     ):
         """Instantiate the class from a given load name and directory.
@@ -582,6 +583,10 @@ class LoadSpectrum:
             The fraction of readings to ignore at the start of the observation. If
             greater than 100, will be interpreted as being a number of seconds to
             ignore.
+        allow_closest_time
+            If True, allow the closest time in the temperature table that corresponds
+            to the range of times in the spectra to be used if none are within the
+            range.
         kwargs :
             All other arguments to :class:`LoadSpectrum`.
 
@@ -591,12 +596,23 @@ class LoadSpectrum:
         """
         spec: io.HDF5RawSpectrum = io_obs.get_spectra(load_name).data
         if temperature is None:
+            start = Time(spec["time_ancillary"]["times"][0, 0], format="yday")
+            end = Time(spec["time_ancillary"]["times"][-1, -1], format="yday")
+            table = io_obs.get_temperature_table()
+
+            if (
+                not np.any((table["time"] >= start) & (table["time"] <= end))
+                and allow_closest_time
+            ):
+                start = table["time"][np.argmin(np.abs(table["time"] - start))]
+                end = table["time"][np.argmin(np.abs(table["time"] - end))]
+
             temperature = io3.get_mean_temperature(
-                io_obs.get_temperature_table(),
+                table,
                 load=load_name,
-                start_time=Time(spec["time_ancillary"]["times"][0, 0], format="yday"),
-                end_time=Time(spec["time_ancillary"]["times"][-1, -1], format="yday"),
-            )
+                start_time=start,
+                end_time=end,
+            ).to_value("K")
 
         freq = FrequencyRange.from_edges(
             f_low=f_low,

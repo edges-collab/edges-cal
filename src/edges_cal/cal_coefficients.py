@@ -823,6 +823,7 @@ class CalibrationObservation:
                 f_low=f_low,
                 f_high=f_high,
                 reflection_kwargs={
+                    "calkit": receiver_kwargs["calkit"],
                     **s11_kwargs.get("default", {}),
                     **s11_kwargs.get(name, {}),
                 },
@@ -1627,6 +1628,9 @@ class Calibrator:
 
     @internal_switch.validator
     def _isw_vld(self, att, val):
+        if val is None:
+            return
+
         if isinstance(val, s11.InternalSwitch):
             return
 
