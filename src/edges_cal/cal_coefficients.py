@@ -1608,6 +1608,10 @@ class Calibrator:
     _Tcos: Callable[[np.ndarray], np.ndarray] = attr.ib()
     _Tsin: Callable[[np.ndarray], np.ndarray] = attr.ib()
     _receiver_s11: Callable[[np.ndarray], np.ndarray] = attr.ib()
+
+    coefficient_freq_units: un.Unit = attr.ib(default="norm")
+    receiver_s11_freq_units: un.Unit = attr.ib(default="MHz")
+
     internal_switch = attr.ib()
     t_load: float = attr.ib(300)
     t_load_ns: float = attr.ib(350)
@@ -1616,11 +1620,19 @@ class Calibrator:
     def __attrs_post_init__(self):
         """Initialize properties of the class."""
         for key in ["C1", "C2", "Tunc", "Tcos", "Tsin"]:
-            setattr(self, key, partial(self._call_func, key=key, norm=True))
+            setattr(
+                self,
+                key,
+                partial(self._call_func, key=key, unit=self.coefficient_freq_units),
+            )
         for key in [
             "receiver_s11",
         ]:
-            setattr(self, key, partial(self._call_func, key=key, norm=False))
+            setattr(
+                self,
+                key,
+                partial(self._call_func, key=key, unit=self.receiver_s11_freq_units),
+            )
 
     def clone(self, **kwargs):
         """Clone the instance with new parameters."""
@@ -1640,19 +1652,15 @@ class Calibrator:
             ):
                 raise ValueError(f"internal_switch must provide {key}_model method")
 
-    def _call_func(self, freq: tp.FreqType | None = None, *, key=None, norm=False):
+    def _call_func(self, freq: tp.FreqType | None = None, *, key=None, unit="MHz"):
         if freq is None:
             freq = self.freq.freq
 
         if not hasattr(freq, "unit"):
             raise ValueError("freq must have units of frequency")
 
-        if norm:
-            freq = self.freq.normalize(freq)
-        else:
-            freq = freq.to_value("MHz")
-
-        return getattr(self, "_" + key)(freq)
+        freq = self.freq.normalize(freq) if unit == "norm" else freq.to_value(unit)
+        return getattr(self, f"_{key}")(freq)
 
     @classmethod
     def from_calobs_file(cls, path: tp.PathLike) -> Calibrator:
