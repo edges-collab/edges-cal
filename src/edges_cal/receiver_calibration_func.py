@@ -1,4 +1,5 @@
 """Functions for calibrating the receiver."""
+
 from __future__ import annotations
 
 import numpy as np

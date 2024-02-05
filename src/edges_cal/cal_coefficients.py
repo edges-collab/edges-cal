@@ -4,6 +4,7 @@ The main user-facing module of ``edges-cal``.
 This module contains wrappers around lower-level functions in other modules, providing
 a one-stop interface for everything related to calibration.
 """
+
 from __future__ import annotations
 
 import attr
@@ -62,9 +63,9 @@ class HotLoadCorrection:
     raw_s22: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
 
     model: mdl.Model = attr.ib(mdl.Polynomial(n_terms=21))
-    complex_model: type[mdl.ComplexRealImagModel] | type[
-        mdl.ComplexMagPhaseModel
-    ] = attr.ib(mdl.ComplexMagPhaseModel)
+    complex_model: type[mdl.ComplexRealImagModel] | type[mdl.ComplexMagPhaseModel] = (
+        attr.ib(mdl.ComplexMagPhaseModel)
+    )
     use_spline: bool = attr.ib(False)
     model_method: str = attr.ib("lstsq")
 
@@ -267,9 +268,9 @@ class Load:
 
     spectrum: LoadSpectrum = attr.ib()
     reflections: s11.LoadS11 = attr.ib()
-    _loss_model: Callable[
-        [np.ndarray], np.ndarray
-    ] | HotLoadCorrection | None = attr.ib(default=None)
+    _loss_model: Callable[[np.ndarray], np.ndarray] | HotLoadCorrection | None = (
+        attr.ib(default=None)
+    )
     ambient_temperature: float = attr.ib(default=298.0)
 
     @property
@@ -627,9 +628,9 @@ class CalibrationObservation:
         for src in sources:
             loads[src] = get_load(
                 src,
-                ambient_temperature=loads["ambient"].spectrum.temp_ave
-                if src == "hot_load"
-                else None,
+                ambient_temperature=(
+                    loads["ambient"].spectrum.temp_ave if src == "hot_load" else None
+                ),
             )
 
         return cls(

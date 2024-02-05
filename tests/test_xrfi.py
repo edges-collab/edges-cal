@@ -1,4 +1,5 @@
 """Tests of the xrfi module."""
+
 import pytest
 
 import itertools

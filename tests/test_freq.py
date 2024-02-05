@@ -1,4 +1,5 @@
 """Test frequency range classes."""
+
 import pytest
 
 import numpy as np
