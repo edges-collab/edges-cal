@@ -643,7 +643,6 @@ class LoadSpectrum:
                 return hickle.load(fname)
 
         q = spec["spectra"]["Q"][freq.mask]
-        print(q.shape)
 
         out = cls(
             freq=freq,
