@@ -1,11 +1,9 @@
 """Tests of creating EDGES-3 style calibration."""
 
 import pytest
-
 from astropy import units as un
-from edges_io import TEST_DATA_PATH, io3
-
 from edges_cal import CalibrationObservation
+from edges_io import TEST_DATA_PATH, io3
 
 
 @pytest.fixture(scope="module")
