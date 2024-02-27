@@ -1,8 +1,6 @@
-import pytest
-
 import numpy as np
+import pytest
 from astropy import units as u
-
 from edges_cal import tools
 
 
