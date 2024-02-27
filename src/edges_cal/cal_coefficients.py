@@ -6,24 +6,26 @@ a one-stop interface for everything related to calibration.
 """
 from __future__ import annotations
 
+import warnings
+from collections.abc import Sequence
+from functools import partial
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Callable
+
 import attr
 import h5py
 import hickle
 import numpy as np
-import warnings
 from astropy import units as un
 from astropy.convolution import Gaussian1DKernel, convolve
 from astropy.io.misc import yaml as ayaml
 from edges_io import io, io3
 from edges_io import types as tp
 from edges_io.logging import logger
-from functools import partial
 from hickleable import hickleable
 from matplotlib import pyplot as plt
-from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
-from types import SimpleNamespace
-from typing import Any, Callable, Sequence
 
 from . import modelling as mdl
 from . import receiver_calibration_func as rcf
@@ -142,45 +144,40 @@ class HotLoadCorrection:
                 Spline(self.freq.freq.to_value("MHz"), np.real(data)),
                 Spline(self.freq.freq.to_value("MHz"), np.imag(data)),
             )
-        else:
-            return (
-                Spline(self.freq.freq.to_value("MHz"), np.abs(data)),
-                Spline(self.freq.freq.to_value("MHz"), np.angle(data)),
-            )
+        return (
+            Spline(self.freq.freq.to_value("MHz"), np.abs(data)),
+            Spline(self.freq.freq.to_value("MHz"), np.angle(data)),
+        )
 
     def _ev_splines(self, splines):
         rl, im = splines
         if self.complex_model == mdl.ComplexRealImagModel:
             return lambda freq: rl(freq) + 1j * im(freq)
-        else:
-            return lambda freq: rl(freq) * np.exp(1j * im(freq))
+        return lambda freq: rl(freq) * np.exp(1j * im(freq))
 
     @cached_property
     def s11_model(self):
         """The reflection coefficient."""
         if not self.use_spline:
             return self._get_model(self.raw_s11)
-        else:
-            splines = self._get_splines(self.raw_s11)
-            return self._ev_splines(splines)
+        splines = self._get_splines(self.raw_s11)
+        return self._ev_splines(splines)
 
     @cached_property
     def s12s21_model(self):
         """The transmission coefficient."""
         if not self.use_spline:
             return self._get_model(self.raw_s12s21)
-        else:
-            splines = self._get_splines(self.raw_s12s21)
-            return self._ev_splines(splines)
+        splines = self._get_splines(self.raw_s12s21)
+        return self._ev_splines(splines)
 
     @cached_property
     def s22_model(self):
         """The reflection coefficient from the other side."""
         if not self.use_spline:
             return self._get_model(self.raw_s22)
-        else:
-            splines = self._get_splines(self.raw_s22)
-            return self._ev_splines(splines)
+        splines = self._get_splines(self.raw_s22)
+        return self._ev_splines(splines)
 
     def power_gain(self, freq: tp.FreqType, hot_load_s11: s11.LoadS11) -> np.ndarray:
         """
@@ -277,8 +274,7 @@ class Load:
         """The loss model as a callable function of frequency."""
         if isinstance(self._loss_model, HotLoadCorrection):
             return partial(self._loss_model.power_gain, hot_load_s11=self.reflections)
-        else:
-            return self._loss_model
+        return self._loss_model
 
     @property
     def load_name(self) -> str:
@@ -383,8 +379,7 @@ class Load:
                 loss_model=hlc,
                 ambient_temperature=ambient_temperature,
             )
-        else:
-            return cls(spectrum=spec, reflections=refl)
+        return cls(spectrum=spec, reflections=refl)
 
     @classmethod
     def from_edges3(
@@ -428,18 +423,6 @@ class Load:
         if not reflection_kwargs:
             reflection_kwargs = {}
         loss_kwargs = loss_kwargs or {}
-        # Fill up kwargs with keywords from this instance
-        # TODO: here we only use the calkit defined for the FIRST switching_state,
-        # instead of using each calkit for each switching_state. To fix this, we require
-        # having meta information inside the S11/ directory.
-
-        # if "calkit" not in reflection_kwargs["internal_switch_kwargs"]:
-        #     reflection_kwargs["internal_switch_kwargs"]["calkit"] = rc.get_calkit(
-        #         rc.AGILENT_85033E,
-        #         resistance_of_match=io_obj.definition["measurements"]["resistance_m"][
-        #             io_obj.s11.switching_state[0].run_num
-        #         ],
-        #     )
 
         # For the LoadSpectrum, we can specify both f_low/f_high and f_range_keep.
         # The first pair is what defines what gets read in and smoothed/averaged.
@@ -687,13 +670,13 @@ class CalibrationObservation:
                 reflection_kwargs={
                     **s11_kwargs.get("default", {}),
                     **s11_kwargs.get(name, {}),
-                    **{"internal_switch_kwargs": internal_switch_kwargs},
+                    "internal_switch_kwargs": internal_switch_kwargs,
                 },
                 spec_kwargs={
                     **spectrum_kwargs["default"],
                     **spectrum_kwargs.get(name, {}),
                 },
-                loss_kwargs={**hot_load_loss_kwargs, **{"path": semi_rigid_path}},
+                loss_kwargs={**hot_load_loss_kwargs, "path": semi_rigid_path},
                 ambient_temperature=ambient_temperature,
             )
 
@@ -851,7 +834,7 @@ class CalibrationObservation:
             **kwargs,
         )
 
-    def with_load_calkit(self, calkit, loads: Sequence[str] = None):
+    def with_load_calkit(self, calkit, loads: Sequence[str] | None = None):
         """Return a new observation with loads having given calkit."""
         if loads is None:
             loads = self.load_names
@@ -868,17 +851,17 @@ class CalibrationObservation:
     @safe_property
     def t_load(self) -> float:
         """Assumed temperature of the load."""
-        return self.loads[list(self.loads.keys())[0]].t_load
+        return self.loads[next(iter(self.loads.keys()))].t_load
 
     @safe_property
     def t_load_ns(self) -> float:
         """Assumed temperature of the load + noise source."""
-        return self.loads[list(self.loads.keys())[0]].t_load_ns
+        return self.loads[next(iter(self.loads.keys()))].t_load_ns
 
     @cached_property
     def freq(self) -> FrequencyRange:
         """The frequencies at which spectra were measured."""
-        return self.loads[list(self.loads.keys())[0]].freq
+        return self.loads[next(iter(self.loads.keys()))].freq
 
     @safe_property
     def internal_switch(self):
@@ -1029,7 +1012,7 @@ class CalibrationObservation:
         return scale, off, Tu, TC, TS
 
     @cached_property
-    def C1_poly(self):  # noqa: N802
+    def C1_poly(self):
         """`np.poly1d` object describing the Scaling calibration coefficient C1.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
@@ -1039,7 +1022,7 @@ class CalibrationObservation:
         return self._calibration_coefficients[0]
 
     @cached_property
-    def C2_poly(self):  # noqa: N802
+    def C2_poly(self):
         """`np.poly1d` object describing the offset calibration coefficient C2.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
@@ -1049,7 +1032,7 @@ class CalibrationObservation:
         return self._calibration_coefficients[1]
 
     @cached_property
-    def Tunc_poly(self):  # noqa: N802
+    def Tunc_poly(self):
         """`np.poly1d` object describing the uncorrelated noise-wave parameter, Tunc.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
@@ -1059,7 +1042,7 @@ class CalibrationObservation:
         return self._calibration_coefficients[2]
 
     @cached_property
-    def Tcos_poly(self):  # noqa: N802
+    def Tcos_poly(self):
         """`np.poly1d` object describing the cosine noise-wave parameter, Tcos.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
@@ -1069,7 +1052,7 @@ class CalibrationObservation:
         return self._calibration_coefficients[3]
 
     @cached_property
-    def Tsin_poly(self):  # noqa: N802
+    def Tsin_poly(self):
         """`np.poly1d` object describing the sine noise-wave parameter, Tsin.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
@@ -1078,7 +1061,7 @@ class CalibrationObservation:
         """
         return self._calibration_coefficients[4]
 
-    def C1(self, f: tp.FreqType | None = None):  # noqa: N802
+    def C1(self, f: tp.FreqType | None = None):
         """
         Scaling calibration parameter.
 
@@ -1093,7 +1076,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.C1_poly(fnorm)
 
-    def C2(self, f: tp.FreqType | None = None):  # noqa: N802
+    def C2(self, f: tp.FreqType | None = None):
         """
         Offset calibration parameter.
 
@@ -1108,7 +1091,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.C2_poly(fnorm)
 
-    def Tunc(self, f: tp.FreqType | None = None):  # noqa: N802
+    def Tunc(self, f: tp.FreqType | None = None):
         """
         Uncorrelated noise-wave parameter.
 
@@ -1123,7 +1106,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.Tunc_poly(fnorm)
 
-    def Tcos(self, f: tp.FreqType | None = None):  # noqa: N802
+    def Tcos(self, f: tp.FreqType | None = None):
         """
         Cosine noise-wave parameter.
 
@@ -1138,7 +1121,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.Tcos_poly(fnorm)
 
-    def Tsin(self, f: tp.FreqType | None = None):  # noqa: N802
+    def Tsin(self, f: tp.FreqType | None = None):
         """
         Sine noise-wave parameter.
 
@@ -1158,8 +1141,7 @@ class CalibrationObservation:
         """The corrected S11 of the LNA evaluated at the data frequencies."""
         if hasattr(self, "_injected_lna_s11") and self._injected_lna_s11 is not None:
             return self._injected_lna_s11
-        else:
-            return self.receiver.s11_model(self.freq.freq.to_value("MHz"))
+        return self.receiver.s11_model(self.freq.freq.to_value("MHz"))
 
     def get_linear_coefficients(self, load: Load | str):
         """
@@ -1215,10 +1197,10 @@ class CalibrationObservation:
         if isinstance(load, str):
             try:
                 load = self.loads[load]
-            except (AttributeError, KeyError):
+            except (AttributeError, KeyError) as e:
                 raise AttributeError(
                     f"load must be a Load object or a string (one of {self.load_names})"
-                )
+                ) from e
         else:
             assert isinstance(
                 load, Load
@@ -1249,11 +1231,15 @@ class CalibrationObservation:
         if freq.min() < self.freq.freq.min():
             warnings.warn(
                 "The minimum frequency is outside the calibrated range "
-                f"({self.freq.freq.min()} - {self.freq.freq.max()} MHz)"
+                f"({self.freq.freq.min()} - {self.freq.freq.max()} MHz)",
+                stacklevel=2,
             )
 
         if freq.max() > self.freq.freq.max():
-            warnings.warn("The maximum frequency is outside the calibrated range ")
+            warnings.warn(
+                "The maximum frequency is outside the calibrated range",
+                stacklevel=2,
+            )
 
         a, b = self.get_linear_coefficients(load)
         return (temp - b) / a
@@ -1524,14 +1510,14 @@ class CalibrationObservation:
     def inject(
         self,
         lna_s11: np.ndarray = None,
-        source_s11s: dict[str, np.ndarray] = None,
+        source_s11s: dict[str, np.ndarray] | None = None,
         c1: np.ndarray = None,
         c2: np.ndarray = None,
         t_unc: np.ndarray = None,
         t_cos: np.ndarray = None,
         t_sin: np.ndarray = None,
-        averaged_spectra: dict[str, np.ndarray] = None,
-        thermistor_temp_ave: dict[str, np.ndarray] = None,
+        averaged_spectra: dict[str, np.ndarray] | None = None,
+        thermistor_temp_ave: dict[str, np.ndarray] | None = None,
     ) -> CalibrationObservation:
         """Make a new :class:`CalibrationObservation` based on this, with injections.
 
@@ -1899,9 +1885,9 @@ def perform_term_sweep(
             break
 
     logger.info(
-        f"Best parameters found for Nc={cterms[i-1]}, "
-        f"Nw={wterms[winner[i-1]]}, "
-        f"with RMS = {rms[i-1, winner[i-1]]}."
+        f"Best parameters found for Nc={cterms[i - 1]}, "
+        f"Nw={wterms[winner[i - 1]]}, "
+        f"with RMS = {rms[i - 1, winner[i - 1]]}."
     )
 
     best = np.unravel_index(np.argmin(rms), rms.shape)

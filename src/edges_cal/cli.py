@@ -1,11 +1,14 @@
 """CLI functions for edges-cal."""
-import click
 import json
+from datetime import datetime
+from datetime.timezone import utc
+from importlib.util import find_spec
+from pathlib import Path
+
+import click
 import papermill as pm
 import yaml
-from datetime import datetime
 from nbconvert import PDFExporter
-from pathlib import Path
 from rich.console import Console
 from traitlets.config import Config
 
@@ -220,21 +223,17 @@ def report(
 
     path = Path(path)
 
-    if out is None:
-        out = path / "outputs"
-    else:
-        out = Path(out)
+    out = path / "outputs" if out is None else Path(out)
 
     if not out.exists():
         out.mkdir()
 
     # Describe the filename...
-    fname = Path(f"calibration_{datetime.now().strftime('%Y-%m-%d-%H.%M.%S')}.ipynb")
+    fname = Path(
+        f"calibration_{datetime.now(tz=utc).strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
+    )
 
-    if global_config:
-        global_config = json.loads(global_config)
-    else:
-        global_config = {}
+    global_config = json.loads(global_config) if global_config else {}
 
     settings = {
         "observation": str(path),
@@ -255,7 +254,7 @@ def report(
         log_output=True,
     )
 
-    console.print(f"Saved interactive notebook to '{out/fname}'")
+    console.print(f"Saved interactive notebook to '{out / fname}'")
 
     if pdf:  # pragma: no cover
         make_pdf(out / fname)
@@ -325,10 +324,7 @@ def compare(
     path = Path(path)
     cmppath = Path(cmppath)
 
-    if out is None:
-        out = path / "outputs"
-    else:
-        out = Path(out)
+    out = path / "outputs" if out is None else Path(out)
 
     if not out.exists():
         out.mkdir()
@@ -336,13 +332,10 @@ def compare(
     # Describe the filename...
     fname = Path(
         f"calibration-compare-{cmppath.name}_"
-        f"{datetime.now().strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
+        f"{datetime.now(tz=utc).strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
     )
 
-    if global_config:
-        global_config = json.loads(global_config)
-    else:
-        global_config = {}
+    global_config = json.loads(global_config) if global_config else {}
 
     console.print("Settings for Primary:")
     with open(cal_settings) as fl:
@@ -365,7 +358,7 @@ def compare(
         },
         kernel_name="edges",
     )
-    console.print(f"Saved interactive notebook to '{out/fname}'")
+    console.print(f"Saved interactive notebook to '{out / fname}'")
 
     # Now output the notebook to pdf
     if pdf:  # pragma: no cover
@@ -383,7 +376,7 @@ def make_pdf(ipy_fname) -> Path:
     c.TemplateExporter.exclude_input = True
 
     exporter = PDFExporter(config=c)
-    body, resources = exporter.from_filename(ipy_fname)
+    body, _resources = exporter.from_filename(ipy_fname)
     with open(ipy_fname.with_suffix(".pdf"), "wb") as fl:
         fl.write(body)
 
@@ -395,11 +388,11 @@ def make_pdf(ipy_fname) -> Path:
 def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     """Upload as memo to loco.lab.asu.edu."""
     try:
-        import upload_memo  # noqa
-    except ImportError:
+        find_spec("upload_memo")
+    except ImportError as e:
         raise ImportError(
             "You need to manually install upload-memo to use this option."
-        )
+        ) from e
 
     opts = ["memo", "upload", "-f", str(fname)]
     if title:

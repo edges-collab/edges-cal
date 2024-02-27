@@ -1,0 +1,186 @@
+[build-system]
+requires = [
+    "setuptools>=60",
+    "setuptools-scm>=8.0"
+]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+
+
+[project]
+name = "edges-cal"
+description = "Calibration routines for EDGES data"
+readme = "README.rst"
+authors = [
+    {name="Steven Murray", email="steven.murray@sns.it"},
+    {name="Nivedita Mahesh", email="nmahesh4@asu.edu"},
+]
+license = {text="MIT"}
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Operating System :: Unix",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "astropy>=5.0",
+    "edges-io>=4.0",
+    "toml",
+    "pyyaml",
+    "h5py",
+    "click",
+    "statsmodels",
+    "rich",
+    "hickleable>=0.2.4",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/edges-collab/read_caq"
+Issues = "https://github.com/edges-collab/read_acq/issues"
+Changelog = "https://github.com/edges-collab/read_acq/releases"
+
+[project.optional-dependencies]
+docs = [
+    "ipython",
+    "nbsphinx",
+    "numpydoc",
+    "sphinx>=4.0",
+    "furo",
+    "myst-parser"
+]
+report = [
+    "papermill",
+    "jupyter",
+    "beautifultable",
+]
+
+dev = [
+    "edges-cal[docs,report]",
+    "pytest",
+    "pytest-cov",
+    "pytest-cases",
+    "pre-commit",
+]
+
+[project.scripts]
+edges-cal = "edges_cal.cli:main"
+
+[tool.pytest.ini_options]
+# Options for py.test:
+# Specify command line options as you would do when invoking py.test directly.
+# e.g. --cov-report html (or xml) for html/xml output or --junitxml junit.xml
+# in order to write a coverage file that can be read by Jenkins.
+addopts = "--verbose --durations=25"
+norecursedirs = [
+    "dist",
+    "build",
+]
+testpaths = "tests"
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+extend-select = [
+  "UP",   # pyupgrade
+  "E",    # pycodestyle
+  "W",    # pycodestyle warning
+  "F",    # pyflakes
+  "C90",  # mccabe complexity
+  "I",    # isort
+  "N",    # pep8-naming
+  "D",    # docstyle
+  # "ANN"   # type annotations
+  "B",    # bugbear
+  "A",    # builtins
+  "C4",   # comprehensions
+  "DTZ",  # datetime
+  "FA",   # future annotations
+  "PIE",  # flake8-pie
+  "T",    # print statements
+  "PT",   # pytest-style
+  "Q",    # quotes
+  "SIM",  # simplify
+  "PTH",  # use Pathlib
+  "ERA",  # kill commented code
+  "NPY",  # numpy-specific rules
+  "PERF", # performance
+  # "FURB", # refurb
+  "RUF",  # ruff-specific rules
+  "RET",  # return statements
+  "RSE",  # exception raises
+  "TRY201", # verbose raise
+]
+
+ignore = [
+    "DTZ007",   # use %z in strptime
+    "N806",  # Variable name should be lower case. We have some single-letter variables that make more sense to be caps.
+    "A003",  # Class attribute shadows a python builtin -- not much chance of that causing a problem
+    "D401",  # First line should be in imperative mood -- cached_properties don't fit this bill.
+    "D101",  # Missing docstring in public class -- my docstrings are in the __init__ which seems to fail this ?
+    "N815",
+    "N807",  # Allow method names to start and end with __
+    "B008",  # allow setting defaults that call functions
+    "RUF012", # mutable class attributes annotation
+    # The rest should be un-commented when possible...
+    "PTH123",
+    "PT011",
+    "NPY002",
+    #"E203",
+    #"E266",
+    #"E501",
+    #"F403",
+    #"F401",
+    #"E231",
+    # "D1",  # missing docstrings. TODO: add this back in.
+    # "PERF203",  # no try/except in loops
+
+]
+ignore-init-module-imports = true
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = [
+    "D",  # ignore missing docstring in tests
+    "DTZ",   # ignore datetime in tests
+    "T",     # print statements
+]
+"docs/conf.py" = [
+    "A",  # conf.py can shadow builtins
+    "ERA",
+    "DTZ",
+]
+"src/edges_cal/spectra.py" = [
+    "N802",
+]
+"src/edges_cal/cal_coefficients.py" = [
+    "N802",
+]
+"src/edges_cal/reflection_coefficient.py" = [
+    "A002",
+]
+"src/*/__init__.py" = [
+    "F401", "E402",
+]
+
+
+[tool.ruff.lint.pydocstyle]
+convention = 'numpy'
+property-decorators = [
+    "property",
+    "functools.cached_property",
+    "pytest.fixture"
+]
+[tool.ruff.lint.mccabe]
+max-complexity = 21

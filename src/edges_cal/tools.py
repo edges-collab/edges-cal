@@ -1,17 +1,19 @@
 """Tools to use in other modules."""
 from __future__ import annotations
 
+import warnings
+from collections.abc import Sequence
+from itertools import product
+from pathlib import Path
+from typing import Any, Callable
+
 import attr
 import numpy as np
-import warnings
 from astropy import units
 from astropy import units as u
 from edges_io import types as tp
 from hickleable import hickleable
-from itertools import product
-from pathlib import Path
 from scipy.ndimage import convolve1d
-from typing import Any, Callable, Sequence
 
 from . import DATA_PATH
 from .cached_property import cached_property
@@ -21,8 +23,7 @@ def get_data_path(pth: str | Path) -> Path:
     """Impute the global data path to a given input in place of a colon."""
     if isinstance(pth, str):
         return DATA_PATH / pth[1:] if pth.startswith(":") else Path(pth)
-    else:
-        return pth
+    return pth
 
 
 def is_unit(unit: str) -> bool:
@@ -75,7 +76,8 @@ def unit_convert_or_apply(
     if warn and not isinstance(x, units.Quantity):
         warnings.warn(
             f"Value passed without units, assuming '{unit}'. "
-            "Consider specifying units for future compatibility."
+            "Consider specifying units for future compatibility.",
+            stacklevel=2,
         )
 
     return units.Quantity(x, unit, copy=not in_place)
@@ -201,7 +203,8 @@ class FrequencyRange:
         """Resolution of the frequencies."""
         if not np.allclose(np.diff(self.freq, 2), 0):
             warnings.warn(
-                "Not all frequency intervals are even, so using df is ill-advised!"
+                "Not all frequency intervals are even, so using df is ill-advised!",
+                stacklevel=2,
             )
         return self.freq[1] - self.freq[0]
 
@@ -211,12 +214,12 @@ class FrequencyRange:
         return self._f
 
     @cached_property
-    def min(self):  # noqa
+    def min(self):
         """Minimum frequency in the array."""
         return self.freq.min()
 
     @cached_property
-    def max(self):  # noqa
+    def max(self):
         """Maximum frequency in the array."""
         return self.freq.max()
 

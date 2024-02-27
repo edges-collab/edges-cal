@@ -1,0 +1,7 @@
+Code,Name,Fixable,Preview,Linter
+COM812,missing-trailing-comma,Always,False,flake8-commas
+PLC0414,useless-import-alias,Always,False,Pylint
+RET501,unnecessary-return-none,Always,False,flake8-return
+RET504,unnecessary-assign,Always,False,flake8-return
+RSE102,unnecessary-paren-on-raise-exception,Always,False,flake8-raise
+TRY201,verbose-raise,Always,False,tryceratops

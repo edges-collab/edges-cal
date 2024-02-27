@@ -11,9 +11,10 @@ with internal standards.
 """
 from __future__ import annotations
 
+import warnings
+
 import attr
 import numpy as np
-import warnings
 from astropy import units
 from astropy.constants import c as speed_of_light
 from edges_io import types as tp
@@ -375,10 +376,9 @@ class CalkitStandard:
         """The name of the standard. Inferred from the resistance."""
         if np.isinf(self.resistance):
             return "open"
-        elif self.resistance == 0:
+        if self.resistance == 0:
             return "short"
-        else:
-            return "match"
+        return "match"
 
     @classmethod
     def _verify_freq(cls, freq: np.ndarray | units.Quantity):
@@ -393,8 +393,7 @@ class CalkitStandard:
         """The intrinsic reflection coefficient of the idealized standard."""
         if np.isinf(self.resistance):
             return 1.0  # np.inf / np.inf
-        else:
-            return impedance2gamma(self.resistance, 50.0 * units.Ohm)
+        return impedance2gamma(self.resistance, 50.0 * units.Ohm)
 
     def termination_impedance(self, freq: tp.FreqType) -> tp.OhmType:
         """The impedance of the termination of the standard.
@@ -407,10 +406,9 @@ class CalkitStandard:
 
         if self.name == "open":
             return (-1j / (2 * np.pi * freq * self.capacitance_model(freq))) * units.ohm
-        elif self.name == "short":
+        if self.name == "short":
             return 1j * 2 * np.pi * freq * self.inductance_model(freq) * units.ohm
-        else:
-            return self.resistance
+        return self.resistance
 
     def termination_gamma(self, freq: tp.FreqType) -> tp.DimlessType:
         """Reflection coefficient of the termination.
@@ -632,6 +630,7 @@ def agilent_85033E(  # noqa: N802
     warnings.warn(
         "This function is deprecated. Use the methods of your Calkit object directly!",
         category=DeprecationWarning,
+        stacklevel=2,
     )
     calkit = get_calkit(
         AGILENT_85033E,

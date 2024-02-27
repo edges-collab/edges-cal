@@ -1,9 +1,10 @@
 """Functions for calibrating the receiver."""
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import scipy as sp
-from typing import Sequence
 
 
 def temperature_thermistor(
@@ -34,7 +35,7 @@ def temperature_thermistor(
     # Steinhart-Hart coefficients
     _coeffs = {"oven_industries_TR136_170": [1.03514e-3, 2.33825e-4, 7.92467e-8]}
 
-    if type(coeffs) is str:
+    if isinstance(coeffs, str):
         coeffs = _coeffs[coeffs]
 
     assert len(coeffs) == 3
@@ -49,8 +50,7 @@ def temperature_thermistor(
     # Kelvin or Celsius
     if kelvin:
         return temp
-    else:
-        return temp - 273.15
+    return temp - 273.15
 
 
 def noise_wave_param_fit(
@@ -247,8 +247,7 @@ def power_ratio(
 
     if return_terms:
         return terms
-    else:
-        return sum(terms[:5]) / terms[5]
+    return sum(terms[:5]) / terms[5]
 
 
 def get_K(gamma_rec, gamma_ant, f_ratio=None, alpha=None, gain=None):  # noqa: N802

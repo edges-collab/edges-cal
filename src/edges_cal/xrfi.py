@@ -1,18 +1,19 @@
 """Functions for excising RFI."""
 from __future__ import annotations
 
-import h5py
 import logging
-import numpy as np
 import warnings
+from dataclasses import dataclass, field
+from functools import cached_property
+from typing import Any, Literal
+
+import h5py
+import numpy as np
 import yaml
 from astropy.convolution import Box1DKernel, convolve_fft
-from cached_property import cached_property
-from dataclasses import dataclass, field
 from edges_io import types as tp
 from matplotlib import pyplot as plt
 from scipy import ndimage
-from typing import Any, Literal
 
 from . import modelling as mdl
 from .modelling import Model, ModelFit
@@ -174,7 +175,8 @@ def flagged_filter(
             isinstance(size, tuple) and any(s > d for s, d in zip(size, data.shape))
         ):
             warnings.warn(
-                "Setting default mode to reflect because a large size was set."
+                "Setting default mode to reflect because a large size was set.",
+                stacklevel=2,
             )
             mode = "reflect"
         else:
@@ -458,7 +460,10 @@ def xrfi_medfilt(
         nflags_list.append(np.sum(new_flags))
 
     if 1 < max_iter == ii and np.sum(new_flags) > nflags:
-        warnings.warn("Median filter reached max_iter and is still finding new RFI.")
+        warnings.warn(
+            "Median filter reached max_iter and is still finding new RFI.",
+            stacklevel=2,
+        )
 
     return (
         new_flags,
@@ -775,7 +780,8 @@ def _flag_a_window(
     if counter == max_iter and max_iter > 1:
         warnings.warn(
             "Max iterations reached without finding all xRFI. Consider increasing "
-            "max_iter."
+            "max_iter.",
+            stacklevel=2,
         )
 
     return new_flags, r_std, fit.model_parameters, counter
@@ -877,7 +883,8 @@ def model_filter(
     if decrement_threshold > 0 and min_threshold > threshold:
         warnings.warn(
             f"You've set a threshold smaller than the min_threshold of {min_threshold}."
-            f"Will use threshold={min_threshold}."
+            f"Will use threshold={min_threshold}.",
+            stacklevel=2,
         )
         threshold = min_threshold
 
@@ -1034,7 +1041,7 @@ def model_filter(
             new_flags |= _apply_watershed(new_flags, watershed, zscore / threshold)
 
         n_flags_changed_all = [
-            np.sum(flags_f ^ new_flags) for flags_f in flag_list + [flags]
+            np.sum(flags_f ^ new_flags) for flags_f in [*flag_list, flags]
         ]
         n_flags_changed = n_flags_changed_all[-1]
 
@@ -1061,7 +1068,8 @@ def model_filter(
 
     if counter == max_iter and max_iter > 1 and n_flags_changed > 0:
         warnings.warn(
-            f"max iterations ({max_iter}) reached, not all RFI might have been caught."
+            f"max iterations ({max_iter}) reached, not all RFI might have been caught.",
+            stacklevel=2,
         )
         if flag_if_broken:
             flags[:] = True
@@ -1069,7 +1077,8 @@ def model_filter(
     elif np.sum(~flags) <= model.n_terms * 2:
         warnings.warn(
             "Termination of iterative loop due to too many flags. Reduce n_signal or "
-            "check data."
+            "check data.",
+            stacklevel=2,
         )
         if flag_if_broken:
             flags[:] = True
@@ -1137,7 +1146,7 @@ class ModelFilterInfo:
                         raise TypeError(
                             f"Key {k} with data {np.asarray(getattr(self, k))} "
                             f"failed with msg: {e}"
-                        )
+                        ) from e
 
     @classmethod
     def from_file(cls, fname: tp.PathLike, group: str = "/"):
@@ -1157,7 +1166,7 @@ class ModelFilterInfo:
                 for i in range(info["n_iters"])
             ]
 
-            for k in grp.keys():
+            for k in grp:
                 info[k] = grp[k][...]
 
         return cls(**info)
@@ -1177,7 +1186,7 @@ class ModelFilterInfoContainer:
     def append(self, model: ModelFilterInfo) -> ModelFilterInfoContainer:
         """Create a new object by appending a set of info to the existing."""
         assert isinstance(model, ModelFilterInfo)
-        models = self.models + [model]
+        models = [*self.models, model]
         return ModelFilterInfoContainer(models)
 
     @cached_property
@@ -1473,21 +1482,16 @@ def xrfi_model_nonlinear_window(
             # give it a chance to get un-flagged. This is useful when
             # trying to reproduce Alan's results, because the model fit
             # on the first iteration is much harder to get the same as Alan.
-            if i in potential_reflags:
-                if nsig <= 1:
-                    weights[i] = 1  # unflag
+            if i in potential_reflags and nsig <= 1:
+                weights[i] = 1  # unflag
 
-                    if watershed:
-                        for mult, nbins in watershed.items():
-                            if (
-                                mult < reflag_thresh
-                                and i + nbins < n
-                                and i - nbins >= 0
-                            ):
-                                weights[i - nbins : i + nbins + 1] = orig_weights[
-                                    i - nbins : i + nbins + 1
-                                ]
-                    potential_reflags.remove(i)
+                if watershed:
+                    for mult, nbins in watershed.items():
+                        if mult < reflag_thresh and i + nbins < n and i - nbins >= 0:
+                            weights[i - nbins : i + nbins + 1] = orig_weights[
+                                i - nbins : i + nbins + 1
+                            ]
+                potential_reflags.remove(i)
 
             if nsig > 1:
                 weights[i] = 0
@@ -1624,7 +1628,7 @@ def visualise_model_info(info: ModelFilterInfo | ModelFilterInfoContainer, n: in
         The number of iterations to plot. Default is to plot them all. Negative numbers
         will plot the last n, and positive will plot the first n.
     """
-    fig, ax = plt.subplots(2, 3, figsize=(10, 6))
+    _fig, ax = plt.subplots(2, 3, figsize=(10, 6))
 
     ax[0, 0].plot(info.data, label="Data", color="k")
 
@@ -1642,9 +1646,7 @@ def visualise_model_info(info: ModelFilterInfo | ModelFilterInfoContainer, n: in
             info.flags,
         )
     ):
-        if n < 0 and i < info.n_iters + n:
-            continue
-        elif n > 0 and i >= n:
+        if (n < 0 and i < info.n_iters + n) or (n > 0 and i >= n):
             continue
 
         if np.all(flags):

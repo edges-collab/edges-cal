@@ -1,26 +1,27 @@
 """Module dealing with calibration spectra and thermistor measurements."""
 from __future__ import annotations
 
+import inspect
+from collections.abc import Sequence
+from datetime import datetime, timedelta
+from functools import partial
+from pathlib import Path
+from typing import Any
+
 import attr
 import h5py
 import hickle
-import inspect
 import numpy as np
 from astropy import units as un
 from astropy.time import Time
-from datetime import datetime, timedelta
 from edges_io import io, io3
 from edges_io import types as tp
 from edges_io import utils as iou
 from edges_io.logging import logger
-from functools import partial
 from hickleable import hickleable
-from pathlib import Path
-from typing import Any, Sequence
 
-from . import __version__
+from . import __version__, tools, xrfi
 from . import receiver_calibration_func as rcf
-from . import tools, xrfi
 from .cached_property import cached_property
 from .config import config
 from .tools import FrequencyRange
@@ -123,12 +124,15 @@ class ThermistorReadings:
         """Number of time integrations to ignore from the start of the observation."""
         if self.ignore_times_percent <= 100.0:
             return int(len(self._data) * self.ignore_times_percent / 100)
-        else:
-            ts = self.get_timestamps()
-            for i, t in enumerate(ts):
-                if (t - ts[0]).seconds > self.ignore_times_percent:
-                    break
-            return i
+        ts = self.get_timestamps()
+        return next(
+            (
+                i
+                for i, t in enumerate(ts)
+                if (t - ts[0]).seconds > self.ignore_times_percent
+            ),
+            len(ts),
+        )
 
     @property
     def data(self):
@@ -235,9 +239,13 @@ def get_ave_and_var_spec(
 
         for i, t in enumerate(spec_timestamps):
             if (t - t0).seconds > ignore_times_percent:
+                ignore_times_percent = 100 * i / len(spec_timestamps)
+                ignore_ninteg = i
                 break
-        ignore_times_percent = 100 * i / len(spec_timestamps)
-        ignore_ninteg = i
+        else:
+            raise ValueError(
+                "You would be ignoring all times! Check your ignore_times_percent value"
+            )
     else:
         ignore_ninteg = int(len(spec_timestamps) * ignore_times_percent / 100.0)
 
@@ -380,11 +388,9 @@ class LoadSpectrum:
         """Metadata associated with the object."""
         return {
             **self._metadata,
-            **{
-                "n_integrations": self.n_integrations,
-                "f_low": self.freq.min,
-                "f_high": self.freq.max,
-            },
+            "n_integrations": self.n_integrations,
+            "f_low": self.freq.min,
+            "f_high": self.freq.max,
         }
 
     @classmethod
@@ -480,7 +486,7 @@ class LoadSpectrum:
         defining_dict["res"] = res
 
         hsh = iou.stable_hash(
-            tuple(defining_dict.values()) + (__version__.split(".")[0],)
+            (*tuple(defining_dict.values()), __version__.split(".")[0])
         )
 
         cache_dir = config["cal"]["cache-dir"]
@@ -628,7 +634,7 @@ class LoadSpectrum:
         defining_dict["mean_temp"] = temperature
 
         hsh = iou.stable_hash(
-            tuple(defining_dict.values()) + (__version__.split(".")[0],)
+            (*tuple(defining_dict.values()), __version__.split(".")[0])
         )
 
         cache_dir = config["cal"]["cache-dir"]

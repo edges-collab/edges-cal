@@ -1,14 +1,12 @@
-import pytest
-
 import numpy as np
+import pytest
 from astropy import units as u
-from edges_io import io
-
 from edges_cal import modelling as mdl
 from edges_cal import reflection_coefficient as rc
 from edges_cal import s11
 from edges_cal.cal_coefficients import HotLoadCorrection
 from edges_cal.tools import FrequencyRange
+from edges_io import io
 
 
 def test_gamma_shift_zero():
@@ -94,7 +92,6 @@ def test_calkit_units():
 
 def test_calkit_quantities_match_trivial():
     """A test that for a simple calkit definition, the outputs are correct."""
-
     std = rc.CalkitStandard(
         resistance=50.0 * u.Ohm,
         offset_impedance=50 * u.Ohm,
@@ -114,7 +111,6 @@ def test_calkit_quantities_match_trivial():
 
 def test_calkit_quantities_match_with_delay():
     """A test that for a simple calkit definition, the outputs are correct."""
-
     std = rc.CalkitStandard(
         resistance=50.0 * u.Ohm,
         offset_impedance=50 * u.Ohm,
@@ -134,7 +130,6 @@ def test_calkit_quantities_match_with_delay():
 
 def test_calkit_quantities_match_with_loss():
     """A test that for a simple calkit definition, the outputs are correct."""
-
     std = rc.CalkitStandard(
         resistance=50.0 * u.Ohm,
         offset_impedance=50 * u.Ohm,
@@ -154,7 +149,6 @@ def test_calkit_quantities_match_with_loss():
 
 def test_calkit_quantities_open_trivial():
     """A test that for a simple calkit definition, the outputs are correct."""
-
     std = rc.CalkitStandard(
         resistance=np.inf * u.Ohm,
         offset_impedance=50 * u.Ohm,

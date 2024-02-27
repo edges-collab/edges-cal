@@ -14,18 +14,20 @@ calibrated and smoothed S11, according to some smooth model.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+from functools import cached_property
+from pathlib import Path
+from typing import Any, Callable
+
 import attr
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy import units as un
 from astropy.constants import c as speed_of_light
-from cached_property import cached_property
 from edges_io import io, io3
 from edges_io import types as tp
 from hickleable import hickleable
-from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
-from typing import Any, Callable, Sequence
 
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
@@ -50,17 +52,13 @@ def _s1p_converter(s1p: tp.PathLike | io.S1P, check: bool = False) -> io.S1P:
     except TypeError as e:
         if isinstance(s1p, io.S1P):
             return s1p
-        else:
-            raise TypeError(
-                "s1p must be a path to an s1p file, or an io.S1P object"
-            ) from e
+        raise TypeError("s1p must be a path to an s1p file, or an io.S1P object") from e
 
 
 def _tuplify(x):
     if not hasattr(x, "__len__"):
         return (int(x), int(x), int(x))
-    else:
-        return tuple(int(xx) for xx in x)
+    return tuple(int(xx) for xx in x)
 
 
 @attr.s(frozen=True)
@@ -232,8 +230,7 @@ class S11Model:
         """The raw S11 measurements at different frequencies."""
         if len(self._raw_s11) == self.freq.n:
             return self._raw_s11
-        else:
-            return self._raw_s11[self.freq.mask]
+        return self._raw_s11[self.freq.mask]
 
     @model_type.default
     def _mdl_type_default(self):
@@ -324,11 +321,10 @@ class S11Model:
                 Spline(self.freq.freq.to_value("MHz"), np.real(self.raw_s11)),
                 Spline(self.freq.freq.to_value("MHz"), np.imag(self.raw_s11)),
             )
-        else:
-            return (
-                Spline(self.freq.freq.to_value("MHz"), np.abs(self.raw_s11)),
-                Spline(self.freq.freq.to_value("MHz"), np.angle(self.raw_s11)),
-            )
+        return (
+            Spline(self.freq.freq.to_value("MHz"), np.abs(self.raw_s11)),
+            Spline(self.freq.freq.to_value("MHz"), np.angle(self.raw_s11)),
+        )
 
     def s11_model(self, freq: np.ndarray | tp.FreqType) -> np.ndarray:
         """Compute the S11 at a specific set of frequencies."""
@@ -339,11 +335,9 @@ class S11Model:
             return self._s11_model(freq) * np.exp(
                 -1j * self.model_delay.to_value("microsecond") * freq
             )
-        else:
-            if self.complex_model_type == ComplexRealImagModel:
-                return self._splines[0](freq) + 1j * self._splines[1](freq)
-            else:
-                return self._splines[0](freq) * np.exp(1j * self._splines[1](freq))
+        if self.complex_model_type == ComplexRealImagModel:
+            return self._splines[0](freq) + 1j * self._splines[1](freq)
+        return self._splines[0](freq) * np.exp(1j * self._splines[1](freq))
 
     def plot_residuals(
         self,
@@ -535,7 +529,7 @@ class Receiver(S11Model):
             receiver_reading.s11,
         )[0]
 
-        T, s11, s12 = rc.path_length_correction_edges3(
+        _T, s11, s12 = rc.path_length_correction_edges3(
             freq=freq.freq,
             delay=cable_length / speed_of_light,
             gamma_in=0,
@@ -625,23 +619,21 @@ class InternalSwitch:
 
         # TODO: not clear why we use the ideal values of 1,-1,0 instead of the physical
         # expected values of calkit.match.intrinsic_gamma etc.
-        corrections = []
-        for isw in internal_switch:
-            corrections.append(
-                {
-                    kind: rc.de_embed(
-                        1,
-                        -1,
-                        0,
-                        isw.open.s11,
-                        isw.short.s11,
-                        isw.match.s11,
-                        getattr(isw, "external%s" % kind).s11,
-                    )[0]
-                    for kind in ("open", "short", "match")
-                }
-            )
-
+        corrections = [
+            {
+                kind: rc.de_embed(
+                    1,
+                    -1,
+                    0,
+                    isw.open.s11,
+                    isw.short.s11,
+                    isw.match.s11,
+                    getattr(isw, f"external{kind}").s11,
+                )[0]
+                for kind in ("open", "short", "match")
+            }
+            for isw in internal_switch
+        ]
         s11, s12, s22 = cls.get_sparams_from_corrections(freq, corrections, calkit)
 
         metadata = {
@@ -706,8 +698,7 @@ class InternalSwitch:
         """The calkit used for the InternalSwitch."""
         if "calkit" in self.metadata:
             return self.metadata["calkit"]
-        else:
-            raise AttributeError("calkit not known!")
+        raise AttributeError("calkit not known!")
 
     @cached_property
     def _s11_model(self):
@@ -887,14 +878,13 @@ class LoadS11(S11Model):
                 internal_switch=internal_switch,
                 **kwargs,
             )
-        else:
-            return attr.evolve(
-                base,
-                freq=freq.freq,
-                raw_s11=np.mean(s11s, axis=0),
-                metadata=metadata,
-                load_name=load_s11[0].load_name,
-            )
+        return attr.evolve(
+            base,
+            freq=freq.freq,
+            raw_s11=np.mean(s11s, axis=0),
+            metadata=metadata,
+            load_name=load_s11[0].load_name,
+        )
 
     @classmethod
     def from_io(
@@ -920,9 +910,10 @@ class LoadS11(S11Model):
             s11_io.switching_state, **internal_switch_kwargs
         )
 
-        load_s11s = []
-        for xx in getattr(s11_io, load_name):
-            load_s11s.append(LoadPlusSwitchS11.from_io(xx, **load_kw))
+        load_s11s = [
+            LoadPlusSwitchS11.from_io(xx, **load_kw)
+            for xx in getattr(s11_io, load_name)
+        ]
 
         return cls.from_load_and_internal_switch(
             load_s11=load_s11s, internal_switch=internal_switch, **kwargs
