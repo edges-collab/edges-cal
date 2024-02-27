@@ -11,7 +11,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "edges-cal"
 description = "Calibration routines for EDGES data"
-readme = "README.rst"
+readme = "README.md"
 authors = [
     {name="Steven Murray", email="steven.murray@sns.it"},
     {name="Nivedita Mahesh", email="nmahesh4@asu.edu"},
