@@ -94,6 +94,22 @@ def noise_wave_param_fit(
     Tunc, Tcos, Tsin : array_like
         The solutions to each of T_unc, T_cos and T_sin as functions of frequency.
     """
+    if np.any(np.isnan(f_norm)):
+        raise ValueError("Some frequencies are NaN")
+    if np.any(np.isnan(gamma_rec)):
+        raise ValueError("Some receiver reflection coefficients are NaN")
+    if np.any(np.isnan(gamma_open)):
+        raise ValueError("Some open reflection coefficients are NaN")
+    if np.any(np.isnan(gamma_short)):
+        raise ValueError("Some short reflection coefficients are NaN")
+    if np.any(np.isnan(temp_raw_open)):
+        raise ValueError("Some open raw temperatures are NaN")
+    if np.any(np.isnan(temp_raw_short)):
+        raise ValueError("Some short raw temperatures are NaN")
+    if np.any(np.isnan(temp_thermistor_open)):
+        raise ValueError("Some open thermistor temperatures are NaN")
+    if np.any(np.isnan(temp_thermistor_short)):
+        raise ValueError("Some short thermistor temperatures are NaN")
     # S11 quantities
     Fo = get_F(gamma_rec, gamma_open)
     Fs = get_F(gamma_rec, gamma_short)

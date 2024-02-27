@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
-#
+"""Configuration for documentation."""
+
 # This file is execfile()d with the current directory set to its containing dir.
 #
 # Note that not all possible configuration values are present in this

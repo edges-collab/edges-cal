@@ -6,6 +6,7 @@ import numpy as np
 import warnings
 from astropy import units
 from astropy import units as u
+from edges_io import types as tp
 from hickleable import hickleable
 from itertools import product
 from pathlib import Path
@@ -13,7 +14,6 @@ from scipy.ndimage import convolve1d
 from typing import Any, Callable, Sequence
 
 from . import DATA_PATH
-from . import types as tp
 from .cached_property import cached_property
 
 
