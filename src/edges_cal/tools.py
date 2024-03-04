@@ -13,6 +13,7 @@ from astropy import units
 from astropy import units as u
 from edges_io import types as tp
 from hickleable import hickleable
+from pygsdata import GSData
 from scipy.ndimage import convolve1d
 
 from . import DATA_PATH
@@ -425,3 +426,24 @@ def gauss_smooth(
     wghts = convolve1d(np.ones_like(x), window, mode="nearest")[..., decimate_at::size]
 
     return sums / wghts
+
+
+def dicke_calibration(data: GSData) -> GSData:
+    """Calibrate field data using the Dicke switch data."""
+    iant = data.loads.index("ant")
+    iload = data.loads.index("internal_load")
+    ilns = data.loads.index("internal_load_plus_noise_source")
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        q = (data.data[iant] - data.data[iload]) / (data.data[ilns] - data.data[iload])
+
+    return data.update(
+        data=q[np.newaxis],
+        data_unit="uncalibrated",
+        time_array=data.time_array[:, [iant]],
+        time_ranges=data.time_ranges[:, [iant]],
+        loads=("ant",),
+        nsamples=data.nsamples[[iant]],
+        flags={name: flag.any(axis="load") for name, flag in data.flags.items()},
+        residuals=None,
+    )

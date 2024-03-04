@@ -21,6 +21,7 @@ def calobs(smallcal):
         smallcal,
         f_low=50 * un.MHz,
         f_high=100 * un.MHz,
+        spectrum_kwargs={"default": {"allow_closest_time": True}},
     )
 
 

@@ -12,7 +12,6 @@ import attrs
 import numpy as np
 import scipy as sp
 import yaml
-from edges_io.h5 import register_h5type
 from hickleable import hickleable
 
 from . import receiver_calibration_func as rcf
@@ -324,7 +323,6 @@ class ZerotooneTransform(ModelTransform):
 
 
 @hickleable()
-@register_h5type
 @attr.s(frozen=True, kw_only=True, slots=False)
 class Model(metaclass=ABCMeta):
     """A base class for a linear model."""
@@ -470,7 +468,7 @@ def get_mdl(model: str | type[Model]) -> type[Model]:
     """Get a linear model class from a string input."""
     if isinstance(model, str):
         return _MODELS[model]
-    if issubclass(model, Model):
+    if np.issubclass_(model, Model):
         return model
     raise ValueError("model needs to be a string or Model subclass")
 

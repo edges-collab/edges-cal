@@ -1,7 +1,7 @@
 """CLI functions for edges-cal."""
 import json
 from datetime import datetime
-from datetime.timezone import utc
+from datetime import timezone as tz
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -230,7 +230,7 @@ def report(
 
     # Describe the filename...
     fname = Path(
-        f"calibration_{datetime.now(tz=utc).strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
+        f"calibration_{datetime.now(tz=tz.utc).strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
     )
 
     global_config = json.loads(global_config) if global_config else {}
@@ -332,7 +332,7 @@ def compare(
     # Describe the filename...
     fname = Path(
         f"calibration-compare-{cmppath.name}_"
-        f"{datetime.now(tz=utc).strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
+        f"{datetime.now(tz=tz.utc).strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
     )
 
     global_config = json.loads(global_config) if global_config else {}
