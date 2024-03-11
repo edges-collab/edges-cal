@@ -19,7 +19,7 @@ from edges_io import utils as iou
 from edges_io.logging import logger
 from hickleable import hickleable
 from pygsdata import GSData
-from pygsdata.concat import concat_times
+from pygsdata.concat import concat
 from pygsdata.select import select_freqs, select_times
 
 from . import __version__, tools
@@ -196,7 +196,7 @@ def get_ave_and_var_spec(
     if freq is not None:
         data = select_freqs(data, freq_range=(freq._f_low, freq._f_high))
 
-    spec_timestamps = data.time_array[:, time_coordinate_swpos]  # jd
+    spec_timestamps = data.times[:, time_coordinate_swpos]  # jd
 
     try:
         base_time, time_coordinate_swpos = time_coordinate_swpos
@@ -208,7 +208,7 @@ def get_ave_and_var_spec(
 
         # The first time could be measured from a different swpos than the one we are
         # measuring it to.
-        t0 = data.time_array[0, base_time]  # what is base_time?
+        t0 = data.times[0, base_time]  # what is base_time?
 
         t_elapsed = (spec_timestamps - t0) * 24 * 3600  # seconds
 
@@ -427,7 +427,7 @@ class LoadSpectrum:
         thermistor = ThermistorReadings.from_io(
             res, ignore_times_percent=ignore_times_percent
         )
-        data: GSData = concat_times([s.get_data() for s in spec])
+        data: GSData = concat([s.get_data() for s in spec], axis="time")
 
         meanq, varq, n_integ = get_ave_and_var_spec(
             data=data,
@@ -524,8 +524,8 @@ class LoadSpectrum:
         """
         spec: GSData = io_obs.get_spectra(load_name).get_data()
         if temperature is None:
-            start = spec.time_array.min()
-            end = spec.time_array.max()
+            start = spec.times.min()
+            end = spec.times.max()
             table = io_obs.get_temperature_table()
 
             if (

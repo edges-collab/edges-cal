@@ -440,10 +440,13 @@ def dicke_calibration(data: GSData) -> GSData:
     return data.update(
         data=q[np.newaxis],
         data_unit="uncalibrated",
-        time_array=data.time_array[:, [iant]],
+        times=data.times[:, [iant]],
+        lsts=data.lsts[:, [iant]],
         time_ranges=data.time_ranges[:, [iant]],
+        lst_ranges=data.lst_ranges[:, [iant]],
         loads=("ant",),
         nsamples=data.nsamples[[iant]],
         flags={name: flag.any(axis="load") for name, flag in data.flags.items()},
         residuals=None,
+        effective_integration_time=data.effective_integration_time[[iant]],
     )
