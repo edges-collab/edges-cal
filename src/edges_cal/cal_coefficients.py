@@ -1580,6 +1580,10 @@ class CalibrationObservation:
         return cls.from_io(io_obs, **config)
 
 
+class CalFileReadError(Exception):
+    pass
+
+
 @hickleable()
 @attr.s(kw_only=True)
 class Calibrator:
@@ -1658,21 +1662,26 @@ class Calibrator:
     def from_calfile(cls, path: tp.PathLike) -> Calibrator:
         """Generate from calfile."""
         with h5py.File(path, "r") as fl:
-            cterms = fl.attrs["cterms"]
-            wterms = fl.attrs["wterms"]
-            t_load = fl.attrs["t_load"]
-            t_load_ns = fl.attrs["t_load_ns"]
+            try:
+                cterms = fl.attrs["cterms"]
+                wterms = fl.attrs["wterms"]
+                t_load = fl.attrs["t_load"]
+                t_load_ns = fl.attrs["t_load_ns"]
 
-            C1 = np.poly1d(fl["C1"])
-            C2 = np.poly1d(fl["C2"])
-            Tunc = np.poly1d(fl["Tunc"])
-            Tcos = np.poly1d(fl["Tcos"])
-            Tsin = np.poly1d(fl["Tsin"])
+                C1 = np.poly1d(fl["C1"])
+                C2 = np.poly1d(fl["C2"])
+                Tunc = np.poly1d(fl["Tunc"])
+                Tcos = np.poly1d(fl["Tcos"])
+                Tsin = np.poly1d(fl["Tsin"])
 
-            freq = hickle.load(fl["frequencies"])
-            receiver_s11 = hickle.load(fl["receiver_s11"])
-            internal_switch = hickle.load(fl["internal_switch"])
-            metadata = hickle.load(fl["metadata"])
+                freq = hickle.load(fl["frequencies"])
+                receiver_s11 = hickle.load(fl["receiver_s11"])
+                internal_switch = hickle.load(fl["internal_switch"])
+                metadata = hickle.load(fl["metadata"])
+            except Exception as e:
+                raise CalFileReadError(
+                    f"Something went wrong reading the calfile: {path}"
+                ) from e
 
         return cls(
             cterms=cterms,
