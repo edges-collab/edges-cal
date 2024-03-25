@@ -960,12 +960,22 @@ class CalibrationObservation:
         dict:
             Each entry has a key of the source name, and the value is a matplotlib fig.
         """
-        out = {
-            name: source.reflections.plot_residuals(**kwargs)
-            for name, source in self.loads.items()
-        }
-        out.update({"lna": self.receiver.plot_residuals(**kwargs)})
-        return out
+        fig, ax = plt.subplots(
+            4,
+            len(self.loads) + 1,
+            figsize=((len(self.loads) + 1) * 4, 6),
+            sharex=True,
+            gridspec_kw={"hspace": 0.05},
+            layout="constrained",
+        )
+
+        for i, (name, source) in enumerate(self.loads.items()):
+            source.reflections.plot_residuals(ax=ax[:, i], title=False, **kwargs)
+            ax[0, i].set_title(name)
+
+        self.receiver.plot_residuals(ax=ax[:, -1], title=False, **kwargs)
+        ax[0, -1].set_title("Receiver")
+        return ax
 
     @cached_property
     def s11_correction_models(self):

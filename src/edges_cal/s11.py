@@ -358,10 +358,12 @@ class S11Model:
         fig :
             Matplotlib Figure handle.
         """
-        if fig is None or ax is None or len(ax) != 4:
+        if ax is None or len(ax) != 4:
             fig, ax = plt.subplots(
                 4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="w"
             )
+        if fig is None:
+            fig = ax.get_figure()
 
         if decade_ticks:
             for axx in ax:
@@ -371,24 +373,21 @@ class S11Model:
         corr = self.raw_s11
         model = self.s11_model(self.freq.freq.to_value("MHz"))
 
-        ax[0].plot(
-            self.freq.freq, 20 * np.log10(np.abs(model)), color=color_abs, label=label
-        )
+        fq = self.freq.freq.to_value("MHz")
+        ax[0].plot(fq, 20 * np.log10(np.abs(model)), color=color_abs, label=label)
         if ylabels:
             ax[0].set_ylabel(r"$|S_{11}|$")
 
-        ax[1].plot(self.freq.freq, np.abs(model) - np.abs(corr), color_diff)
+        ax[1].plot(fq, np.abs(model) - np.abs(corr), color_diff)
         if ylabels:
             ax[1].set_ylabel(r"$\Delta  |S_{11}|$")
 
-        ax[2].plot(
-            self.freq.freq, np.unwrap(np.angle(model)) * 180 / np.pi, color=color_abs
-        )
+        ax[2].plot(fq, np.unwrap(np.angle(model)) * 180 / np.pi, color=color_abs)
         if ylabels:
             ax[2].set_ylabel(r"$\angle S_{11}$")
 
         ax[3].plot(
-            self.freq.freq,
+            fq,
             np.unwrap(np.angle(model)) - np.unwrap(np.angle(corr)),
             color_diff,
         )
