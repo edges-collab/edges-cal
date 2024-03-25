@@ -1,15 +1,12 @@
-"""
-Conftest.
-"""
+"""Conftest."""
 
-import pytest
-
-from astropy import units as u
-from edges_io import io
 from pathlib import Path
 
+import pytest
+from astropy import units as u
 from edges_cal import CalibrationObservation
 from edges_cal.config import config
+from edges_io import io
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -29,7 +26,7 @@ def tmpdir(tmp_path_factory):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def set_cache_dir(tmpdir):
+def _set_cache_dir(tmpdir):
     print("DOING THIS")
     config["cal"]["cache-dir"] = str(tmpdir / "cal-cache")
 

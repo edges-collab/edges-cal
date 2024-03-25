@@ -1,10 +1,9 @@
-import pytest
+from pathlib import Path
 
 import hickle
 import numpy as np
+import pytest
 from astropy import units as u
-from pathlib import Path
-
 from edges_cal import cal_coefficients as cc
 
 

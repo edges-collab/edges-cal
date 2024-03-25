@@ -14,20 +14,23 @@ calibrated and smoothed S11, according to some smooth model.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+from functools import cached_property
+from pathlib import Path
+from typing import Any, Callable
+
 import attr
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy import units as un
-from cached_property import cached_property
-from edges_io import io
+from astropy.constants import c as speed_of_light
+from edges_io import io, io3
+from edges_io import types as tp
 from hickleable import hickleable
-from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
-from typing import Any, Callable, Sequence
 
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
-from . import types as tp
 from .modelling import (
     ComplexMagPhaseModel,
     ComplexRealImagModel,
@@ -49,17 +52,13 @@ def _s1p_converter(s1p: tp.PathLike | io.S1P, check: bool = False) -> io.S1P:
     except TypeError as e:
         if isinstance(s1p, io.S1P):
             return s1p
-        else:
-            raise TypeError(
-                "s1p must be a path to an s1p file, or an io.S1P object"
-            ) from e
+        raise TypeError("s1p must be a path to an s1p file, or an io.S1P object") from e
 
 
 def _tuplify(x):
     if not hasattr(x, "__len__"):
         return (int(x), int(x), int(x))
-    else:
-        return tuple(int(xx) for xx in x)
+    return tuple(int(xx) for xx in x)
 
 
 @attr.s(frozen=True)
@@ -231,8 +230,7 @@ class S11Model:
         """The raw S11 measurements at different frequencies."""
         if len(self._raw_s11) == self.freq.n:
             return self._raw_s11
-        else:
-            return self._raw_s11[self.freq.mask]
+        return self._raw_s11[self.freq.mask]
 
     @model_type.default
     def _mdl_type_default(self):
@@ -323,11 +321,10 @@ class S11Model:
                 Spline(self.freq.freq.to_value("MHz"), np.real(self.raw_s11)),
                 Spline(self.freq.freq.to_value("MHz"), np.imag(self.raw_s11)),
             )
-        else:
-            return (
-                Spline(self.freq.freq.to_value("MHz"), np.abs(self.raw_s11)),
-                Spline(self.freq.freq.to_value("MHz"), np.angle(self.raw_s11)),
-            )
+        return (
+            Spline(self.freq.freq.to_value("MHz"), np.abs(self.raw_s11)),
+            Spline(self.freq.freq.to_value("MHz"), np.angle(self.raw_s11)),
+        )
 
     def s11_model(self, freq: np.ndarray | tp.FreqType) -> np.ndarray:
         """Compute the S11 at a specific set of frequencies."""
@@ -338,11 +335,9 @@ class S11Model:
             return self._s11_model(freq) * np.exp(
                 -1j * self.model_delay.to_value("microsecond") * freq
             )
-        else:
-            if self.complex_model_type == ComplexRealImagModel:
-                return self._splines[0](freq) + 1j * self._splines[1](freq)
-            else:
-                return self._splines[0](freq) * np.exp(1j * self._splines[1](freq))
+        if self.complex_model_type == ComplexRealImagModel:
+            return self._splines[0](freq) + 1j * self._splines[1](freq)
+        return self._splines[0](freq) * np.exp(1j * self._splines[1](freq))
 
     def plot_residuals(
         self,
@@ -363,10 +358,12 @@ class S11Model:
         fig :
             Matplotlib Figure handle.
         """
-        if fig is None or ax is None or len(ax) != 4:
+        if ax is None or len(ax) != 4:
             fig, ax = plt.subplots(
                 4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="w"
             )
+        if fig is None:
+            fig = ax[0].get_figure()
 
         if decade_ticks:
             for axx in ax:
@@ -376,24 +373,21 @@ class S11Model:
         corr = self.raw_s11
         model = self.s11_model(self.freq.freq.to_value("MHz"))
 
-        ax[0].plot(
-            self.freq.freq, 20 * np.log10(np.abs(model)), color=color_abs, label=label
-        )
+        fq = self.freq.freq.to_value("MHz")
+        ax[0].plot(fq, 20 * np.log10(np.abs(model)), color=color_abs, label=label)
         if ylabels:
             ax[0].set_ylabel(r"$|S_{11}|$")
 
-        ax[1].plot(self.freq.freq, np.abs(model) - np.abs(corr), color_diff)
+        ax[1].plot(fq, np.abs(model) - np.abs(corr), color_diff)
         if ylabels:
             ax[1].set_ylabel(r"$\Delta  |S_{11}|$")
 
-        ax[2].plot(
-            self.freq.freq, np.unwrap(np.angle(model)) * 180 / np.pi, color=color_abs
-        )
+        ax[2].plot(fq, np.unwrap(np.angle(model)) * 180 / np.pi, color=color_abs)
         if ylabels:
             ax[2].set_ylabel(r"$\angle S_{11}$")
 
         ax[3].plot(
-            self.freq.freq,
+            fq,
             np.unwrap(np.angle(model)) - np.unwrap(np.angle(corr)),
             color_diff,
         )
@@ -492,6 +486,68 @@ class Receiver(S11Model):
             raw_s11=np.mean(s11s, axis=0), freq=freq, metadata=metadata, **kwargs
         )
 
+    @classmethod
+    def from_edges3(
+        cls,
+        obs: io3.CalibrationObservation,
+        calkit: rc.Calkit = rc.AGILENT_ALAN,
+        f_low=0.0 * un.MHz,
+        f_high=np.inf * un.MHz,
+        cable_length: tp.LengthType = 0.0 * un.cm,
+        cable_loss_percent: float = 0.0,
+        cable_dielectric_percent: float = 0.0,
+        **kwargs,
+    ):
+        """Create a Receiver object from the EDGES-3 receiver."""
+        # TODO: remember to use resistance_of_math=49.962
+        standards = StandardsReadings(
+            open=VNAReading.from_s1p(
+                obs.s11_files["lna"]["open"], f_low=f_low, f_high=f_high
+            ),
+            short=VNAReading.from_s1p(
+                obs.s11_files["lna"]["short"], f_low=f_low, f_high=f_high
+            ),
+            match=VNAReading.from_s1p(
+                obs.s11_files["lna"]["match"], f_low=f_low, f_high=f_high
+            ),
+        )
+
+        receiver_reading = VNAReading.from_s1p(
+            obs.s11_files["lna"]["input"], f_low=f_low, f_high=f_high
+        )
+
+        freq = standards.freq
+
+        calibrated_s11_raw = rc.de_embed(
+            calkit.open.reflection_coefficient(freq.freq),
+            calkit.short.reflection_coefficient(freq.freq),
+            calkit.match.reflection_coefficient(freq.freq),
+            standards.open.s11,
+            standards.short.s11,
+            standards.match.s11,
+            receiver_reading.s11,
+        )[0]
+
+        _T, s11, s12 = rc.path_length_correction_edges3(
+            freq=freq.freq,
+            delay=cable_length / speed_of_light,
+            gamma_in=0,
+            lossf=1 + cable_loss_percent * 0.01,
+            dielf=1 + cable_dielectric_percent * 0.01,
+        )
+
+        s22 = s11
+        Ta = calibrated_s11_raw
+
+        if cable_length > 0.0:
+            Ta = s11 + (s12 * s12 * Ta) / (1 - s22 * Ta)
+        elif cable_length < 0.0:
+            Ta = (Ta - s11) / (s12 * s12 - s11 * s22 + s22 * Ta)
+
+        metadata = {"calkit": calkit}
+
+        return cls(raw_s11=Ta, freq=freq, metadata=metadata, **kwargs)
+
     def with_new_calkit(self, calkit: rc.Calkit):
         """Get a new Receiver with different calkit."""
         if "devices" not in self.metadata:
@@ -562,23 +618,21 @@ class InternalSwitch:
 
         # TODO: not clear why we use the ideal values of 1,-1,0 instead of the physical
         # expected values of calkit.match.intrinsic_gamma etc.
-        corrections = []
-        for isw in internal_switch:
-            corrections.append(
-                {
-                    kind: rc.de_embed(
-                        1,
-                        -1,
-                        0,
-                        isw.open.s11,
-                        isw.short.s11,
-                        isw.match.s11,
-                        getattr(isw, "external%s" % kind).s11,
-                    )[0]
-                    for kind in ("open", "short", "match")
-                }
-            )
-
+        corrections = [
+            {
+                kind: rc.de_embed(
+                    1,
+                    -1,
+                    0,
+                    isw.open.s11,
+                    isw.short.s11,
+                    isw.match.s11,
+                    getattr(isw, f"external{kind}").s11,
+                )[0]
+                for kind in ("open", "short", "match")
+            }
+            for isw in internal_switch
+        ]
         s11, s12, s22 = cls.get_sparams_from_corrections(freq, corrections, calkit)
 
         metadata = {
@@ -643,8 +697,7 @@ class InternalSwitch:
         """The calkit used for the InternalSwitch."""
         if "calkit" in self.metadata:
             return self.metadata["calkit"]
-        else:
-            raise AttributeError("calkit not known!")
+        raise AttributeError("calkit not known!")
 
     @cached_property
     def _s11_model(self):
@@ -824,14 +877,13 @@ class LoadS11(S11Model):
                 internal_switch=internal_switch,
                 **kwargs,
             )
-        else:
-            return attr.evolve(
-                base,
-                freq=freq.freq,
-                raw_s11=np.mean(s11s, axis=0),
-                metadata=metadata,
-                load_name=load_s11[0].load_name,
-            )
+        return attr.evolve(
+            base,
+            freq=freq.freq,
+            raw_s11=np.mean(s11s, axis=0),
+            metadata=metadata,
+            load_name=load_s11[0].load_name,
+        )
 
     @classmethod
     def from_io(
@@ -857,12 +909,56 @@ class LoadS11(S11Model):
             s11_io.switching_state, **internal_switch_kwargs
         )
 
-        load_s11s = []
-        for xx in getattr(s11_io, load_name):
-            load_s11s.append(LoadPlusSwitchS11.from_io(xx, **load_kw))
+        load_s11s = [
+            LoadPlusSwitchS11.from_io(xx, **load_kw)
+            for xx in getattr(s11_io, load_name)
+        ]
 
         return cls.from_load_and_internal_switch(
             load_s11=load_s11s, internal_switch=internal_switch, **kwargs
+        )
+
+    @classmethod
+    def from_edges3(
+        cls,
+        obs: io3.CalibrationObservation,
+        load_name: str,
+        calkit: rc.Calkit = rc.AGILENT_ALAN,
+        f_low: tp.FreqType = 0 * un.MHz,
+        f_high: tp.FreqType = np.inf * un.MHz,
+        **kwargs,
+    ):
+        """Create a LoadS11 object from the EDGES-3 CalibrationObservation."""
+        # TODO: remember to use resistance_of_math=49.962
+        files = obs.s11_files[load_name]
+        standards = StandardsReadings(
+            open=VNAReading.from_s1p(files["open"], f_low=f_low, f_high=f_high),
+            short=VNAReading.from_s1p(files["short"], f_low=f_low, f_high=f_high),
+            match=VNAReading.from_s1p(files["match"], f_low=f_low, f_high=f_high),
+        )
+
+        load = VNAReading.from_s1p(files["input"], f_low=f_low, f_high=f_high)
+
+        freq = standards.freq
+
+        calibrated_s11_raw = rc.de_embed(
+            calkit.open.reflection_coefficient(freq.freq),
+            calkit.short.reflection_coefficient(freq.freq),
+            calkit.match.reflection_coefficient(freq.freq),
+            standards.open.s11,
+            standards.short.s11,
+            standards.match.s11,
+            load.s11,
+        )[0]
+
+        metadata = {"calkit": calkit}
+        return cls(
+            freq=freq,
+            raw_s11=calibrated_s11_raw,
+            metadata=metadata,
+            load_name=load_name,
+            internal_switch=None,
+            **kwargs,
         )
 
     def get_k_matrix(self, receiver: Receiver, freq: tp.FreqType | None = None):

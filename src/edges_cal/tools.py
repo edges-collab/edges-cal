@@ -1,19 +1,22 @@
 """Tools to use in other modules."""
 from __future__ import annotations
 
-import attr
-import numpy as np
 import warnings
-from astropy import units
-from astropy import units as u
-from hickleable import hickleable
+from collections.abc import Sequence
 from itertools import product
 from pathlib import Path
+from typing import Any, Callable
+
+import attr
+import numpy as np
+from astropy import units
+from astropy import units as u
+from edges_io import types as tp
+from hickleable import hickleable
+from pygsdata import GSData
 from scipy.ndimage import convolve1d
-from typing import Any, Callable, Sequence
 
 from . import DATA_PATH
-from . import types as tp
 from .cached_property import cached_property
 
 
@@ -21,8 +24,7 @@ def get_data_path(pth: str | Path) -> Path:
     """Impute the global data path to a given input in place of a colon."""
     if isinstance(pth, str):
         return DATA_PATH / pth[1:] if pth.startswith(":") else Path(pth)
-    else:
-        return pth
+    return pth
 
 
 def is_unit(unit: str) -> bool:
@@ -75,7 +77,8 @@ def unit_convert_or_apply(
     if warn and not isinstance(x, units.Quantity):
         warnings.warn(
             f"Value passed without units, assuming '{unit}'. "
-            "Consider specifying units for future compatibility."
+            "Consider specifying units for future compatibility.",
+            stacklevel=2,
         )
 
     return units.Quantity(x, unit, copy=not in_place)
@@ -201,7 +204,8 @@ class FrequencyRange:
         """Resolution of the frequencies."""
         if not np.allclose(np.diff(self.freq, 2), 0):
             warnings.warn(
-                "Not all frequency intervals are even, so using df is ill-advised!"
+                "Not all frequency intervals are even, so using df is ill-advised!",
+                stacklevel=2,
             )
         return self.freq[1] - self.freq[0]
 
@@ -211,12 +215,12 @@ class FrequencyRange:
         return self._f
 
     @cached_property
-    def min(self):  # noqa
+    def min(self):
         """Minimum frequency in the array."""
         return self.freq.min()
 
     @cached_property
-    def max(self):  # noqa
+    def max(self):
         """Maximum frequency in the array."""
         return self.freq.max()
 
@@ -422,3 +426,27 @@ def gauss_smooth(
     wghts = convolve1d(np.ones_like(x), window, mode="nearest")[..., decimate_at::size]
 
     return sums / wghts
+
+
+def dicke_calibration(data: GSData) -> GSData:
+    """Calibrate field data using the Dicke switch data."""
+    iant = data.loads.index("ant")
+    iload = data.loads.index("internal_load")
+    ilns = data.loads.index("internal_load_plus_noise_source")
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        q = (data.data[iant] - data.data[iload]) / (data.data[ilns] - data.data[iload])
+
+    return data.update(
+        data=q[np.newaxis],
+        data_unit="uncalibrated",
+        times=data.times[:, [iant]],
+        lsts=data.lsts[:, [iant]],
+        time_ranges=data.time_ranges[:, [iant]],
+        lst_ranges=data.lst_ranges[:, [iant]],
+        loads=("ant",),
+        nsamples=data.nsamples[[iant]],
+        flags={name: flag.any(axis="load") for name, flag in data.flags.items()},
+        residuals=None,
+        effective_integration_time=data.effective_integration_time[[iant]],
+    )

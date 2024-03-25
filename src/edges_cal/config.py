@@ -1,7 +1,8 @@
 """Global Configuration options."""
 import warnings
-from edges_io.config import config, default_config
 from pathlib import Path
+
+from edges_io.config import config, default_config
 
 _new_defaults = {"cal": {"cache-dir": str(Path("~/.edges-cal-cache").expanduser())}}
 
@@ -13,5 +14,6 @@ if not Path(config["cal"]["cache-dir"]).exists():
         Path(config["cal"]["cache-dir"]).mkdir()
     except Exception:
         warnings.warn(
-            f"Could not create edges-cal cache directory: {config['cal']['cache-dir']}"
+            f"Could not create edges-cal cache directory: {config['cal']['cache-dir']}",
+            stacklevel=2,
         )

@@ -1,20 +1,15 @@
-.. include:: ../README.rst
+.. include:: ../README.md
 
-Contents
-========
+# Contents
 
 .. toctree::
    :maxdepth: 2
 
    License <license>
-   Authors <authors>
-   Changelog <changelog>
-   tutorials
    reference/index
 
 
-Indices and tables
-==================
+# Indices and tables
 
 * :ref:`genindex`
 * :ref:`modindex`

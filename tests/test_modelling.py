@@ -1,9 +1,6 @@
-import pytest
-
 import numpy as np
+import pytest
 import yaml
-from typing import Type
-
 from edges_cal import modelling as mdl
 
 
@@ -27,7 +24,7 @@ def test_bad_get_mdl():
     "model",
     [mdl.PhysicalLin, mdl.Polynomial, mdl.EdgesPoly, mdl.Fourier, mdl.FourierDay],
 )
-def test_basis(model: Type[mdl.Model]):
+def test_basis(model: type[mdl.Model]):
     x = np.linspace(0, 1, 10)
     pl = model(parameters=[1, 2, 3]).at(x=x)
 
@@ -105,7 +102,7 @@ def test_physical_lin():
 
     basis = m.basis
     assert np.allclose(basis[0], [np.e**2.5, 1, np.e**-2.5])
-    assert np.allclose(basis[1], [-np.e**2.5, 0, np.e**-2.5])
+    assert np.allclose(basis[1], [-(np.e**2.5), 0, np.e**-2.5])
     assert np.allclose(basis[2], [np.e**2.5, 0, np.e**-2.5])
     assert np.allclose(basis[3], [np.e**4.5, 1, np.e**-4.5])
     assert np.allclose(basis[4], [np.e**2, 1, np.e**-2])

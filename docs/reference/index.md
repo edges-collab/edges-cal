@@ -1,16 +1,15 @@
-API Reference
-=============
+# API Reference
 
-High Level Interface
-~~~~~~~~~~~~~~~~~~~~
+## High Level Interface
+
 .. autosummary::
     :toctree: _autosummary
     :template: module.rst
 
     edges_cal.cal_coefficients
 
-Lower Level Methods
-~~~~~~~~~~~~~~~~~~~
+## Lower Level Methods
+
 .. autosummary::
     :toctree: _autosummary
     :template: module.rst
@@ -22,8 +21,8 @@ Lower Level Methods
     edges_cal.xrfi
     edges_cal.tools
 
-Package Config
---------------
+## Package Config
+
 .. autosummary::
     :toctree: _autosummary
     :template: module.rst

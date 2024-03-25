@@ -1,9 +1,10 @@
 """Functions for calibrating the receiver."""
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import scipy as sp
-from typing import Sequence
 
 
 def temperature_thermistor(
@@ -34,7 +35,7 @@ def temperature_thermistor(
     # Steinhart-Hart coefficients
     _coeffs = {"oven_industries_TR136_170": [1.03514e-3, 2.33825e-4, 7.92467e-8]}
 
-    if type(coeffs) is str:
+    if isinstance(coeffs, str):
         coeffs = _coeffs[coeffs]
 
     assert len(coeffs) == 3
@@ -49,8 +50,7 @@ def temperature_thermistor(
     # Kelvin or Celsius
     if kelvin:
         return temp
-    else:
-        return temp - 273.15
+    return temp - 273.15
 
 
 def noise_wave_param_fit(
@@ -94,6 +94,22 @@ def noise_wave_param_fit(
     Tunc, Tcos, Tsin : array_like
         The solutions to each of T_unc, T_cos and T_sin as functions of frequency.
     """
+    if np.any(np.isnan(f_norm)):
+        raise ValueError("Some frequencies are NaN")
+    if np.any(np.isnan(gamma_rec)):
+        raise ValueError("Some receiver reflection coefficients are NaN")
+    if np.any(np.isnan(gamma_open)):
+        raise ValueError("Some open reflection coefficients are NaN")
+    if np.any(np.isnan(gamma_short)):
+        raise ValueError("Some short reflection coefficients are NaN")
+    if np.any(np.isnan(temp_raw_open)):
+        raise ValueError("Some open raw temperatures are NaN")
+    if np.any(np.isnan(temp_raw_short)):
+        raise ValueError("Some short raw temperatures are NaN")
+    if np.any(np.isnan(temp_thermistor_open)):
+        raise ValueError("Some open thermistor temperatures are NaN")
+    if np.any(np.isnan(temp_thermistor_short)):
+        raise ValueError("Some short thermistor temperatures are NaN")
     # S11 quantities
     Fo = get_F(gamma_rec, gamma_open)
     Fs = get_F(gamma_rec, gamma_short)
@@ -231,8 +247,7 @@ def power_ratio(
 
     if return_terms:
         return terms
-    else:
-        return sum(terms[:5]) / terms[5]
+    return sum(terms[:5]) / terms[5]
 
 
 def get_K(gamma_rec, gamma_ant, f_ratio=None, alpha=None, gain=None):  # noqa: N802
