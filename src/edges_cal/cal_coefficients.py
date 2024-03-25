@@ -392,6 +392,7 @@ class Load:
         spec_kwargs: dict | None = None,
         loss_kwargs: dict | None = None,
         ambient_temperature: float | None = None,
+        restrict_s11_freqs: bool = False,
     ):
         """
         Define a full :class:`Load` from a path and name.
@@ -443,8 +444,8 @@ class Load:
         refl = s11.LoadS11.from_edges3(
             obs=io_obj,
             load_name=load_name,
-            f_low=f_low,
-            f_high=f_high,
+            f_low=f_low if restrict_s11_freqs else 0 * un.MHz,
+            f_high=f_high if restrict_s11_freqs else np.inf * un.MHz,
             **reflection_kwargs,
         )
 
@@ -815,6 +816,7 @@ class CalibrationObservation:
                     **spectrum_kwargs.get(name, {}),
                 },
                 ambient_temperature=ambient_temperature,
+                restrict_s11_freqs=restrict_s11_model_freqs,
             )
 
         loads = {src: get_load(src) for src in sources}
