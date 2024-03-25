@@ -363,7 +363,7 @@ class S11Model:
                 4, 1, sharex=True, gridspec_kw={"hspace": 0.05}, facecolor="w"
             )
         if fig is None:
-            fig = ax.get_figure()
+            fig = ax[0].get_figure()
 
         if decade_ticks:
             for axx in ax:
