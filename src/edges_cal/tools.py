@@ -5,7 +5,7 @@ import warnings
 from collections.abc import Sequence
 from itertools import product
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Self
 
 import attr
 import numpy as np
@@ -364,6 +364,42 @@ class FrequencyRange:
         """Make a new read-only frequency range object with the same freqs."""
         f = as_readonly(self.freq_full.value)
         return attr.evolve(self, f=f * self.freq_full.unit, **kwargs)
+
+    def decimate(
+        self, bin_size: int, decimate_at: int | str = "centre", embed_mask: bool = True
+    ) -> Self:
+        """Decimate the frequency array.
+
+        Parameters
+        ----------
+        bin_size
+            The number of raw bins to combine into one.
+        decimate_at
+            Where to start the decimation from. If 'centre', then the new
+            frequency array will be the mean frequency in each bin (equivalent
+            to `decimate_at=bin_size//2` for odd `bin_size`, but for even bin
+            size, the new frequencies are between the central two of the bin).
+            If an integer, then the decimation starts at that index.
+        embed_mask
+            Whether to embed the mask in the new frequency array. IF False, the
+            returned object will have an underlying frequency array with the full
+            range of data, but with a mask similar to this object. If True, the
+            returned object will have the frequencies outside the mask range
+            removed completely.
+        """
+        freq = self._f if embed_mask else self.freq
+
+        if decimate_at == "centre":
+            new_freq = bin_array(freq, size=bin_size)
+        else:
+            new_freq = freq[decimate_at::bin_size]
+
+        return FrequencyRange(
+            f=new_freq,
+            f_low=0 * u.MHz if embed_mask else self._f_low,
+            f_high=np.inf * u.MHz if embed_mask else self._f_high,
+            bin_size=1,
+        )
 
 
 def bin_array(x: np.ndarray, size: int = 1) -> np.ndarray:

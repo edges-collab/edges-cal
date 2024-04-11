@@ -543,13 +543,6 @@ class LoadSpectrum:
                 end_time=end,
             ).to_value("K")
 
-        freq = FrequencyRange.from_edges(
-            f_low=f_low,
-            f_high=f_high,
-            bin_size=freq_bin_size,
-            alan_mode=frequency_smoothing == "gauss",
-        )
-
         sig = inspect.signature(cls.from_edges3)
         lc = locals()
         defining_dict = {p: lc[p] for p in sig.parameters if p not in ["cls", "io_obs"]}
@@ -573,6 +566,12 @@ class LoadSpectrum:
 
         q = dicke_calibration(spec).data[0, 0]
 
+        freq = FrequencyRange.from_edges(f_low=f_low, f_high=f_high).decimate(
+            bin_size=freq_bin_size,
+            decimate_at=0 if frequency_smoothing == "gauss" else "centre",
+            embed_mask=False,
+        )
+
         if freq_bin_size > 1:
             if frequency_smoothing == "bin":
                 q = tools.bin_array(q, size=freq_bin_size)
@@ -581,7 +580,7 @@ class LoadSpectrum:
             else:
                 raise ValueError("frequency_smoothing must be one of ('bin', 'gauss').")
 
-        q = q[:, (freq.freq >= f_low) & (freq.freq <= f_high)]
+        q = q[:, freq.mask]
 
         out = cls(
             freq=freq,
