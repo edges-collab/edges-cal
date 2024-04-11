@@ -929,7 +929,6 @@ class LoadS11(S11Model):
         **kwargs,
     ):
         """Create a LoadS11 object from the EDGES-3 CalibrationObservation."""
-        # TODO: remember to use resistance_of_math=49.962
         files = obs.s11_files[load_name]
         standards = StandardsReadings(
             open=VNAReading.from_s1p(files["open"], f_low=f_low, f_high=f_high),

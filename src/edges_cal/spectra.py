@@ -489,6 +489,7 @@ class LoadSpectrum:
         temperature: float | None = None,
         time_coordinate_swpos: int = 0,
         allow_closest_time: bool = False,
+        cache_dir: str | Path | None = None,
         **kwargs,
     ):
         """Instantiate the class from a given load name and directory.
@@ -559,7 +560,7 @@ class LoadSpectrum:
             (*tuple(defining_dict.values()), __version__.split(".")[0])
         )
 
-        cache_dir = config["cal"]["cache-dir"]
+        cache_dir = cache_dir or config["cal"]["cache-dir"]
         if cache_dir is not None:
             cache_dir = Path(cache_dir)
             fname = cache_dir / f"{load_name}_{hsh}.h5"

@@ -27,7 +27,6 @@ def tmpdir(tmp_path_factory):
 
 @pytest.fixture(scope="session", autouse=True)
 def _set_cache_dir(tmpdir):
-    print("DOING THIS")
     config["cal"]["cache-dir"] = str(tmpdir / "cal-cache")
 
 
