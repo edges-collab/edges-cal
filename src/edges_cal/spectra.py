@@ -571,8 +571,7 @@ class LoadSpectrum:
                 )
                 return hickle.load(fname)
 
-        q = dicke_calibration(spec).data[0, 0][:, freq.mask]
-        q = q.mean(axis=0)
+        q = dicke_calibration(spec).data[0, 0]
 
         if freq_bin_size > 1:
             if frequency_smoothing == "bin":
@@ -581,6 +580,8 @@ class LoadSpectrum:
                 q = tools.gauss_smooth(q, size=freq_bin_size, decimate_at=0)
             else:
                 raise ValueError("frequency_smoothing must be one of ('bin', 'gauss').")
+
+        q = q[:, freq.mask].mean(axis=0)
 
         out = cls(
             freq=freq,
