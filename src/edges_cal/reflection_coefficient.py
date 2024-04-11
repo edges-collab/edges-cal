@@ -361,16 +361,6 @@ class CalkitStandard:
     capacitance_model: callable | None = attr.ib(default=None)
     inductance_model: callable | None = attr.ib(default=None)
 
-    @capacitance_model.validator
-    def _cap_vld(self, att, val):
-        if self.name == "open" and val is None:
-            raise ValueError("capacitance_model is required for open standard")
-
-    @inductance_model.validator
-    def _ind_val(self, att, val):
-        if self.name == "short" and val is None:
-            raise ValueError("inductance_model is required for short standard")
-
     @property
     def name(self) -> str:
         """The name of the standard. Inferred from the resistance."""
