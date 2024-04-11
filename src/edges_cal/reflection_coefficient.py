@@ -364,9 +364,9 @@ class CalkitStandard:
     @property
     def name(self) -> str:
         """The name of the standard. Inferred from the resistance."""
-        if np.isinf(self.resistance):
+        if np.abs(self.resistance) > 1000:
             return "open"
-        if self.resistance == 0:
+        if np.abs(self.resistance) < 1:
             return "short"
         return "match"
 
