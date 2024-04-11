@@ -358,8 +358,8 @@ class CalkitStandard:
         converter=unit_converter(units.Gohm / units.s),
     )
 
-    capacitance_model: mdl.Polynomial | None = attr.ib(default=None)
-    inductance_model: mdl.Polynomial | None = attr.ib(default=None)
+    capacitance_model: callable | None = attr.ib(default=None)
+    inductance_model: callable | None = attr.ib(default=None)
 
     @capacitance_model.validator
     def _cap_vld(self, att, val):
@@ -404,9 +404,9 @@ class CalkitStandard:
         self._verify_freq(freq)
         freq = freq.to("Hz").value
 
-        if self.name == "open":
+        if self.capacitance_model is not None:
             return (-1j / (2 * np.pi * freq * self.capacitance_model(freq))) * units.ohm
-        if self.name == "short":
+        if self.inductance_model is not None:
             return 1j * 2 * np.pi * freq * self.inductance_model(freq) * units.ohm
         return self.resistance
 
@@ -552,17 +552,13 @@ AGILENT_ALAN = Calkit(
         offset_impedance=50.0 * units.ohm,
         offset_delay=33 * units.picosecond,
         offset_loss=2.3 * units.Gohm / units.s,
-        capacitance_model=mdl.Polynomial(
-            parameters=[49.43e-15, -310.1e-27, 23.17e-36, -0.1597e-45]
-        ),
+        resistance=1e9 * units.Ohm,
     ),
     short=CalkitShort(
         offset_impedance=50.0 * units.ohm,
         offset_delay=33 * units.picosecond,
         offset_loss=2.3 * units.Gohm / units.s,
-        inductance_model=mdl.Polynomial(
-            parameters=[2.077e-12, -108.5e-24, 2.171e-33, -0.01e-42]
-        ),
+        resistance=0 * units.Ohm,
     ),
     match=CalkitMatch(
         offset_impedance=50.0 * units.ohm,
