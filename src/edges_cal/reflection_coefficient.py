@@ -470,20 +470,20 @@ class CalkitStandard:
         ).value
 
 
-def CalkitOpen(**kwargs) -> CalkitStandard:  # noqa: N802
+def CalkitOpen(resistance=np.inf * units.ohm, **kwargs) -> CalkitStandard:  # noqa: N802
     """Factory function for creating Open standards, with resistance=inf.
 
     See :class:`CalkitStandard` for all parameters available.
     """
-    return CalkitStandard(resistance=np.inf * units.ohm, **kwargs)
+    return CalkitStandard(resistance=resistance, **kwargs)
 
 
-def CalkitShort(**kwargs) -> CalkitStandard:  # noqa: N802
+def CalkitShort(resistance=0 * units.ohm, **kwargs) -> CalkitStandard:  # noqa: N802
     """Factor function for creating Short standards, with resistance=0.
 
     See :class:`CalkitStandard` for all parameters available.
     """
-    return CalkitStandard(resistance=0 * units.ohm, **kwargs)
+    return CalkitStandard(resistance=resistance, **kwargs)
 
 
 def CalkitMatch(resistance=50.0 * units.ohm, **kwargs) -> CalkitStandard:  # noqa: N802
