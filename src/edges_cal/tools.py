@@ -387,7 +387,7 @@ class FrequencyRange:
             returned object will have the frequencies outside the mask range
             removed completely.
         """
-        freq = self._f if embed_mask else self.freq
+        freq = self.freq if embed_mask else self._f
 
         if decimate_at == "centre":
             new_freq = bin_array(freq, size=bin_size)
