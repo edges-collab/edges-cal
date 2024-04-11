@@ -581,7 +581,7 @@ class LoadSpectrum:
             else:
                 raise ValueError("frequency_smoothing must be one of ('bin', 'gauss').")
 
-        q = q[:, freq.mask].mean(axis=0)
+        q = q[:, (freq.freq >= f_low) & (freq.freq <= f_high)]
 
         out = cls(
             freq=freq,
