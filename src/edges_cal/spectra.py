@@ -614,6 +614,7 @@ class LoadSpectrum:
     def between_freqs(self, f_low: tp.FreqType, f_high: tp.FreqType = np.inf * un.MHz):
         """Return a new LoadSpectrum that is masked between new frequencies."""
         freq = self.freq.clone(f_low=f_low, f_high=f_high)
+        print("Flow, Fhigh", f_low, f_high)
         return attr.evolve(
             self,
             freq=freq,
