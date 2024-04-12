@@ -564,9 +564,10 @@ class LoadSpectrum:
                 )
                 return hickle.load(fname)
 
-        q = dicke_calibration(spec).data[0, 0]
+        freq = FrequencyRange.from_edges(f_low=f_low, f_high=f_high)
+        q = dicke_calibration(spec).data[0, 0, :, freq.mask]
 
-        freq = FrequencyRange.from_edges(f_low=f_low, f_high=f_high).decimate(
+        freq = freq.decimate(
             bin_size=freq_bin_size,
             decimate_at=0 if frequency_smoothing == "gauss" else "centre",
             embed_mask=False,
@@ -579,8 +580,6 @@ class LoadSpectrum:
                 q = tools.gauss_smooth(q, size=freq_bin_size, decimate_at=0)
             else:
                 raise ValueError("frequency_smoothing must be one of ('bin', 'gauss').")
-
-        q = q[:, freq.mask]
 
         out = cls(
             freq=freq,
@@ -614,12 +613,12 @@ class LoadSpectrum:
 
     def between_freqs(self, f_low: tp.FreqType, f_high: tp.FreqType = np.inf * un.MHz):
         """Return a new LoadSpectrum that is masked between new frequencies."""
-        mask = (self.freq.freq >= f_low) & (self.freq.freq <= f_high)
+        freq = self.freq.clone(f_low=f_low, f_high=f_high)
         return attr.evolve(
             self,
-            freq=self.freq.with_new_mask(post_bin_f_low=f_low, post_bin_f_high=f_high),
-            q=self.q[mask],
-            variance=self.variance[mask],
+            freq=freq,
+            q=self.q[freq.mask],
+            variance=self.variance[freq.mask],
         )
 
     @property

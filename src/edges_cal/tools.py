@@ -146,12 +146,6 @@ class FrequencyRange:
         A minimum frequency to keep in the array. Default is min(f).
     f_high
         A minimum frequency to keep in the array. Default is min(f).
-    bin_size
-        Bin input frequencies into bins of this size.
-    alan_mode
-        Only applicable if bin_size > 1. If True, then take every
-        bin_size frequency, starting from the 0th channel. Otherwise
-        take the mean of each bin as the resulting frequency.
     """
 
     _f: tp.FreqType = attr.ib(
@@ -163,24 +157,6 @@ class FrequencyRange:
     _f_high: float = attr.ib(
         np.inf * u.MHz, validator=vld_unit("frequency"), kw_only=True
     )
-    bin_size: int = attr.ib(default=1, converter=int, kw_only=True)
-    alan_mode: bool = attr.ib(default=False, converter=bool, kw_only=True)
-    post_bin_f_low: tp.Freqtype = attr.ib(
-        0 * u.MHz, validator=vld_unit("frequency"), kw_only=True
-    )
-    post_bin_f_high: float = attr.ib(
-        np.inf * u.MHz, validator=vld_unit("frequency"), kw_only=True
-    )
-
-    @bin_size.validator
-    def _bin_size_validator(self, att, val):
-        if val < 1:
-            raise ValueError("Cannot use bin_size < 1")
-
-        if val > self._f.size:
-            raise ValueError(
-                "Cannot use bin_size larger than the total number of freqs."
-            )
 
     @_f.validator
     def _f_validator(self, att, val):
@@ -188,11 +164,18 @@ class FrequencyRange:
             raise ValueError("Cannot have negative input frequencies!")
         if val.ndim > 1:
             raise ValueError("Frequency array must be 1D!")
+        if np.any(np.diff(val) < 0):
+            raise ValueError("Input frequencies must be in increasing order!")
 
     @_f_high.validator
     def _fhigh_validator(self, att, val):
         if val <= self._f_low:
             raise ValueError("Cannot have f_high <= f_low.")
+
+    @property
+    def nfull(self) -> int:
+        """The number of frequencies in the full array."""
+        return self.freq_full.size
 
     @property
     def n(self) -> int:
@@ -214,39 +197,28 @@ class FrequencyRange:
         """Alias for `f`."""
         return self._f
 
-    @cached_property
+    @property
     def min(self):
         """Minimum frequency in the array."""
-        return self.freq.min()
+        return self.freq[0]
 
-    @cached_property
+    @property
     def max(self):
         """Maximum frequency in the array."""
-        return self.freq.max()
+        return self.freq[-1]
 
     @cached_property
-    def mask(self):
+    def mask(self) -> slice:
         """Mask used to take input frequencies to output frequencies."""
-        return np.logical_and(
-            self.freq_full >= self._f_low, self.freq_full <= self._f_high
+        return slice(
+            np.nonzero(self.freq_full >= self._f_low)[0][0],
+            np.nonzero(self.freq_full <= self._f_high)[0][-1] + 1,
         )
 
-    @cached_property
+    @property
     def freq(self):
         """The frequency array."""
-        if self.alan_mode:
-            freq = self.freq_full[self.mask][:: self.bin_size]
-        else:
-            freq = (
-                bin_array(self.freq_full[self.mask].value, self.bin_size)
-                * self.freq_full.unit
-            )
-
-        # We have a secondary mask that is done after binning, because sometimes the
-        # binning changes the exact edges so you get different results for if you
-        # mask before or after binning.
-        secondary_mask = (freq >= self.post_bin_f_low) & (freq <= self.post_bin_f_high)
-        return freq[secondary_mask]
+        return self.freq_full[self.mask]
 
     @cached_property
     def range(self):
@@ -360,11 +332,6 @@ class FrequencyRange:
         """Make a new frequency range object with updated parameters."""
         return attr.evolve(self, **kwargs)
 
-    def with_new_mask(self, **kwargs):
-        """Make a new read-only frequency range object with the same freqs."""
-        f = as_readonly(self.freq_full.value)
-        return attr.evolve(self, f=f * self.freq_full.unit, **kwargs)
-
     def decimate(
         self, bin_size: int, decimate_at: int | str = "centre", embed_mask: bool = True
     ) -> Self:
@@ -398,7 +365,6 @@ class FrequencyRange:
             f=new_freq,
             f_low=0 * u.MHz if embed_mask else self._f_low,
             f_high=np.inf * u.MHz if embed_mask else self._f_high,
-            bin_size=1,
         )
 
 
@@ -449,7 +415,7 @@ def gauss_smooth(
     assert isinstance(size, int)
 
     if decimate_at is None:
-        decimate_at = int(size / 2)
+        decimate_at = size // 2
 
     assert isinstance(decimate_at, int)
     assert decimate_at < size
