@@ -570,7 +570,7 @@ class LoadSpectrum:
         freq = freq.decimate(
             bin_size=freq_bin_size,
             decimate_at=0 if frequency_smoothing == "gauss" else "centre",
-            embed_mask=False,
+            embed_mask=True,
         )
 
         if freq_bin_size > 1:
