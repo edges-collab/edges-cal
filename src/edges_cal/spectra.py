@@ -490,6 +490,7 @@ class LoadSpectrum:
         time_coordinate_swpos: int = 0,
         allow_closest_time: bool = False,
         cache_dir: str | Path | None = None,
+        invalidate_cache: bool = False,
         **kwargs,
     ):
         """Instantiate the class from a given load name and directory.
@@ -523,6 +524,25 @@ class LoadSpectrum:
         -------
         :class:`LoadSpectrum`.
         """
+        if not invalidate_cache:
+            sig = inspect.signature(cls.from_edges3)
+            lc = locals()
+            defining_dict = {
+                p: lc[p] for p in sig.parameters if p not in ["cls", "invalidate_cache"]
+            }
+            hsh = iou.stable_hash(
+                (*tuple(defining_dict.values()), __version__.split(".")[0])
+            )
+
+            cache_dir = cache_dir or config["cal"]["cache-dir"]
+            if cache_dir is not None:
+                cache_dir = Path(cache_dir)
+                fname = cache_dir / f"{load_name}_{hsh}.h5"
+
+                if fname.exists():
+                    logger.info(f"Reading in cached integrated {load_name} spectra...")
+                    return hickle.load(fname)
+
         spec: GSData = io_obs.get_spectra(load_name).get_data()
         if temperature is None:
             start = spec.times.min()
@@ -542,27 +562,6 @@ class LoadSpectrum:
                 start_time=start,
                 end_time=end,
             ).to_value("K")
-
-        sig = inspect.signature(cls.from_edges3)
-        lc = locals()
-        defining_dict = {p: lc[p] for p in sig.parameters if p not in ["cls", "io_obs"]}
-        defining_dict["spec"] = spec
-        defining_dict["mean_temp"] = temperature
-
-        hsh = iou.stable_hash(
-            (*tuple(defining_dict.values()), __version__.split(".")[0])
-        )
-
-        cache_dir = cache_dir or config["cal"]["cache-dir"]
-        if cache_dir is not None:
-            cache_dir = Path(cache_dir)
-            fname = cache_dir / f"{load_name}_{hsh}.h5"
-
-            if fname.exists():
-                logger.info(
-                    f"Reading in previously-created integrated {load_name} spectra..."
-                )
-                return hickle.load(fname)
 
         freq = FrequencyRange.from_edges(f_low=f_low, f_high=f_high)
         q = dicke_calibration(spec).data[0, 0, :, freq.mask]
@@ -614,7 +613,6 @@ class LoadSpectrum:
     def between_freqs(self, f_low: tp.FreqType, f_high: tp.FreqType = np.inf * un.MHz):
         """Return a new LoadSpectrum that is masked between new frequencies."""
         freq = self.freq.clone(f_low=f_low, f_high=f_high)
-        print("Flow, Fhigh", f_low, f_high)
         return attr.evolve(
             self,
             freq=freq,
