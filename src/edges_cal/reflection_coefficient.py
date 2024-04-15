@@ -19,6 +19,8 @@ from astropy import units
 from astropy.constants import c as speed_of_light
 from edges_io import types as tp
 from hickleable import hickleable
+from scipy.optimize import minimize
+from scipy.signal.windows import blackmanharris
 
 from . import modelling as mdl
 from .tools import unit_converter
@@ -705,3 +707,32 @@ def path_length_correction_edges3(
     T = (Z - 50.0) / (Z + 50.0)
 
     return T, s11, s12
+
+
+def rephase(delay: float, freq: np.ndarray, s11: np.ndarray):
+    """Rephase an S11 with a given delay."""
+    return s11 * np.exp(2 * np.pi * freq * delay * 1j)
+
+
+def get_rough_delay(freq: np.ndarray, s11: np.ndarray):
+    """Calculate the delay of an S11 using FFT."""
+    power = np.abs(np.fft.fft(s11 * blackmanharris(len(s11)))) ** 2
+    kk = np.fft.fftfreq(len(s11), d=freq[1] - freq[0])
+
+    return -kk[np.argmax(power)]
+
+
+def get_delay(freq: tp.FreqType, s11: np.ndarray) -> units.Quantity[units.microsecond]:
+    """Find the delay of an S11 using a minimization routine."""
+    freq = freq.to_value("MHz")  # resulting delay in microsecond
+
+    def _objfun(delay, freq: np.ndarray, s11: np.ndarray):
+        reph = rephase(delay, freq, s11)
+        return -np.abs(np.sum(reph))
+
+    start = -get_rough_delay(freq, s11)
+    dk = 1 / (freq[1] - freq[0])
+    res = minimize(
+        _objfun, x0=(start,), bounds=((start - dk, start + dk),), args=(freq, s11)
+    )
+    return res.x * units.microsecond

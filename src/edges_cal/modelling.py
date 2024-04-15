@@ -295,13 +295,13 @@ class LogTransform(ModelTransform):
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
-        return np.log(x)
+        return np.log(x / self.scale)
 
 
 @hickleable()
 @attrs.define(frozen=True, kw_only=True, slots=False)
 class Log10Transform(ModelTransform):
-    """A transform that takes the logarithm of the input."""
+    """A transform that takes the base10 logarithm of the input."""
 
     scale: float = attrs.field(default=1.0)
 

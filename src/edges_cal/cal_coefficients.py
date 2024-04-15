@@ -449,6 +449,9 @@ class Load:
             **reflection_kwargs,
         )
 
+        if refl.model_delay is None:
+            refl = refl.with_model_delay()
+
         return cls(spectrum=spec, reflections=refl)
 
     def get_temp_with_loss(self, freq: tp.FreqType | None = None):
