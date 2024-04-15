@@ -794,9 +794,6 @@ class CalibrationObservation:
             **receiver_kwargs,
         )
 
-        f_low = max(receiver.freq.min, f_low)
-        f_high = min(receiver.freq.max, f_high)
-
         if "default" not in spectrum_kwargs:
             spectrum_kwargs["default"] = {}
 
