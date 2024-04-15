@@ -722,7 +722,9 @@ def get_rough_delay(freq: np.ndarray, s11: np.ndarray):
     return -kk[np.argmax(power)]
 
 
-def get_delay(freq: tp.FreqType, s11: np.ndarray) -> units.Quantity[units.microsecond]:
+def get_delay(
+    freq: tp.FreqType, s11: np.ndarray, optimize: bool = False
+) -> units.Quantity[units.microsecond]:
     """Find the delay of an S11 using a minimization routine."""
     freq = freq.to_value("MHz")  # resulting delay in microsecond
 
@@ -730,9 +732,14 @@ def get_delay(freq: tp.FreqType, s11: np.ndarray) -> units.Quantity[units.micros
         reph = rephase(delay, freq, s11)
         return -np.abs(np.sum(reph))
 
-    start = -get_rough_delay(freq, s11)
-    dk = 1 / (freq[1] - freq[0])
-    res = minimize(
-        _objfun, x0=(start,), bounds=((start - dk, start + dk),), args=(freq, s11)
-    )
-    return res.x * units.microsecond
+    if optimize:
+        start = -get_rough_delay(freq, s11)
+        dk = 1 / (freq[1] - freq[0])
+        res = minimize(
+            _objfun, x0=(start,), bounds=((start - dk, start + dk),), args=(freq, s11)
+        )
+        return res.x * units.microsecond
+
+    delays = np.arange(-1e-3, 0.1, 1e-4)
+    obj = [_objfun(d, freq, s11) for d in delays]
+    return delays[np.argmin(obj)] * units.microsecond
