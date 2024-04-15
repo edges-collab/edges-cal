@@ -449,7 +449,7 @@ class Load:
             **reflection_kwargs,
         )
 
-        if refl.model_delay is None:
+        if refl.model_delay == 0 * un.s:
             refl = refl.with_model_delay()
 
         return cls(spectrum=spec, reflections=refl)
