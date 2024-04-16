@@ -27,10 +27,10 @@ from hickleable import hickleable
 from matplotlib import pyplot as plt
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 
+from . import loss, s11
 from . import modelling as mdl
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
-from . import s11
 from .cached_property import cached_property, safe_property
 from .spectra import LoadSpectrum
 from .tools import FrequencyRange, bin_array, get_data_path
@@ -769,6 +769,10 @@ class CalibrationObservation:
             range. The final output will be calibrated only between the given freq
             range, but the S11 models themselves can be fit over a broader set of
             frequencies.
+        loss_models
+            A dictionary of loss models for each source. If a particular source has no
+            loss its entry can be missing or None. By default, the only source with loss
+            is the hot_load, which uses a 4" cable.
         """
         if f_high < f_low:
             raise ValueError("f_high must be larger than f_low!")
@@ -777,7 +781,11 @@ class CalibrationObservation:
         s11_kwargs = s11_kwargs or {}
         internal_switch_kwargs = internal_switch_kwargs or {}
         receiver_kwargs = receiver_kwargs or {}
-        loss_models = loss_models or {}
+        loss_models = loss_models or {
+            "hot_load": loss.get_cable_loss_model(
+                "UT-141C-SP", cable_length=4 * un.imperial.inch
+            )
+        }
 
         for v in [spectrum_kwargs, s11_kwargs, internal_switch_kwargs, receiver_kwargs]:
             assert isinstance(v, dict)
