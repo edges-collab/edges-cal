@@ -173,6 +173,9 @@ ignore-init-module-imports = true
 "src/*/__init__.py" = [
     "F401", "E402",
 ]
+"src/edges_cal/alanmode.py" = [
+    "N803",
+]
 
 
 [tool.ruff.lint.pydocstyle]
