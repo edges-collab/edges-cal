@@ -9,7 +9,7 @@ from astropy import units as un
 from astropy.constants import eps0, mu0
 from pygsdata.attrs import unit_validator as unv
 
-from . import types as tp
+from .alanmode import types as tp
 
 
 def skin_depth(freq: tp.FreqType, conductivity: tp.Conductivity) -> un.Quantity[un.m]:
@@ -116,7 +116,7 @@ class TransmissionLine:
         Zp = load_impedance
 
         γ = self.propagation_constant
-        γl = γ * line_length
+        γl = (γ * line_length).to_value("")
 
         denom = (Zo**2 + Zp**2) * np.sinh(γl) + 2 * Zo * Zp * np.cosh(γl)
 
@@ -244,7 +244,7 @@ class CoaxialCable:
 
     def resistance_per_metre(self, freq: tp.FreqType) -> un.Quantity[un.ohm / un.m]:
         """Get the resistance per metre of the cable."""
-        return 2 * np.pi * self.inductance_per_metre * self.disp(freq)
+        return 2 * np.pi * freq * self.inductance_per_metre * self.disp(freq)
 
     def spectral_inductance_per_metre(self, freq: tp.FreqType) -> tp.InductanceType:
         """Get the spectral inductance per metre of the cable."""

@@ -390,7 +390,7 @@ class Load:
         f_high: tp.FreqType = np.inf * un.MHz,
         reflection_kwargs: dict | None = None,
         spec_kwargs: dict | None = None,
-        loss_kwargs: dict | None = None,
+        loss_model: callable | None = None,
         ambient_temperature: float | None = None,
         restrict_s11_freqs: bool = False,
     ):
@@ -423,7 +423,6 @@ class Load:
             spec_kwargs = {}
         if not reflection_kwargs:
             reflection_kwargs = {}
-        loss_kwargs = loss_kwargs or {}
 
         # For the LoadSpectrum, we can specify both f_low/f_high and f_range_keep.
         # The first pair is what defines what gets read in and smoothed/averaged.
@@ -452,7 +451,12 @@ class Load:
         if refl.model_delay == 0 * un.s:
             refl = refl.with_model_delay()
 
-        return cls(spectrum=spec, reflections=refl)
+        return cls(
+            spectrum=spec,
+            reflections=refl,
+            ambient_temperature=ambient_temperature,
+            loss_model=loss_model,
+        )
 
     def get_temp_with_loss(self, freq: tp.FreqType | None = None):
         """Calculate the temperature of the load accounting for loss."""
@@ -722,7 +726,7 @@ class CalibrationObservation:
         sources: tuple[str] = ("ambient", "hot_load", "open", "short"),
         receiver_kwargs: dict[str, Any] | None = None,
         restrict_s11_model_freqs: bool = True,
-        hot_load_loss_kwargs: dict[str, Any] | None = None,
+        loss_models: dict[str, callable] | None = None,
         **kwargs,
     ) -> CalibrationObservation:
         """Create the object from an edges-io observation.
@@ -773,7 +777,7 @@ class CalibrationObservation:
         s11_kwargs = s11_kwargs or {}
         internal_switch_kwargs = internal_switch_kwargs or {}
         receiver_kwargs = receiver_kwargs or {}
-        hot_load_loss_kwargs = hot_load_loss_kwargs or {}
+        loss_models = loss_models or {}
 
         for v in [spectrum_kwargs, s11_kwargs, internal_switch_kwargs, receiver_kwargs]:
             assert isinstance(v, dict)
@@ -817,6 +821,7 @@ class CalibrationObservation:
                 },
                 ambient_temperature=ambient_temperature,
                 restrict_s11_freqs=restrict_s11_model_freqs,
+                loss_model=loss_models.get(name, None),
             )
 
         loads = {src: get_load(src) for src in sources}
