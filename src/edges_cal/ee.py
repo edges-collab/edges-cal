@@ -21,7 +21,7 @@ def skin_depth(freq: tp.FreqType, conductivity: tp.Conductivity) -> un.Quantity[
 class TransmissionLine:
     """A transmission line."""
 
-    freq: tp.FreqType = attrs.field(validator=unv("frequency"))
+    freq: tp.FreqType = attrs.field(validator=unv(un.Hz))
     resistance = attrs.field(validator=unv(un.ohm / un.m))
     inductance = attrs.field(validator=unv(un.ohm * un.s / un.m))
     conductance = attrs.field(validator=unv(un.siemens / un.m))
