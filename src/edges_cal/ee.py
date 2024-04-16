@@ -9,7 +9,7 @@ from astropy import units as un
 from astropy.constants import eps0, mu0
 from pygsdata.attrs import unit_validator as unv
 
-from .alanmode import types as tp
+from . import types as tp
 
 
 def skin_depth(freq: tp.FreqType, conductivity: tp.Conductivity) -> un.Quantity[un.m]:
