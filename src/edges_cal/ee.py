@@ -23,9 +23,9 @@ class TransmissionLine:
 
     freq: tp.FreqType = attrs.field(validator=unv("frequency"))
     resistance = attrs.field(validator=unv(un.ohm / un.m))
-    inductance = attrs.field(validator=unv("electromagnetic field strength"))
-    conductance = attrs.field(validator=unv("electrical conductivity"))
-    capacitance = attrs.field(validator=unv("permittivity"))
+    inductance = attrs.field(validator=unv(un.ohm * un.s / un.m))
+    conductance = attrs.field(validator=unv(un.siemens / un.m))
+    capacitance = attrs.field(validator=unv(un.siemens * un.s / un.m))
 
     @cached_property
     def angular_freq(self) -> tp.FreqType:
@@ -160,10 +160,10 @@ class CoaxialCable:
     }
 
     outer_radius: tp.LengthType = attrs.field(
-        validator=[unv("length"), attrs.validators.gt(0)]
+        validator=[unv(un.m), attrs.validators.gt(0)]
     )
     inner_radius: tp.LengthType = attrs.field(
-        validator=[unv("length"), attrs.validators.gt(0)]
+        validator=[unv(un.m), attrs.validators.gt(0)]
     )
     outer_material: str = attrs.field(converter=str)
     inner_material: str = attrs.field(converter=str)
@@ -172,10 +172,10 @@ class CoaxialCable:
     )
 
     outer_conductivity: tp.Conductivity = attrs.field(
-        validator=[unv("conductivity"), attrs.validators.gt(0)]
+        validator=[unv(un.siemens / un.m), attrs.validators.gt(0)]
     )
     inner_conductivity: tp.Conductivity = attrs.field(
-        validator=[unv("conductivity"), attrs.validators.gt(0)]
+        validator=[unv(un.siemens / un.m), attrs.validators.gt(0)]
     )
 
     @outer_conductivity.default
