@@ -17,14 +17,11 @@ import attrs
 import numpy as np
 from astropy import units
 from astropy.constants import c as speed_of_light
-from astropy.constants import eps0, mu0
 from edges_io import types as tp
 from hickleable import hickleable
-from pygsdata.attrs import unit_validator as unv
 from scipy.optimize import minimize
 from scipy.signal.windows import blackmanharris
 
-from . import ee
 from . import modelling as mdl
 from .tools import unit_converter
 
@@ -355,10 +352,10 @@ class CalkitStandard:
         converter=unit_converter(units.ohm)
     )
     offset_impedance: float | tp.ImpedanceType = attrs.field(
-        50.0 * units.ohm, converter=unit_converter(units.ohm)
+        default=50.0 * units.ohm, converter=unit_converter(units.ohm)
     )
     offset_delay: float | tp.TimeType = attrs.field(
-        30.0 * units.picosecond, converter=unit_converter(units.picosecond)
+        default=30.0 * units.picosecond, converter=unit_converter(units.picosecond)
     )
     offset_loss: float | units.Quantity[units.Gohm / units.s] = attrs.field(
         default=2.2 * units.Gohm / units.s,
@@ -640,244 +637,6 @@ def agilent_85033E(  # noqa: N802
         calkit.short.reflection_coefficient(f * units.MHz),
         calkit.match.reflection_coefficient(f * units.MHz),
     )
-
-
-@attrs.define(kw_only=True, frozen=True, slots=False)
-class CoaxialCable:
-    """Properties of a coaxial cable.
-
-    These properties are those used in the cabl2 function in edges.c.
-
-    Parameters
-    ----------
-    outer_radius`
-        The outer diameter of the cable. Equivalent to b in cabl2.
-    inner_radius
-        The inner diameter of the cable. Equivalent to a in cabl2.
-    dielectric
-        The dielectric constant of the cable. Equivalent to diel in cabl2.
-    outer_material
-        The material that forms the outer conductor of the cable.
-    inner_material
-        The material that forms the inner conductor of the cable.
-    outer_conductivity
-        The conductivity of the outer conductor. Used to get the skin depth. Only
-        required if the material is not in the known materials.
-    inner_conductivity
-        The conductivity of the inner conductor. Used to get the skin depth. Only
-        required if the material is not in the known materials.
-    """
-
-    # These conductivities are taken from Alan's code in cabl2
-    conductivities: dict[str, tp.Conducitivity] = {
-        "copper": 5.96e07 * units.siemens / units.m,
-        "brass": 5.96e07 * 0.29 * units.siemens / units.m,
-        "stainless steel": 5.96e07 * 0.024 * units.siemens / units.m,
-        "tinned copper": 5.96e07 * 0.8 * units.siemens / units.m,
-    }
-
-    outer_radius: tp.LengthType = attrs.field(
-        validator=[unv("length"), attrs.validators.gt(0)]
-    )
-    inner_radius: tp.LengthType = attrs.field(
-        validator=[unv("length"), attrs.validators.gt(0)]
-    )
-    outer_material: str = attrs.field(converter=str)
-    inner_material: str = attrs.field(converter=str)
-    relative_dielectric: float = attrs.field(
-        converter=float, validator=attrs.validators.gt(0)
-    )
-
-    outer_conductivity: tp.Conductivity = attrs.field(
-        validator=[unv("conductivity"), attrs.validators.gt(0)]
-    )
-    inner_conductivity: tp.Conductivity = attrs.field(
-        validator=[unv("conductivity"), attrs.validators.gt(0)]
-    )
-
-    @outer_conductivity.default
-    def _default_outer_conductivity(self):
-        try:
-            return self.conductivities[self.outer_material]
-        except KeyError as e:
-            raise ValueError(
-                f"Unknown material: {self.outer_material}. Either choose from "
-                f"{self.conductivities.keys()} or specify outer_condutivity directly."
-            ) from e
-
-    @inner_conductivity.default
-    def _default_inner_conductivity(self):
-        try:
-            return self.conductivities[self.inner_material]
-        except KeyError as e:
-            raise ValueError(
-                f"Unknown material: {self.inner_material}. Either choose from "
-                f"{self.conductivities.keys()} or specify inner_condutivity directly."
-            ) from e
-
-    def outer_skin_depth(self, freq: tp.FreqType) -> tp.LengthType:
-        """Get the skin depth of the outer material at a given frequency.
-
-        See https://en.wikipedia.org/wiki/Skin_effect#Examples
-        """
-        return ee.skin_depth(freq, self.outer_conductivity)
-
-    def inner_skin_depth(self, freq: tp.FreqType) -> tp.LengthType:
-        """Get the skin depth of the inner material at a given frequency.
-
-        See https://en.wikipedia.org/wiki/Skin_effect
-        """
-        return ee.skin_depth(freq, self.inner_conductivity)
-
-    @property
-    def inductance_per_metre(self) -> tp.InductanceType:
-        """Get the inductance per metre of the cable.
-
-        See https://en.wikipedia.org/wiki/Inductance#Inductance_of_a_coaxial_cable.
-
-        This is equivalent to Alan's "L" in cabl2.
-        """
-        return ((mu0 / (2 * np.pi)) * np.log(self.outer_radius / self.inner_radius)).to(
-            "H/m"
-        )
-
-    @property
-    def capacitance_per_metre(self) -> tp.Conducitivity:
-        """Get the capacitance per metre of the cable.
-
-        See https://en.wikipedia.org/wiki/Coaxial_cable#Physical_parameters
-        """
-        return (
-            (2 * np.pi * eps0 * self.relative_dielectric)
-            / np.log(self.outer_radius / self.inner_radius)
-        ).to("F/m")
-
-    def disp(self, freq: tp.FreqType):
-        """TODO: what the hell is this."""
-        a = mu0 * self.inner_skin_depth(freq) / (4 * np.pi * self.inner_radius)
-        b = mu0 * self.outer_skin_depth(freq) / (4 * np.pi * self.outer_radius)
-        return (a + b) / self.inductance_per_metre
-
-    def resistance_per_metre(
-        self, freq: tp.FreqType
-    ) -> units.Quantity[units.ohm / units.m]:
-        """Get the resistance per metre of the cable."""
-        return 2 * np.pi * self.inductance_per_metre * self.disp(freq)
-
-    def spectral_inductance_per_metre(self, freq: tp.FreqType) -> tp.InductanceType:
-        """Get the spectral inductance per metre of the cable."""
-        return self.inductance_per_metre * (1 + self.disp(freq))
-
-    def conductance_per_metre(
-        self, freq: tp.FreqType
-    ) -> units.Quantity[units.m / units.ohm]:
-        """Get the conductance per metre of the cable."""
-        return (
-            2 * np.pi * self.capacitance_per_metre * freq * 2e-4
-        )  # todo: why the 2e-4?
-
-    def as_transmission_line(self, freq: tp.FreqType) -> ee.TransmissionLine:
-        """Return a TransmissionLine object for the cable."""
-        return ee.TransmissionLine(
-            frequency=freq,
-            resistance=self.resistance_per_metre(freq),
-            inductance=self.spectral_inductance_per_metre(freq),
-            conductance=self.conductance_per_metre(freq),
-            capacitance=self.capacitance_per_metre,
-        )
-
-    def characteristic_impedance(self, freq: tp.FreqType) -> tp.OhmType:
-        """Get the characteristic impedance of the cable at a given frequency.
-
-        See https://en.wikipedia.org/wiki/Coaxial_cable#Derived_electrical_parameters
-        """
-        return self.as_transmission_line(freq).characteristic_impedance
-
-    def propagation_constant(self, freq: tp.FreqType) -> tp.DimlessType:
-        """Get the propagation constant of the cable at a given frequency."""
-        return self.as_transmission_line(freq).propagation_constant
-
-    def scattering_parameters(
-        self,
-        freq: tp.FreqType,
-        line_length: tp.LengthType,
-    ) -> np.ndarray:
-        """Get the scattering matrix of the cable at a given frequency."""
-        return self.as_transmission_line(freq).scattering_parameters(
-            load_impedance=50 * units.ohm, line_length=line_length
-        )
-
-
-def compute_cable_reflections(
-    freq: tp.FreqType, delay: tp.TimeType, gamma_in: float, lossf: float, dielf: float
-) -> tuple[float, float, float]:
-    """
-    Calculate the path length correction for the EDGES-3 LNA.
-
-    Notes
-    -----
-    The 8-position switch memo is 303 and the correction for the path to the
-    LNA for the calibration of the LNA s11 is described in memos 367 and 392.
-
-    corrcsv.c corrects lna s11 file for the different vna path to lna args:
-    s11.csv -cablen -cabdiel -cabloss outputs c_s11.csv
-
-    The actual numbers are slightly temperature dependent
-
-    corrcsv s11.csv -cablen 4.26 -cabdiel -1.24 -cabloss -91.5
-
-    and need to be determined using a calibration test like that described in
-    memos 369 and 361. Basically the path length corrections can be "tuned" by
-    minimizing the ripple on the calibrated spectrum of the open or shorted
-    cable.
-
-    cablen --> length in inches
-    cabloss --> loss correction percentage
-    cabdiel --> dielectric correction in percentage
-
-    """
-    freq = freq.to("Hz").value
-    length = (delay * speed_of_light).to_value("m")
-
-    b = 0.1175 * 2.54e-2 * 0.5
-    a = 0.0362 * 2.54e-2 * 0.5
-    diel = 2.05 * dielf  # UT-141C-SP
-    # for tinned copper
-    d2 = np.sqrt(1.0 / (np.pi * 4.0 * np.pi * 1e-7 * 5.96e07 * 0.8 * lossf))
-    # skin depth at 1 Hz for copper
-    d = np.sqrt(1.0 / (np.pi * 4.0 * np.pi * 1e-7 * 5.96e07 * lossf))
-
-    L = (4.0 * np.pi * 1e-7 / (2.0 * np.pi)) * np.log(b / a)
-    C = 2.0 * np.pi * 8.854e-12 * diel / np.log(b / a)
-
-    La = 4.0 * np.pi * 1e-7 * d / (4.0 * np.pi * a)
-    Lb = 4.0 * np.pi * 1e-7 * d2 / (4.0 * np.pi * b)
-    disp = (La + Lb) / L
-    R = 2.0 * np.pi * L * disp * np.sqrt(freq)
-    L = L * (1.0 + disp / np.sqrt(freq))
-    G = 0
-
-    if diel > 1.2:
-        G = 2.0 * np.pi * C * freq * 2e-4  # // 2e-4 is the loss tangent for teflon
-
-    Zcab = np.sqrt((1j * 2 * np.pi * freq * L + R) / (1j * 2 * np.pi * freq * C + G))
-    g = np.sqrt((1j * 2 * np.pi * freq * L + R) * (1j * 2 * np.pi * freq * C + G))
-
-    T = (50.0 - Zcab) / (50.0 + Zcab)
-    Vin = np.exp(+g * length) + T * np.exp(-g * length)
-    Iin = (np.exp(+g * length) - T * np.exp(-g * length)) / Zcab
-    Vout = 1 + T  # Iout = (1 - T)/Zcab
-    s11 = ((Vin / Iin) - 50) / ((Vin / Iin) + 50)  # same as s22
-    VVin = Vin + 50.0 * Iin
-    s12 = 2 * Vout / VVin  # same as s21
-
-    Z = 50.0 * (1 + gamma_in) / (1 - gamma_in)
-    T = (Z - Zcab) / (Z + Zcab)
-    T = T * np.exp(-g * 2 * length)
-    Z = Zcab * (1 + T) / (1 - T)
-    T = (Z - 50.0) / (Z + 50.0)
-
-    return T, s11, s12
 
 
 def path_length_correction_edges3(

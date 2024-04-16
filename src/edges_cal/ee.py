@@ -6,6 +6,7 @@ import attrs
 import numpy as np
 from astropy import constants as cnst
 from astropy import units as un
+from astropy.constants import eps0, mu0
 from pygsdata.attrs import unit_validator as unv
 
 from . import types as tp
@@ -122,3 +123,165 @@ class TransmissionLine:
         s11 = s22 = (Zo**2 - Zp**2) * np.sinh(γl) / denom
         s12 = s21 = 2 * Zo * Zp / denom
         return [[s11, s12], [s21, s22]]
+
+
+@attrs.define(kw_only=True, frozen=True, slots=False)
+class CoaxialCable:
+    """Properties of a coaxial cable.
+
+    These properties are those used in the cabl2 function in edges.c.
+
+    Parameters
+    ----------
+    outer_radius`
+        The outer diameter of the cable. Equivalent to b in cabl2.
+    inner_radius
+        The inner diameter of the cable. Equivalent to a in cabl2.
+    dielectric
+        The dielectric constant of the cable. Equivalent to diel in cabl2.
+    outer_material
+        The material that forms the outer conductor of the cable.
+    inner_material
+        The material that forms the inner conductor of the cable.
+    outer_conductivity
+        The conductivity of the outer conductor. Used to get the skin depth. Only
+        required if the material is not in the known materials.
+    inner_conductivity
+        The conductivity of the inner conductor. Used to get the skin depth. Only
+        required if the material is not in the known materials.
+    """
+
+    # These conductivities are taken from Alan's code in cabl2
+    conductivities: dict[str, tp.Conducitivity] = {
+        "copper": 5.96e07 * un.siemens / un.m,
+        "brass": 5.96e07 * 0.29 * un.siemens / un.m,
+        "stainless steel": 5.96e07 * 0.024 * un.siemens / un.m,
+        "tinned copper": 5.96e07 * 0.8 * un.siemens / un.m,
+    }
+
+    outer_radius: tp.LengthType = attrs.field(
+        validator=[unv("length"), attrs.validators.gt(0)]
+    )
+    inner_radius: tp.LengthType = attrs.field(
+        validator=[unv("length"), attrs.validators.gt(0)]
+    )
+    outer_material: str = attrs.field(converter=str)
+    inner_material: str = attrs.field(converter=str)
+    relative_dielectric: float = attrs.field(
+        converter=float, validator=attrs.validators.gt(0)
+    )
+
+    outer_conductivity: tp.Conductivity = attrs.field(
+        validator=[unv("conductivity"), attrs.validators.gt(0)]
+    )
+    inner_conductivity: tp.Conductivity = attrs.field(
+        validator=[unv("conductivity"), attrs.validators.gt(0)]
+    )
+
+    @outer_conductivity.default
+    def _default_outer_conductivity(self):
+        try:
+            return self.conductivities[self.outer_material]
+        except KeyError as e:
+            raise ValueError(
+                f"Unknown material: {self.outer_material}. Either choose from "
+                f"{self.conductivities.keys()} or specify outer_condutivity directly."
+            ) from e
+
+    @inner_conductivity.default
+    def _default_inner_conductivity(self):
+        try:
+            return self.conductivities[self.inner_material]
+        except KeyError as e:
+            raise ValueError(
+                f"Unknown material: {self.inner_material}. Either choose from "
+                f"{self.conductivities.keys()} or specify inner_condutivity directly."
+            ) from e
+
+    def outer_skin_depth(self, freq: tp.FreqType) -> tp.LengthType:
+        """Get the skin depth of the outer material at a given frequency.
+
+        See https://en.wikipedia.org/wiki/Skin_effect#Examples
+        """
+        return skin_depth(freq, self.outer_conductivity)
+
+    def inner_skin_depth(self, freq: tp.FreqType) -> tp.LengthType:
+        """Get the skin depth of the inner material at a given frequency.
+
+        See https://en.wikipedia.org/wiki/Skin_effect
+        """
+        return skin_depth(freq, self.inner_conductivity)
+
+    @property
+    def inductance_per_metre(self) -> tp.InductanceType:
+        """Get the inductance per metre of the cable.
+
+        See https://en.wikipedia.org/wiki/Inductance#Inductance_of_a_coaxial_cable.
+
+        This is equivalent to Alan's "L" in cabl2.
+        """
+        return ((mu0 / (2 * np.pi)) * np.log(self.outer_radius / self.inner_radius)).to(
+            "H/m"
+        )
+
+    @property
+    def capacitance_per_metre(self) -> tp.Conducitivity:
+        """Get the capacitance per metre of the cable.
+
+        See https://en.wikipedia.org/wiki/Coaxial_cable#Physical_parameters
+        """
+        return (
+            (2 * np.pi * eps0 * self.relative_dielectric)
+            / np.log(self.outer_radius / self.inner_radius)
+        ).to("F/m")
+
+    def disp(self, freq: tp.FreqType):
+        """TODO: what the hell is this."""
+        a = mu0 * self.inner_skin_depth(freq) / (4 * np.pi * self.inner_radius)
+        b = mu0 * self.outer_skin_depth(freq) / (4 * np.pi * self.outer_radius)
+        return (a + b) / self.inductance_per_metre
+
+    def resistance_per_metre(self, freq: tp.FreqType) -> un.Quantity[un.ohm / un.m]:
+        """Get the resistance per metre of the cable."""
+        return 2 * np.pi * self.inductance_per_metre * self.disp(freq)
+
+    def spectral_inductance_per_metre(self, freq: tp.FreqType) -> tp.InductanceType:
+        """Get the spectral inductance per metre of the cable."""
+        return self.inductance_per_metre * (1 + self.disp(freq))
+
+    def conductance_per_metre(self, freq: tp.FreqType) -> un.Quantity[un.m / un.ohm]:
+        """Get the conductance per metre of the cable."""
+        return (
+            2 * np.pi * self.capacitance_per_metre * freq * 2e-4
+        )  # todo: why the 2e-4?
+
+    def as_transmission_line(self, freq: tp.FreqType) -> TransmissionLine:
+        """Return a TransmissionLine object for the cable."""
+        return TransmissionLine(
+            frequency=freq,
+            resistance=self.resistance_per_metre(freq),
+            inductance=self.spectral_inductance_per_metre(freq),
+            conductance=self.conductance_per_metre(freq),
+            capacitance=self.capacitance_per_metre,
+        )
+
+    def characteristic_impedance(self, freq: tp.FreqType) -> tp.OhmType:
+        """Get the characteristic impedance of the cable at a given frequency.
+
+        See https://en.wikipedia.org/wiki/Coaxial_cable#Derived_electrical_parameters
+        """
+        return self.as_transmission_line(freq).characteristic_impedance
+
+    def propagation_constant(self, freq: tp.FreqType) -> tp.DimlessType:
+        """Get the propagation constant of the cable at a given frequency."""
+        return self.as_transmission_line(freq).propagation_constant
+
+    def scattering_parameters(
+        self,
+        freq: tp.FreqType,
+        line_length: tp.LengthType,
+    ) -> np.ndarray:
+        """Get the scattering matrix of the cable at a given frequency."""
+        return self.as_transmission_line(freq).scattering_parameters(
+            load_impedance=50 * un.ohm, line_length=line_length
+        )
