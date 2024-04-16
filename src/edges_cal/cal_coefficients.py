@@ -466,7 +466,7 @@ class Load:
         if self.loss_model is None:
             return self.spectrum.temp_ave * np.ones(len(freq))
 
-        gain = self.loss_model(freq)
+        gain = self.loss_model(freq, self.reflections.s11_model(freq))
         return gain * self.spectrum.temp_ave + (1 - gain) * self.ambient_temperature
 
     @cached_property
