@@ -824,7 +824,10 @@ class CalibrationObservation:
                 loss_model=loss_models.get(name, None),
             )
 
-        loads = {src: get_load(src) for src in sources}
+        amb = get_load("ambient")
+        loads = {
+            src: get_load(src, ambient_temperature=amb.temp_ave) for src in sources
+        }
 
         return cls(
             loads=loads,
