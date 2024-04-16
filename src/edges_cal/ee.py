@@ -258,7 +258,7 @@ class CoaxialCable:
     def as_transmission_line(self, freq: tp.FreqType) -> TransmissionLine:
         """Return a TransmissionLine object for the cable."""
         return TransmissionLine(
-            frequency=freq,
+            freq=freq,
             resistance=self.resistance_per_metre(freq),
             inductance=self.spectral_inductance_per_metre(freq),
             conductance=self.conductance_per_metre(freq),
