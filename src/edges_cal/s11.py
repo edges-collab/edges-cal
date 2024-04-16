@@ -25,12 +25,12 @@ import numpy as np
 from astropy import units as un
 from astropy.constants import c as speed_of_light
 from edges_io import io, io3
-from edges_io import types as tp
 from hickleable import hickleable
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
+from . import types as tp
 from .modelling import (
     ComplexMagPhaseModel,
     ComplexRealImagModel,

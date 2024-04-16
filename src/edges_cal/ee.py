@@ -6,8 +6,9 @@ import attrs
 import numpy as np
 from astropy import constants as cnst
 from astropy import units as un
-from edges_io import types as tp
 from pygsdata.attrs import unit_validator as unv
+
+from . import types as tp
 
 
 def skin_depth(freq: tp.FreqType, conductivity: tp.Conducitivity) -> un.Quantity[un.m]:
