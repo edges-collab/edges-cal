@@ -12,7 +12,7 @@ from pygsdata.attrs import unit_validator as unv
 from . import types as tp
 
 
-def skin_depth(freq: tp.FreqType, conductivity: tp.Conducitivity) -> un.Quantity[un.m]:
+def skin_depth(freq: tp.FreqType, conductivity: tp.Conductivity) -> un.Quantity[un.m]:
     """Calculate the skin depth of a conducting material."""
     return np.sqrt(1.0 / (np.pi * freq * cnst.mu0 * conductivity)).to("m")
 
@@ -152,7 +152,7 @@ class CoaxialCable:
     """
 
     # These conductivities are taken from Alan's code in cabl2
-    conductivities: dict[str, tp.Conducitivity] = {
+    conductivities: dict[str, tp.Conductivity] = {
         "copper": 5.96e07 * un.siemens / un.m,
         "brass": 5.96e07 * 0.29 * un.siemens / un.m,
         "stainless steel": 5.96e07 * 0.024 * un.siemens / un.m,
@@ -225,7 +225,7 @@ class CoaxialCable:
         )
 
     @property
-    def capacitance_per_metre(self) -> tp.Conducitivity:
+    def capacitance_per_metre(self) -> tp.Conductivity:
         """Get the capacitance per metre of the cable.
 
         See https://en.wikipedia.org/wiki/Coaxial_cable#Physical_parameters
