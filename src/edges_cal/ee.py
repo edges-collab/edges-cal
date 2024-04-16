@@ -157,6 +157,7 @@ class CoaxialCable:
         "brass": 5.96e07 * 0.29 * un.siemens / un.m,
         "stainless steel": 5.96e07 * 0.024 * un.siemens / un.m,
         "tinned copper": 5.96e07 * 0.8 * un.siemens / un.m,
+        "silver plated copper": 5.96e07 * un.siemens / un.m,
     }
 
     outer_radius: tp.LengthType = attrs.field(
@@ -285,3 +286,65 @@ class CoaxialCable:
         return self.as_transmission_line(freq).scattering_parameters(
             load_impedance=50 * un.ohm, line_length=line_length
         )
+
+
+KNOWN_CABLES = {
+    "balun-tube": CoaxialCable(
+        outer_radius=0.37 / 2 * un.imperial.inch,
+        inner_radius=5 / 64 * un.imperial.inch,
+        outer_material="brass",
+        inner_material="copper",
+        relative_dielectric=1.07,
+    ),
+    "lowband-balun-tube": CoaxialCable(
+        outer_radius=0.75 / 2 * un.imperial.inch,
+        inner_radius=5 / 32 * un.imperial.inch,
+        outer_material="brass",
+        inner_material="copper",
+        relative_dielectric=1.07,
+    ),
+    "midband-balun-tube": CoaxialCable(
+        outer_radius=1.25 / 2 * un.imperial.inch,
+        inner_radius=1 / 4 * un.imperial.inch,
+        outer_material="brass",
+        inner_material="copper",
+        relative_dielectric=1.2,
+    ),
+    "SC3792 Connector": CoaxialCable(
+        outer_radius=0.161 / 2 * un.imperial.inch,
+        inner_radius=0.05 / 2 * un.imperial.inch,
+        outer_material="stainless steel",
+        inner_material="copper",
+        inner_conductivity=5.96e07 * 0.24 * un.siemens / un.m,
+        relative_dielectric=2.05,
+    ),
+    "SMA Connector": CoaxialCable(
+        outer_radius=0.16 / 2 * un.imperial.inch,
+        inner_radius=0.05 / 2 * un.imperial.inch,
+        outer_material="stainless steel",
+        inner_material="copper",
+        inner_conductivity=5.96e07 * 0.20 * un.siemens / un.m,
+        relative_dielectric=2.05,
+    ),
+    "UT-141C-SP": CoaxialCable(
+        outer_radius=0.1175 * un.imperial.inch / 2,
+        inner_radius=0.0362 * un.imperial.inch / 2,
+        outer_material="tinned copper",
+        inner_material="copper",
+        relative_dielectric=2.05,
+    ),
+    "UT-086C-SP": CoaxialCable(
+        outer_radius=1.57e-3 * un.m / 2,
+        inner_radius=0.51e-3 * un.m / 2,
+        outer_material="tinned copper",
+        inner_material="copper",
+        relative_dielectric=2.05,
+    ),
+    "Molex WM10479": CoaxialCable(
+        outer_radius=0.1175 * un.imperial.inch / 2,
+        inner_radius=0.0453 * un.imperial.inch / 2,
+        outer_material="silver plated copper",
+        inner_material="silver plated copper",
+        relative_dielectric=1.32,
+    ),
+}

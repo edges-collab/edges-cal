@@ -297,34 +297,6 @@ def de_embed(
     return gamma, s11, s12s21, s22
 
 
-def input_impedance_transmission_line(
-    z0: np.ndarray, gamma: np.ndarray, length: float, z_load: np.ndarray
-) -> np.ndarray:
-    """
-    Calculate the impedance of a terminated transmission line.
-
-    Parameters
-    ----------
-    z0 : array-like
-        Complex characteristic impedance
-    gamma : array-like
-        Propagation constant
-    length : float
-        Length of transmission line
-    z_load : array-like
-        Impedance of termination.
-
-    Returns
-    -------
-    Impedance of the transmission line.
-    """
-    return (
-        z0
-        * (z_load + z0 * np.tanh(gamma * length))
-        / (z_load * np.tanh(gamma * length) + z0)
-    )
-
-
 @hickleable()
 @attrs.define(frozen=True, slots=False, kw_only=True)
 class CalkitStandard:
