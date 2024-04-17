@@ -290,11 +290,23 @@ class S11Model:
 
         transform = self.model_transform
 
-        if self.set_transform_range and hasattr(transform, "range"):
-            transform = attr.evolve(
-                transform,
-                range=(self.freq.min.to_value("MHz"), self.freq.max.to_value("MHz")),
-            )
+        if self.set_transform_range:
+            if hasattr(transform, "range"):
+                transform = attr.evolve(
+                    transform,
+                    range=(
+                        self.freq.min.to_value("MHz"),
+                        self.freq.max.to_value("MHz"),
+                    ),
+                )
+            if hasattr(transform, "scale"):
+                transform = attr.evolve(
+                    transform,
+                    scale=(
+                        self.freq.min.to_value("MHz") + self.freq.max.to_value("MHz")
+                    )
+                    / 2,
+                )
 
         model = model_type(
             n_terms=n_terms,
