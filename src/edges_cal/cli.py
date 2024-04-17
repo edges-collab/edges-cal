@@ -580,6 +580,7 @@ def alancal(
     """
     loads = ("amb", "hot", "open", "short")
     datadir = Path(datadir)
+    out = Path(out)
 
     if load_delay is None:
         load_delay = calkit_delays
