@@ -13,7 +13,7 @@ from . import modelling as mdl
 from . import reflection_coefficient as rc
 from .cal_coefficients import CalibrationObservation, Load
 from .loss import get_cable_loss_model
-from .s11 import LoadS11, StandardsReadings, VNAReading
+from .s11 import LoadS11, Receiver, StandardsReadings, VNAReading
 from .spectra import LoadSpectrum
 from .tools import FrequencyRange, dicke_calibration, gauss_smooth
 
@@ -35,9 +35,9 @@ def reads1p1(
         match=VNAReading.from_s1p(Tfload),
     )
     load = VNAReading.from_s1p(Tfant)
-    freq = standards.freq
+    freq = standards.freq.freq
 
-    calkit = rc.get_calkit(rc.AGILENT_ALAN, resistance_of_match=res * un.ohms)
+    calkit = rc.get_calkit(rc.AGILENT_ALAN, resistance_of_match=res * un.ohm)
 
     calkit = calkit.clone(
         short={"offset_delay": shortps * un.ps},
@@ -46,9 +46,9 @@ def reads1p1(
     )
 
     calibrated = rc.de_embed(
-        calkit.open.reflection_coefficient(freq.freq),
-        calkit.short.reflection_coefficient(freq.freq),
-        calkit.match.reflection_coefficient(freq.freq),
+        calkit.open.reflection_coefficient(freq),
+        calkit.short.reflection_coefficient(freq),
+        calkit.match.reflection_coefficient(freq),
         standards.open.s11,
         standards.short.s11,
         standards.match.s11,
@@ -80,7 +80,7 @@ def corrcsv(
     cable_length = (cablen * un.imperial.inch).to("m")
 
     _, cable_s11, cable_s12 = rc.path_length_correction_edges3(
-        freq=freq.freq,
+        freq=freq,
         delay=cable_length / speed_of_light,
         gamma_in=0,
         lossf=1 + cabloss * 0.01,
@@ -132,7 +132,7 @@ def acqplot7amoon(
     if smooth > 0:
         q = gauss_smooth(q, size=smooth, decimate_at=0)
 
-    return freq, len(q), tload * np.mean(q, axis=0) + tcal
+    return freq.freq, len(q), tcal * np.mean(q, axis=0) + tload
 
 
 def edges3cal(
@@ -185,15 +185,21 @@ def edges3cal(
             "lmode, ldb, adb, delaylna, and nfit4 are not yet implemented."
         )
 
+    if not isinstance(spfreq, FrequencyRange):
+        spfreq = FrequencyRange(spfreq)
+
     # First set up the S11 models
     sources = ["ambient", "hot_load", "open", "short"]
     s11_models = {}
-    s11freq_mask = np.logical_and((s11freq >= wfstart), (s11freq <= wfstop))
+    if not isinstance(s11freq, FrequencyRange):
+        s11freq = FrequencyRange(
+            s11freq, f_low=wfstart * un.MHz, f_high=wfstop * un.MHz
+        )
 
     for name, s11 in zip(sources, [s11cold, s11hot, s11open, s11short]):
         s11_models[name] = LoadS11(
-            raw_s11=s11[s11freq_mask],
-            freq=s11freq[s11freq_mask],
+            raw_s11=s11[s11freq.mask],
+            freq=s11freq,
             n_terms=nfit2,
             model_type=mdl.Fourier if nfit2 > 16 else mdl.Polynomial,
             complex_model_type=mdl.ComplexRealImagModel,
@@ -202,17 +208,18 @@ def edges3cal(
             else mdl.Log10Transform(scale=1),
             set_transform_range=True,
             fit_kwargs={"method": "alan-qrd"},
+            internal_switch=None,
         ).with_model_delay()
 
-    receiver = LoadS11(
-        raw_s11=s11lna[s11freq_mask],
-        freq=s11freq[s11freq_mask],
+    receiver = Receiver(
+        raw_s11=s11lna[s11freq.mask],
+        freq=s11freq,
         n_terms=nfit3,
         model_type=mdl.Fourier if nfit3 > 16 else mdl.Polynomial,
         complex_model_type=mdl.ComplexRealImagModel,
         model_transform=mdl.ZerotooneTransform(range=(1, 2))
         if nfit3 > 16
-        else mdl.Log10Transform(scale=1),
+        else mdl.Log10Transform(scale=120),
         set_transform_range=True,
         fit_kwargs={"method": "alan-qrd"},
     ).with_model_delay()
@@ -220,19 +227,19 @@ def edges3cal(
     specs = {}
 
     for name, spec, temp in zip(
-        specs,
+        sources,
         [spcold, sphot, spopen, spshort],
         [tcold, thot, tcab, tcab],
     ):
         specs[name] = LoadSpectrum(
             freq=spfreq,
-            q=(spec - tcal) / tload,
+            q=(spec - tload) / tcal,
             variance=np.ones_like(spec),  # note: unused here
             n_integrations=1,  # unused
             temp_ave=temp,
-            t_load_ns=tload,
-            t_load=tcal,
-        ).between_freqs(wfstart, wfstop)
+            t_load_ns=tcal,
+            t_load=tload,
+        ).between_freqs(wfstart * un.MHz, wfstop * un.MHz)
 
     if Lh == -1:
         hot_loss_model = get_cable_loss_model(
@@ -248,7 +255,7 @@ def edges3cal(
             loss_model=hot_loss_model,
             ambient_temperature=tcold,
         )
-        for name in sources
+        for name in specs
     }
     return CalibrationObservation(
         loads=loads,
@@ -271,9 +278,8 @@ def read_spec_txt(fname):
     """Read an averaged-spectrum file, like the ones output by acqplot7amoon."""
     return np.genfromtxt(
         fname,
-        delimiter=r"\s+",
         names=["freq", "spectra", "weight"],
-        comment="/",
+        comments="/",
         usecols=[0, 1, 2],
     )
 

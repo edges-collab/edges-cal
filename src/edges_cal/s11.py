@@ -517,7 +517,6 @@ class Receiver(S11Model):
         **kwargs,
     ):
         """Create a Receiver object from the EDGES-3 receiver."""
-        # TODO: remember to use resistance_of_math=49.962
         standards = StandardsReadings(
             open=VNAReading.from_s1p(
                 obs.s11_files["lna"]["open"], f_low=f_low, f_high=f_high

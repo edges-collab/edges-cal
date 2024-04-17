@@ -9,6 +9,7 @@ from pathlib import Path
 import click
 import papermill as pm
 import yaml
+from astropy import units as un
 from nbconvert import PDFExporter
 from rich.console import Console
 from traitlets.config import Config
@@ -593,10 +594,13 @@ def alancal(
     for load in (*loads, "lna"):
         outfile = out / f"s11{load}.csv"
         if redo_s11 or not outfile.exists():
+            console.print(f"Calibrating {load} S11")
+
+            fstem = f"{s11date}_lna" if load == "lna" else s11date
             s11freq, raws11s[load] = reads1p1(
-                Tfopen=Path(datadir) / f"{s11date}_O.s1p",
-                Tfshort=Path(datadir) / f"{s11date}_S.s1p",
-                Tfload=Path(datadir) / f"{s11date}_L.s1p",
+                Tfopen=Path(datadir) / f"{fstem}_O.s1p",
+                Tfshort=Path(datadir) / f"{fstem}_S.s1p",
+                Tfload=Path(datadir) / f"{fstem}_L.s1p",
                 Tfant=Path(datadir) / f"{s11date}_{load}.s1p",
                 res=match_resistance,
                 loadps=load_delay,
@@ -616,12 +620,15 @@ def alancal(
 
             # write out the CSV file
             with open(out / f"s11{load}.csv", "w") as fl:
-                fl.write("BEGIN")
+                fl.write("BEGIN\n")
                 for freq, s11 in zip(s11freq, raws11s[load]):
-                    fl.write(f"{freq},{s11.real},{s11.imag}\n")
+                    fl.write(f"{freq.to_value('MHz')},{s11.real},{s11.imag}\n")
                 fl.write("END")
         else:
+            console.print(f"Reading calibrated {load} S11")
+
             s11freq, raws11s[load] = read_s11_csv(outfile)
+            s11freq <<= un.MHz
 
     lna = raws11s.pop("lna")
 
@@ -630,9 +637,11 @@ def alancal(
     for load in loads:
         outfile = out / f"sp{load}.txt"
         if redo_spectra or not outfile.exists():
+            console.print(f"Averaging {load} spectra")
+
             specdate = f"{specyear:04}_{specday:03}"
             d = f"{datadir}/mro/{load}/{specyear:04}/{specdate}*{load}.acq"
-            os.system(f"cat {d} >>! {out}/temp.acq")
+            os.system(f"cat {d} > {out}/temp.acq")
             spfreq, n, spectra[load] = acqplot7amoon(
                 acqfile=out / "temp.acq",
                 fstart=fstart,
@@ -644,21 +653,25 @@ def alancal(
 
             with open(outfile, "w") as fl:
                 for i, (freq, spec) in enumerate(zip(spfreq, spectra[load])):
+                    f = freq.to_value("MHz")
                     if i == 0:
-                        fl.write(
-                            f"{freq:12.6f} {spec:12.6f} {1:4.0f} {n} // temp.acq\n"
-                        )
+                        fl.write(f"{f:12.6f} {spec:12.6f} {1:4.0f} {n} // temp.acq\n")
                     else:
-                        fl.write(f"{freq:12.6f} {spec:12.6f} {1:4.0f}\n")
+                        fl.write(f"{f:12.6f} {spec:12.6f} {1:4.0f}\n")
 
         else:
-            spfreq, spectra[load] = read_spec_txt(outfile)
+            console.print(f"Reading averaged {load} spectra")
+
+            spec = read_spec_txt(outfile)
+            spfreq = spec["freq"] * un.MHz
+            spectra[load] = spec["spectra"]
 
     # Now do the calibration
     outfile = out / "specal.txt"
     if not redo_cal and outfile.exists():
         return
 
+    console.print("Performing calibration")
     calobs = edges3cal(
         spfreq=spfreq,
         spcold=spectra["amb"],
@@ -666,10 +679,11 @@ def alancal(
         spopen=spectra["open"],
         spshort=spectra["short"],
         s11freq=s11freq,
-        s11amb=raws11s["amb"],
+        s11cold=raws11s["amb"],
         s11hot=raws11s["hot"],
         s11open=raws11s["open"],
         s11short=raws11s["short"],
+        s11lna=lna,
         Lh=Lh,
         wfstart=wfstart,
         wfstop=wfstop,
@@ -699,12 +713,43 @@ def alancal(
                 f"tlnac {tlnac[i]:10.6f} tlnas {tlnas[i]:10.6f} wtcal 1 cal_data\n"
             )
 
-    # Make plots...
-    ax = calobs.plot_s11_models()
-    ax.figure.savefig(out / "s11_models.png")
+    # Also save the modelled S11s
+    console.print("Saving modelled S11s")
+    s11m = {
+        name: load.s11_model(calobs.freq.freq) for name, load in calobs.loads.items()
+    }
+    with open(out / "s11_modelled.txt", "w") as fl:
+        fl.write(
+            "# freq, amb_real amb_imag hot_real hot_imag open_real open_imag short_real"
+            " short_imag lna_real lna_imag\n"
+        )
+        for i, (f, amb, hot, op, sh) in enumerate(
+            zip(
+                calobs.freq.freq,
+                s11,
+                ["ambient"],
+                s11m["hot_load"],
+                s11m["open"],
+                s11m["short"],
+            )
+        ):
+            fl.write(
+                f"{f.to_value('MHz')} {amb.real} {amb.imag} "
+                f"{hot.real} {hot.imag} "
+                f"{op.real} {op.imag} "
+                f"{sh.real} {sh.imag} "
+                f"{lna[i].real} {lna[i].imag}\n"
+            )
 
+    # Make plots...
+    console.print("Plotting S11 models...")
+    ax = calobs.plot_s11_models()
+    ax.flatten()[0].figure.savefig(out / "s11_models.png")
+
+    console.print("Plotting raw spectra...")
     fig = calobs.plot_raw_spectra()
     fig.savefig(out / "raw_spectra.png")
 
+    console.print("Plotting calibration coefficients...")
     fig = calobs.plot_coefficients()
     fig.savefig(out / "calibration_coefficients.png")

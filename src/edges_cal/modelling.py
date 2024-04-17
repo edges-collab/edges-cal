@@ -217,11 +217,6 @@ class ModelTransform(metaclass=ABCMeta):
         """Get a ModelTransform class."""
         return cls._models[model.lower()]
 
-    @classmethod
-    def at(cls, x: np.ndarray, **kwargs):
-        """Return a ModelTransform where the parameters are set based on x."""
-        return cls(**kwargs)
-
     def __call__(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return self.transform(x)
@@ -248,10 +243,6 @@ class ScaleTransform(ModelTransform):
         """Transform the coordinates."""
         return x / self.scale
 
-    @classmethod
-    def at(cls, x: np.ndarray, **kwargs):
-        return cls(scale=(x.min() + x.max()) / 2)
-
 
 def tuple_converter(x):
     """Convert input to tuple of floats."""
@@ -267,11 +258,6 @@ class CentreTransform(ModelTransform):
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return x - self.range[0] - (self.range[1] - self.range[0]) / 2 + self.centre
-
-    @classmethod
-    def at(cls, x: np.ndarray, **kwargs):
-        rng = (x.min(), x.max())
-        return cls(range=rng, **kwargs)
 
 
 @hickleable()
@@ -299,11 +285,6 @@ class UnitTransform(ModelTransform):
         """Transform the coordinates."""
         return 2 * self._centre.transform(x) / (self.range[1] - self.range[0])
 
-    @classmethod
-    def at(cls, x: np.ndarray, **kwargs):
-        rng = (x.min(), x.max())
-        return cls(range=rng)
-
 
 @hickleable()
 @attrs.define(frozen=True, kw_only=True, slots=False)
@@ -315,11 +296,6 @@ class LogTransform(ModelTransform):
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
         return np.log(x / self.scale)
-
-    @classmethod
-    def at(cls, x: np.ndarray, **kwargs):
-        scale = (x.min() + x.max()) / 2
-        return cls(scale=scale)
 
 
 @hickleable()
