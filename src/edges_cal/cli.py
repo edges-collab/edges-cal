@@ -508,7 +508,7 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     default=1000.0,
     help="guess at the load+noise source temp",
 )
-@click.option("-Lh", type=int, default=-1, name="Lh")
+@click.option("-Lh", "Lh", type=int, default=-1)
 @click.option("-wfstart", type=float, default=50.0)
 @click.option("-wfstop", type=float, default=190.0)
 @click.option("-tcold", type=float, default=306.5)
