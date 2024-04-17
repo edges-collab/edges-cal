@@ -436,7 +436,6 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
 @click.option("--redo-spectra/--no-spectra", default=None)
 @click.option("--redo-cal/--no-cal", default=None)
 @click.option("-res", "--match-resistance", type=float, default=50.0)
-@click.option("-res", "--match-resistance", type=float, default=50.0)
 @click.option("-ps", "--calkit-delays", type=float, default=33.0, help="in nanoseconds")
 @click.option(
     "-loadps",
@@ -509,7 +508,7 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     default=1000.0,
     help="guess at the load+noise source temp",
 )
-@click.option("-Lh", type=int, default=-1)
+@click.option("-Lh", type=int, default=-1, name="Lh")
 @click.option("-wfstart", type=float, default=50.0)
 @click.option("-wfstop", type=float, default=190.0)
 @click.option("-tcold", type=float, default=306.5)
