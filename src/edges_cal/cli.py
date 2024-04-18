@@ -725,16 +725,15 @@ def alancal(
         )
         for i, (f, amb, hot, op, sh) in enumerate(
             zip(
-                calobs.freq.freq,
-                s11,
-                ["ambient"],
+                calobs.freq.freq.to_value("MHz"),
+                s11m["ambient"],
                 s11m["hot_load"],
                 s11m["open"],
                 s11m["short"],
             )
         ):
             fl.write(
-                f"{f.to_value('MHz')} {amb.real} {amb.imag} "
+                f"{f} {amb.real} {amb.imag} "
                 f"{hot.real} {hot.imag} "
                 f"{op.real} {op.imag} "
                 f"{sh.real} {sh.imag} "
