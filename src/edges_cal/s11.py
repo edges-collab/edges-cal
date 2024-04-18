@@ -317,7 +317,8 @@ class S11Model:
         cmodel = self.complex_model_type(emodel, emodel)
 
         return cmodel.fit(
-            ydata=raw_s11 * np.exp(2*np.pi* 1j * self.model_delay * freq).to_value(""),
+            ydata=raw_s11
+            * np.exp(2 * np.pi * 1j * self.model_delay * freq).to_value(""),
             **self.fit_kwargs,
         )
 
@@ -345,7 +346,7 @@ class S11Model:
 
         if not self.use_spline:
             return self._s11_model(freq) * np.exp(
-                -1j *2*np.pi* self.model_delay.to_value("microsecond") * freq
+                -1j * 2 * np.pi * self.model_delay.to_value("microsecond") * freq
             )
         if self.complex_model_type == ComplexRealImagModel:
             return self._splines[0](freq) + 1j * self._splines[1](freq)
