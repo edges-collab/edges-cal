@@ -399,8 +399,6 @@ class LoadSpectrum:
         freq = FrequencyRange.from_edges(
             f_low=f_low,
             f_high=f_high,
-            bin_size=freq_bin_size,
-            alan_mode=frequency_smoothing == "gauss",
         )
 
         sig = inspect.signature(cls.from_io)
@@ -441,6 +439,13 @@ class LoadSpectrum:
             time_coordinate_swpos=time_coordinate_swpos,
         )
 
+        if freq_bin_size > 0:
+            freq = freq.decimate(
+                bin_size=freq_bin_size,
+                decimate_at=0 if frequency_smoothing == "gauss" else "centre",
+                embed_mask=True,
+            )
+
         if temperature is None:
             temperature = np.nanmean(thermistor.get_physical_temperature())
 
@@ -454,6 +459,7 @@ class LoadSpectrum:
                 "spectra_path": spec[0].path,
                 "resistance_path": res.path,
                 "freq_bin_size": freq_bin_size,
+                "pre_smooth_freq_range": (f_low, f_high),
                 "ignore_times_percent": ignore_times_percent,
                 "temperature_range": temperature_range,
                 "hash": hsh,
@@ -590,6 +596,7 @@ class LoadSpectrum:
                 "spectra_path": io_obs.acq_files[load_name],
                 "s11_paths": io_obs.s11_files[load_name],
                 "freq_bin_size": freq_bin_size,
+                "pre_smooth_freq_range": (f_low, f_high),
                 "ignore_times_percent": ignore_times_percent,
                 "rfi_threshold": rfi_threshold,
                 "rfi_kernel_width_freq": rfi_kernel_width_freq,

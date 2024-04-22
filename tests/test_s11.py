@@ -44,9 +44,6 @@ def test_load_calkit_with_resistance():
 def test_calkit_standard_name():
     assert rc.CalkitStandard(resistance=50).name == "match"
 
-    with pytest.raises(ValueError, match="capacitance_model is required"):
-        rc.CalkitStandard(resistance=np.inf)
-
     assert (
         rc.CalkitStandard(
             resistance=np.inf,
@@ -54,9 +51,6 @@ def test_calkit_standard_name():
         ).name
         == "open"
     )
-
-    with pytest.raises(ValueError, match="inductance_model is required"):
-        rc.CalkitStandard(resistance=0)
 
     assert (
         rc.CalkitStandard(

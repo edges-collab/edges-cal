@@ -76,9 +76,9 @@ def run(settings, path, out, global_config, plot, simulators):
         fig = obs.plot_raw_spectra()
         fig.savefig(out / "raw_spectra.png")
 
-        figs = obs.plot_s11_models()
-        for kind, fig in figs.items():
-            fig.savefig(out / f"{kind}_s11_model.png")
+        ax = obs.plot_s11_models()
+        fig = ax.flatten()[0].get_figure()
+        fig.savefig(out / "s11_models.png")
 
         fig = obs.plot_calibrated_temps(bins=256)
         fig.savefig(out / "calibrated_temps.png")

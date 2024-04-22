@@ -1,4 +1,5 @@
 import json
+import traceback
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -27,6 +28,8 @@ def test_run(data_path: Path, tmpdir: Path):
 
     if result.exit_code:
         print(result.exception)
+        print(traceback.print_exception(*result.exc_info))
+
     print(result.output)
     assert result.exit_code == 0
 
@@ -50,6 +53,12 @@ def test_report(data_path: Path, tmpdir: Path):
         ],
         catch_exceptions=False,
     )
+
+    if result.exit_code:
+        print(result.exception)
+        print(traceback.print_exception(*result.exc_info))
+
+    print(result.output)
 
     assert result.exit_code == 0
 
@@ -77,6 +86,9 @@ def test_compare(data_path: Path, tmpdir: Path):
     )
 
     if result.exit_code:
-        print(result.output)
+        print(result.exception)
+        print(traceback.print_exception(*result.exc_info))
+
+    print(result.output)
 
     assert result.exit_code == 0
