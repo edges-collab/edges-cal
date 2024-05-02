@@ -595,7 +595,7 @@ class CalibrationObservation:
             f_low=f_low if restrict_s11_model_freqs else 0 * un.MHz,
             f_high=f_high if restrict_s11_model_freqs else np.inf * un.MHz,
             **receiver_kwargs,
-        )
+        ).with_model_delay()
 
         if "default" not in spectrum_kwargs:
             spectrum_kwargs["default"] = {}
