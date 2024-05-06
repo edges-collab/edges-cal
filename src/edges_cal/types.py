@@ -1,4 +1,5 @@
 """Simple type definitions for use internally."""
+
 from astropy import units
 from pathlib import Path
 from typing import Union

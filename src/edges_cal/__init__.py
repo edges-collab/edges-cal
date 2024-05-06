@@ -1,4 +1,5 @@
 """Calibration of EDGES data."""
+
 from pkg_resources import DistributionNotFound, get_distribution
 
 try:

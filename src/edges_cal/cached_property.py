@@ -1,4 +1,5 @@
 """A wrapper of cached_property that also saves which things are cached."""
+
 from cached_property import cached_property as cp
 
 

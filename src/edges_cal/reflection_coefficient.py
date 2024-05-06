@@ -9,6 +9,7 @@ Most of the functions in this module follow the formalism/notation of
 They represent basic relations between physical parameters of circuits, as measured
 with internal standards.
 """
+
 from __future__ import annotations
 
 import attr
@@ -608,9 +609,9 @@ def agilent_85033E(  # noqa: N802
         AGILENT_85033E,
         resistance_of_match=resistance_of_match * units.ohm,
         match={
-            "offset_delay": md_value_ps * units.picosecond
-            if match_delay
-            else 0 * units.picosecond
+            "offset_delay": (
+                md_value_ps * units.picosecond if match_delay else 0 * units.picosecond
+            )
         },
     )
 

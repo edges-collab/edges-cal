@@ -1,4 +1,5 @@
 """Global Configuration options."""
+
 import warnings
 from edges_io.config import config, default_config
 from pathlib import Path

@@ -1,4 +1,5 @@
 """Functions for excising RFI."""
+
 from __future__ import annotations
 
 import h5py

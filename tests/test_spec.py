@@ -1,6 +1,7 @@
 """
 Test spectrum reading.
 """
+
 import pytest
 
 import numpy as np

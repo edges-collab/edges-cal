@@ -1,4 +1,5 @@
 """Functions for generating least-squares model fits for linear models."""
+
 from __future__ import annotations
 
 import attr
@@ -865,14 +866,14 @@ class ComplexRealImagModel(yaml.YAMLObject):
         """
         return self.real(
             x=x,
-            parameters=parameters[: self.real.n_terms]
-            if parameters is not None
-            else None,
+            parameters=(
+                parameters[: self.real.n_terms] if parameters is not None else None
+            ),
         ) + 1j * self.imag(
             x=x,
-            parameters=parameters[self.real.n_terms :]
-            if parameters is not None
-            else None,
+            parameters=(
+                parameters[self.real.n_terms :] if parameters is not None else None
+            ),
         )
 
     def fit(
@@ -940,16 +941,16 @@ class ComplexMagPhaseModel(yaml.YAMLObject):
         """
         return self.mag(
             x=x,
-            parameters=parameters[: self.mag.n_terms]
-            if parameters is not None
-            else None,
+            parameters=(
+                parameters[: self.mag.n_terms] if parameters is not None else None
+            ),
         ) * np.exp(
             1j
             * self.phs(
                 x=x,
-                parameters=parameters[self.mag.n_terms :]
-                if parameters is not None
-                else None,
+                parameters=(
+                    parameters[self.mag.n_terms :] if parameters is not None else None
+                ),
             )
         )
 
@@ -1016,23 +1017,29 @@ class NoiseWaves:
         models = {
             "tunc": Polynomial(
                 n_terms=self.w_terms,
-                parameters=self.parameters[: self.w_terms]
-                if self.parameters is not None
-                else None,
+                parameters=(
+                    self.parameters[: self.w_terms]
+                    if self.parameters is not None
+                    else None
+                ),
                 transform=tr,
             ),
             "tcos": Polynomial(
                 n_terms=self.w_terms,
-                parameters=self.parameters[self.w_terms : 2 * self.w_terms]
-                if self.parameters is not None
-                else None,
+                parameters=(
+                    self.parameters[self.w_terms : 2 * self.w_terms]
+                    if self.parameters is not None
+                    else None
+                ),
                 transform=tr,
             ),
             "tsin": Polynomial(
                 n_terms=self.w_terms,
-                parameters=self.parameters[2 * self.w_terms : 3 * self.w_terms]
-                if self.parameters is not None
-                else None,
+                parameters=(
+                    self.parameters[2 * self.w_terms : 3 * self.w_terms]
+                    if self.parameters is not None
+                    else None
+                ),
                 transform=tr,
             ),
         }
@@ -1043,9 +1050,11 @@ class NoiseWaves:
         if self.with_tload:
             models["tload"] = Polynomial(
                 n_terms=self.c_terms,
-                parameters=self.parameters[3 * self.w_terms :]
-                if self.parameters is not None
-                else None,
+                parameters=(
+                    self.parameters[3 * self.w_terms :]
+                    if self.parameters is not None
+                    else None
+                ),
                 transform=tr,
             )
 
