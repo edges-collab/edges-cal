@@ -1,15 +1,28 @@
 """CLI functions for edges-cal."""
-import click
 import json
+import os
+from datetime import datetime
+from datetime import timezone as tz
+from importlib.util import find_spec
+from pathlib import Path
+
+import click
 import papermill as pm
 import yaml
-from datetime import datetime
+from astropy import units as un
 from nbconvert import PDFExporter
-from pathlib import Path
 from rich.console import Console
 from traitlets.config import Config
 
 from edges_cal import cal_coefficients as cc
+from edges_cal.alanmode import (
+    acqplot7amoon,
+    corrcsv,
+    edges3cal,
+    read_s11_csv,
+    read_spec_txt,
+    reads1p1,
+)
 from edges_cal.config import config
 
 console = Console()
@@ -63,9 +76,9 @@ def run(settings, path, out, global_config, plot, simulators):
         fig = obs.plot_raw_spectra()
         fig.savefig(out / "raw_spectra.png")
 
-        figs = obs.plot_s11_models()
-        for kind, fig in figs.items():
-            fig.savefig(out / f"{kind}_s11_model.png")
+        ax = obs.plot_s11_models()
+        fig = ax.flatten()[0].get_figure()
+        fig.savefig(out / "s11_models.png")
 
         fig = obs.plot_calibrated_temps(bins=256)
         fig.savefig(out / "calibrated_temps.png")
@@ -220,21 +233,17 @@ def report(
 
     path = Path(path)
 
-    if out is None:
-        out = path / "outputs"
-    else:
-        out = Path(out)
+    out = path / "outputs" if out is None else Path(out)
 
     if not out.exists():
         out.mkdir()
 
     # Describe the filename...
-    fname = Path(f"calibration_{datetime.now().strftime('%Y-%m-%d-%H.%M.%S')}.ipynb")
+    fname = Path(
+        f"calibration_{datetime.now(tz=tz.utc).strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
+    )
 
-    if global_config:
-        global_config = json.loads(global_config)
-    else:
-        global_config = {}
+    global_config = json.loads(global_config) if global_config else {}
 
     settings = {
         "observation": str(path),
@@ -255,7 +264,7 @@ def report(
         log_output=True,
     )
 
-    console.print(f"Saved interactive notebook to '{out/fname}'")
+    console.print(f"Saved interactive notebook to '{out / fname}'")
 
     if pdf:  # pragma: no cover
         make_pdf(out / fname)
@@ -325,10 +334,7 @@ def compare(
     path = Path(path)
     cmppath = Path(cmppath)
 
-    if out is None:
-        out = path / "outputs"
-    else:
-        out = Path(out)
+    out = path / "outputs" if out is None else Path(out)
 
     if not out.exists():
         out.mkdir()
@@ -336,13 +342,10 @@ def compare(
     # Describe the filename...
     fname = Path(
         f"calibration-compare-{cmppath.name}_"
-        f"{datetime.now().strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
+        f"{datetime.now(tz=tz.utc).strftime('%Y-%m-%d-%H.%M.%S')}.ipynb"
     )
 
-    if global_config:
-        global_config = json.loads(global_config)
-    else:
-        global_config = {}
+    global_config = json.loads(global_config) if global_config else {}
 
     console.print("Settings for Primary:")
     with open(cal_settings) as fl:
@@ -365,7 +368,7 @@ def compare(
         },
         kernel_name="edges",
     )
-    console.print(f"Saved interactive notebook to '{out/fname}'")
+    console.print(f"Saved interactive notebook to '{out / fname}'")
 
     # Now output the notebook to pdf
     if pdf:  # pragma: no cover
@@ -383,7 +386,7 @@ def make_pdf(ipy_fname) -> Path:
     c.TemplateExporter.exclude_input = True
 
     exporter = PDFExporter(config=c)
-    body, resources = exporter.from_filename(ipy_fname)
+    body, _resources = exporter.from_filename(ipy_fname)
     with open(ipy_fname.with_suffix(".pdf"), "wb") as fl:
         fl.write(body)
 
@@ -395,11 +398,11 @@ def make_pdf(ipy_fname) -> Path:
 def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     """Upload as memo to loco.lab.asu.edu."""
     try:
-        import upload_memo  # noqa
-    except ImportError:
+        find_spec("upload_memo")
+    except ImportError as e:
         raise ImportError(
             "You need to manually install upload-memo to use this option."
-        )
+        ) from e
 
     opts = ["memo", "upload", "-f", str(fname)]
     if title:
@@ -411,3 +414,341 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
         opts.append("-q")
 
     run(opts)
+
+
+@main.command()
+@click.argument("s11date", type=str)
+@click.argument("specyear", type=int)
+@click.argument("specday", type=int)
+@click.option(
+    "-d",
+    "--datadir",
+    type=click.Path(dir_okay=True, file_okay=False, exists=True),
+    default="/data5/edges/data/EDGES3_data/MRO/",
+)
+@click.option(
+    "-o",
+    "--out",
+    type=click.Path(dir_okay=True, file_okay=False, exists=True),
+    default=".",
+    help="output directory",
+)
+@click.option("--redo-s11/--no-s11", default=None)
+@click.option("--redo-spectra/--no-spectra", default=None)
+@click.option("--redo-cal/--no-cal", default=None)
+@click.option("-res", "--match-resistance", type=float, default=50.0)
+@click.option("-ps", "--calkit-delays", type=float, default=33.0, help="in nanoseconds")
+@click.option(
+    "-loadps",
+    "--load-delay",
+    type=float,
+    default=None,
+    help="in nanoseconds. Overrides -ps.",
+)
+@click.option(
+    "-openps",
+    "--open-delay",
+    type=float,
+    default=None,
+    help="in nanoseconds. Overrides -ps.",
+)
+@click.option(
+    "-shortps",
+    "--short-delay",
+    type=float,
+    default=None,
+    help="in nanoseconds. Overrides -ps.",
+)
+@click.option(
+    "-cablen",
+    "--lna-cable-length",
+    type=float,
+    default=4.26,
+    help="in inches",
+)
+@click.option(
+    "-cabloss",
+    "--lna-cable-loss",
+    type=float,
+    default=-1.24,
+    help="as percent",
+)
+@click.option(
+    "-cabdiel",
+    "--lna-cable-dielectric",
+    type=float,
+    default=-91.5,
+    help="as percent",
+)
+@click.option(
+    "-fstart",
+    type=float,
+    default=48.0,
+    help="in mhz",
+)
+@click.option(
+    "-fstop",
+    type=float,
+    default=198.0,
+    help="in mhz",
+)
+@click.option(
+    "-smooth",
+    type=int,
+    default=8,
+)
+@click.option(
+    "-tload",
+    type=float,
+    default=300.0,
+    help="guess at the load temp",
+)
+@click.option(
+    "-tcal",
+    type=float,
+    default=1000.0,
+    help="guess at the load+noise source temp",
+)
+@click.option("-Lh", "Lh", type=int, default=-1)
+@click.option("-wfstart", type=float, default=50.0)
+@click.option("-wfstop", type=float, default=190.0)
+@click.option("-tcold", type=float, default=306.5)
+@click.option("-thot", type=float, default=393.22)
+@click.option("-tcab", type=float, default=306.5)
+@click.option("-cfit", type=int, default=7)
+@click.option(
+    "-wfit",
+    type=int,
+    default=7,
+)
+@click.option(
+    "-nfit3",
+    type=int,
+    default=10,
+)
+@click.option(
+    "-nfit2",
+    type=int,
+    default=27,
+)
+def alancal(
+    s11date,
+    specyear,
+    specday,
+    datadir,
+    out,
+    redo_s11,
+    redo_spectra,
+    redo_cal,
+    match_resistance,
+    calkit_delays,
+    load_delay,
+    open_delay,
+    short_delay,
+    lna_cable_length,
+    lna_cable_loss,
+    lna_cable_dielectric,
+    fstart,
+    fstop,
+    smooth,
+    tload,
+    tcal,
+    Lh,  # noqa: N803
+    wfstart,
+    wfstop,
+    tcold,
+    thot,
+    tcab,
+    cfit,
+    wfit,
+    nfit3,
+    nfit2,
+):
+    """Run a calibration in as close a manner to Alan's code as possible.
+
+    This exists mostly for being able to compare to Alan's memos etc in an easy way. It
+    is much less flexible than using the library directly, and is not recommended for
+    general use.
+
+    This is supposed to emulate one of Alan's C-shell scripts, usually called "docal",
+    and thus it runs a complete calibration, not just a single part. However, you can
+    turn off parts of the calibration by setting the appropriate flags to False.
+
+    Parameters
+    ----------
+    s11date
+        A date-string of the form 2022_319_04
+    """
+    loads = ("amb", "hot", "open", "short")
+    datadir = Path(datadir)
+    out = Path(out)
+
+    if load_delay is None:
+        load_delay = calkit_delays
+    if open_delay is None:
+        open_delay = calkit_delays
+    if short_delay is None:
+        short_delay = calkit_delays
+
+    raws11s = {}
+    for load in (*loads, "lna"):
+        outfile = out / f"s11{load}.csv"
+        if redo_s11 or not outfile.exists():
+            console.print(f"Calibrating {load} S11")
+
+            fstem = f"{s11date}_lna" if load == "lna" else s11date
+            s11freq, raws11s[load] = reads1p1(
+                Tfopen=Path(datadir) / f"{fstem}_O.s1p",
+                Tfshort=Path(datadir) / f"{fstem}_S.s1p",
+                Tfload=Path(datadir) / f"{fstem}_L.s1p",
+                Tfant=Path(datadir) / f"{s11date}_{load}.s1p",
+                res=match_resistance,
+                loadps=load_delay,
+                openps=open_delay,
+                shortps=short_delay,
+            )
+
+            if load == "lna":
+                # Correction for path length
+                raws11s[load] = corrcsv(
+                    s11freq,
+                    raws11s[load],
+                    lna_cable_length,
+                    lna_cable_dielectric,
+                    lna_cable_loss,
+                )
+
+            # write out the CSV file
+            with open(out / f"s11{load}.csv", "w") as fl:
+                fl.write("BEGIN\n")
+                for freq, s11 in zip(s11freq, raws11s[load]):
+                    fl.write(f"{freq.to_value('MHz')},{s11.real},{s11.imag}\n")
+                fl.write("END")
+        else:
+            console.print(f"Reading calibrated {load} S11")
+
+            s11freq, raws11s[load] = read_s11_csv(outfile)
+            s11freq <<= un.MHz
+
+    lna = raws11s.pop("lna")
+
+    # Now average the spectra
+    spectra = {}
+    for load in loads:
+        outfile = out / f"sp{load}.txt"
+        if redo_spectra or not outfile.exists():
+            console.print(f"Averaging {load} spectra")
+
+            specdate = f"{specyear:04}_{specday:03}"
+            d = f"{datadir}/mro/{load}/{specyear:04}/{specdate}*{load}.acq"
+            os.system(f"cat {d} > {out}/temp.acq")
+            spfreq, n, spectra[load] = acqplot7amoon(
+                acqfile=out / "temp.acq",
+                fstart=fstart,
+                fstop=fstop,
+                smooth=smooth,
+                tload=tload,
+                tcal=tcal,
+            )
+
+            with open(outfile, "w") as fl:
+                for i, (freq, spec) in enumerate(zip(spfreq, spectra[load])):
+                    f = freq.to_value("MHz")
+                    if i == 0:
+                        fl.write(f"{f:12.6f} {spec:12.6f} {1:4.0f} {n} // temp.acq\n")
+                    else:
+                        fl.write(f"{f:12.6f} {spec:12.6f} {1:4.0f}\n")
+
+        else:
+            console.print(f"Reading averaged {load} spectra")
+
+            spec = read_spec_txt(outfile)
+            spfreq = spec["freq"] * un.MHz
+            spectra[load] = spec["spectra"]
+
+    # Now do the calibration
+    outfile = out / "specal.txt"
+    if not redo_cal and outfile.exists():
+        return
+
+    console.print("Performing calibration")
+    calobs = edges3cal(
+        spfreq=spfreq,
+        spcold=spectra["amb"],
+        sphot=spectra["hot"],
+        spopen=spectra["open"],
+        spshort=spectra["short"],
+        s11freq=s11freq,
+        s11cold=raws11s["amb"],
+        s11hot=raws11s["hot"],
+        s11open=raws11s["open"],
+        s11short=raws11s["short"],
+        s11lna=lna,
+        Lh=Lh,
+        wfstart=wfstart,
+        wfstop=wfstop,
+        tcold=tcold,
+        thot=thot,
+        tcab=tcab,
+        cfit=cfit,
+        wfit=wfit,
+        nfit3=nfit3,
+        nfit2=nfit2,
+        tload=tload,
+        tcal=tcal,
+    )
+
+    with open(outfile, "w") as fl:
+        for i in range(calobs.freq.n):
+            sca = calobs.C1()
+            ofs = calobs.C2()
+            tlnau = calobs.Tunc()
+            tlnac = calobs.Tcos()
+            tlnas = calobs.Tsin()
+            lna = calobs.receiver_s11
+            fl.write(
+                f"freq {calobs.freq.freq[i].to_value('MHz'):10.6f} "
+                f"s11lna {lna[i].real:10.6f} {lna[i].imag:10.6f} "
+                f"sca {sca[i]:10.6f} ofs {ofs[i]:10.6f} tlnau {tlnau[i]:10.6f} "
+                f"tlnac {tlnac[i]:10.6f} tlnas {tlnas[i]:10.6f} wtcal 1 cal_data\n"
+            )
+
+    # Also save the modelled S11s
+    console.print("Saving modelled S11s")
+    s11m = {
+        name: load.s11_model(calobs.freq.freq) for name, load in calobs.loads.items()
+    }
+    with open(out / "s11_modelled.txt", "w") as fl:
+        fl.write(
+            "# freq, amb_real amb_imag hot_real hot_imag open_real open_imag short_real"
+            " short_imag lna_real lna_imag\n"
+        )
+        for i, (f, amb, hot, op, sh) in enumerate(
+            zip(
+                calobs.freq.freq.to_value("MHz"),
+                s11m["ambient"],
+                s11m["hot_load"],
+                s11m["open"],
+                s11m["short"],
+            )
+        ):
+            fl.write(
+                f"{f} {amb.real} {amb.imag} "
+                f"{hot.real} {hot.imag} "
+                f"{op.real} {op.imag} "
+                f"{sh.real} {sh.imag} "
+                f"{lna[i].real} {lna[i].imag}\n"
+            )
+
+    # Make plots...
+    console.print("Plotting S11 models...")
+    ax = calobs.plot_s11_models()
+    ax.flatten()[0].figure.savefig(out / "s11_models.png")
+
+    console.print("Plotting raw spectra...")
+    fig = calobs.plot_raw_spectra()
+    fig.savefig(out / "raw_spectra.png")
+
+    console.print("Plotting calibration coefficients...")
+    fig = calobs.plot_coefficients()
+    fig.savefig(out / "calibration_coefficients.png")

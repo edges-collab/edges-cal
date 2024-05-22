@@ -6,246 +6,34 @@ a one-stop interface for everything related to calibration.
 """
 from __future__ import annotations
 
+import warnings
+from collections.abc import Sequence
+from functools import partial
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Callable
+
 import attr
 import h5py
 import hickle
 import numpy as np
-import warnings
 from astropy import units as un
 from astropy.convolution import Gaussian1DKernel, convolve
 from astropy.io.misc import yaml as ayaml
-from edges_io import io
+from edges_io import io, io3
+from edges_io import types as tp
 from edges_io.logging import logger
-from functools import partial
 from hickleable import hickleable
 from matplotlib import pyplot as plt
-from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
-from types import SimpleNamespace
-from typing import Any, Callable, Sequence
 
-from . import modelling as mdl
+from . import loss, s11
 from . import receiver_calibration_func as rcf
 from . import reflection_coefficient as rc
-from . import s11
-from . import types as tp
 from .cached_property import cached_property, safe_property
+from .loss import HotLoadCorrection
 from .spectra import LoadSpectrum
-from .tools import FrequencyRange, bin_array, get_data_path
-
-
-@hickleable()
-@attr.s(kw_only=True)
-class HotLoadCorrection:
-    """
-    Corrections for the hot load.
-
-    Measurements required to define the HotLoad temperature, from Monsalve et al.
-    (2017), Eq. 8+9.
-
-    Parameters
-    ----------
-    path
-        Path to a file containing measurements of the semi-rigid cable reflection
-        parameters. A preceding colon (:) indicates to prefix with DATA_PATH.
-        The default file was measured in 2015, but there is also a file included
-        that can be used from 2017: ":semi_rigid_s_parameters_2017.txt".
-    f_low, f_high
-        Lowest/highest frequency to retain from measurements.
-    n_terms
-        The number of terms used in fitting S-parameters of the cable.
-    """
-
-    freq: FrequencyRange = attr.ib()
-    raw_s11: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
-    raw_s12s21: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
-    raw_s22: np.ndarray = attr.ib(eq=attr.cmp_using(eq=np.array_equal))
-
-    model: mdl.Model = attr.ib(mdl.Polynomial(n_terms=21))
-    complex_model: type[mdl.ComplexRealImagModel] | type[
-        mdl.ComplexMagPhaseModel
-    ] = attr.ib(mdl.ComplexMagPhaseModel)
-    use_spline: bool = attr.ib(False)
-    model_method: str = attr.ib("lstsq")
-
-    @classmethod
-    def from_file(
-        cls,
-        path: tp.PathLike = ":semi_rigid_s_parameters_WITH_HEADER.txt",
-        f_low: tp.FreqType = 0 * un.MHz,
-        f_high: tp.FreqType = np.inf * un.MHz,
-        set_transform_range: bool = True,
-        **kwargs,
-    ):
-        """Instantiate the HotLoadCorrection from file.
-
-        Parameters
-        ----------
-        path
-            Path to the S-parameters file.
-        f_low, f_high
-            The min/max frequencies to use in the modelling.
-        """
-        path = get_data_path(path)
-
-        data = np.genfromtxt(path)
-        freq = FrequencyRange(data[:, 0] * un.MHz, f_low=f_low, f_high=f_high)
-
-        data = data[freq.mask]
-
-        if data.shape[1] == 7:  # Original file from 2015
-            data = data[:, 1::2] + 1j * data[:, 2::2]
-        elif data.shape[1] == 6:  # File from 2017
-            data = np.array(
-                [
-                    data[:, 1] + 1j * data[:, 2],
-                    data[:, 3],
-                    data[:, 4] + 1j * data[:, 5],
-                ]
-            ).T
-
-        model = kwargs.pop(
-            "model",
-            mdl.Polynomial(
-                n_terms=21,
-                transform=mdl.UnitTransform(
-                    range=(freq.min.to_value("MHz"), freq.max.to_value("MHz"))
-                ),
-            ),
-        )
-
-        if hasattr(model.transform, "range") and set_transform_range:
-            model = attr.evolve(
-                model,
-                transform=attr.evolve(
-                    model.transform,
-                    range=(freq.min.to_value("MHz"), freq.max.to_value("MHz")),
-                ),
-            )
-
-        return cls(
-            freq=freq,
-            raw_s11=data[:, 0],
-            raw_s12s21=data[:, 1],
-            raw_s22=data[:, 2],
-            model=model,
-            **kwargs,
-        )
-
-    def _get_model(self, raw_data: np.ndarray, **kwargs):
-        model = self.complex_model(self.model, self.model)
-        return model.fit(xdata=self.freq.freq, ydata=raw_data, method=self.model_method)
-
-    def _get_splines(self, data):
-        if self.complex_model == mdl.ComplexRealImagModel:
-            return (
-                Spline(self.freq.freq.to_value("MHz"), np.real(data)),
-                Spline(self.freq.freq.to_value("MHz"), np.imag(data)),
-            )
-        else:
-            return (
-                Spline(self.freq.freq.to_value("MHz"), np.abs(data)),
-                Spline(self.freq.freq.to_value("MHz"), np.angle(data)),
-            )
-
-    def _ev_splines(self, splines):
-        rl, im = splines
-        if self.complex_model == mdl.ComplexRealImagModel:
-            return lambda freq: rl(freq) + 1j * im(freq)
-        else:
-            return lambda freq: rl(freq) * np.exp(1j * im(freq))
-
-    @cached_property
-    def s11_model(self):
-        """The reflection coefficient."""
-        if not self.use_spline:
-            return self._get_model(self.raw_s11)
-        else:
-            splines = self._get_splines(self.raw_s11)
-            return self._ev_splines(splines)
-
-    @cached_property
-    def s12s21_model(self):
-        """The transmission coefficient."""
-        if not self.use_spline:
-            return self._get_model(self.raw_s12s21)
-        else:
-            splines = self._get_splines(self.raw_s12s21)
-            return self._ev_splines(splines)
-
-    @cached_property
-    def s22_model(self):
-        """The reflection coefficient from the other side."""
-        if not self.use_spline:
-            return self._get_model(self.raw_s22)
-        else:
-            splines = self._get_splines(self.raw_s22)
-            return self._ev_splines(splines)
-
-    def power_gain(self, freq: tp.FreqType, hot_load_s11: s11.LoadS11) -> np.ndarray:
-        """
-        Calculate the power gain.
-
-        Parameters
-        ----------
-        freq : np.ndarray
-            The frequencies.
-        hot_load_s11 : :class:`LoadS11`
-            The S11 of the hot load.
-
-        Returns
-        -------
-        gain : np.ndarray
-            The power gain as a function of frequency.
-        """
-        assert isinstance(hot_load_s11, s11.LoadS11), "hot_load_s11 must be a LoadS11"
-        assert (
-            hot_load_s11.load_name == "hot_load"
-        ), "hot_load_s11 must be a hot_load s11"
-
-        return self.get_power_gain(
-            {
-                "s11": self.s11_model(freq.to_value("MHz")),
-                "s12s21": self.s12s21_model(freq.to_value("MHz")),
-                "s22": self.s22_model(freq.to_value("MHz")),
-            },
-            hot_load_s11.s11_model(freq.to_value("MHz")),
-        )
-
-    @staticmethod
-    def get_power_gain(
-        semi_rigid_sparams: dict, hot_load_s11: np.ndarray
-    ) -> np.ndarray:
-        """Define Eq. 9 from M17.
-
-        Parameters
-        ----------
-        semi_rigid_sparams : dict
-            A dictionary of reflection coefficient measurements as a function of
-            frequency for the semi-rigid cable.
-        hot_load_s11 : array-like
-            The S11 measurement of the hot_load.
-
-        Returns
-        -------
-        gain : np.ndarray
-            The power gain.
-        """
-        rht = rc.gamma_de_embed(
-            semi_rigid_sparams["s11"],
-            semi_rigid_sparams["s12s21"],
-            semi_rigid_sparams["s22"],
-            hot_load_s11,
-        )
-
-        return (
-            np.abs(semi_rigid_sparams["s12s21"])
-            * (1 - np.abs(rht) ** 2)
-            / (
-                (np.abs(1 - semi_rigid_sparams["s11"] * rht)) ** 2
-                * (1 - np.abs(hot_load_s11) ** 2)
-            )
-        )
+from .tools import FrequencyRange, bin_array
 
 
 @hickleable()
@@ -276,9 +64,8 @@ class Load:
     def loss_model(self):
         """The loss model as a callable function of frequency."""
         if isinstance(self._loss_model, HotLoadCorrection):
-            return partial(self._loss_model.power_gain, hot_load_s11=self.reflections)
-        else:
-            return self._loss_model
+            return self._loss_model.power_gain
+        return self._loss_model
 
     @property
     def load_name(self) -> str:
@@ -288,7 +75,7 @@ class Load:
     @classmethod
     def from_io(
         cls,
-        io_obj: io.CalibrationObservation,
+        io_obj: io.CalibrationObservation | io3.CalibrationObservation,
         load_name: str,
         f_low: tp.FreqType = 40 * un.MHz,
         f_high: tp.FreqType = np.inf * un.MHz,
@@ -383,8 +170,84 @@ class Load:
                 loss_model=hlc,
                 ambient_temperature=ambient_temperature,
             )
-        else:
-            return cls(spectrum=spec, reflections=refl)
+        return cls(spectrum=spec, reflections=refl)
+
+    @classmethod
+    def from_edges3(
+        cls,
+        io_obj: io3.CalibrationObservation,
+        load_name: str,
+        f_low: tp.FreqType = 40 * un.MHz,
+        f_high: tp.FreqType = np.inf * un.MHz,
+        reflection_kwargs: dict | None = None,
+        spec_kwargs: dict | None = None,
+        loss_model: callable | None = None,
+        ambient_temperature: float | None = None,
+        restrict_s11_freqs: bool = False,
+    ):
+        """
+        Define a full :class:`Load` from a path and name.
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to the top-level calibration observation.
+        load_name : str
+            Name of a load to define.
+        f_low, f_high : float
+            Min/max frequencies to keep in measurements.
+        reflection_kwargs : dict
+            Extra arguments to pass through to :class:`SwitchCorrection`.
+        spec_kwargs : dict
+            Extra arguments to pass through to :class:`LoadSpectrum`.
+        ambient_temperature
+            The ambient temperature to use for the loss, if required (required for new
+            hot loads). By default, read an ambient load's actual temperature reading
+            from the io object.
+
+        Returns
+        -------
+        load : :class:`Load`
+            The load object, containing all info about spectra and S11's for that load.
+        """
+        if not spec_kwargs:
+            spec_kwargs = {}
+        if not reflection_kwargs:
+            reflection_kwargs = {}
+
+        # For the LoadSpectrum, we can specify both f_low/f_high and f_range_keep.
+        # The first pair is what defines what gets read in and smoothed/averaged.
+        # The second pair then selects a part of this range to keep for doing
+        # calibration with.
+        if "f_low" not in spec_kwargs:
+            spec_kwargs["f_low"] = f_low
+        if "f_high" not in spec_kwargs:
+            spec_kwargs["f_high"] = f_high
+
+        spec = LoadSpectrum.from_edges3(
+            io_obs=io_obj,
+            load_name=load_name,
+            f_range_keep=(f_low, f_high),
+            **spec_kwargs,
+        )
+
+        refl = s11.LoadS11.from_edges3(
+            obs=io_obj,
+            load_name=load_name,
+            f_low=f_low if restrict_s11_freqs else 0 * un.MHz,
+            f_high=f_high if restrict_s11_freqs else np.inf * un.MHz,
+            **reflection_kwargs,
+        )
+
+        if refl.model_delay == 0 * un.s:
+            refl = refl.with_model_delay()
+
+        return cls(
+            spectrum=spec,
+            reflections=refl,
+            ambient_temperature=ambient_temperature,
+            loss_model=loss_model,
+        )
 
     def get_temp_with_loss(self, freq: tp.FreqType | None = None):
         """Calculate the temperature of the load accounting for loss."""
@@ -394,7 +257,7 @@ class Load:
         if self.loss_model is None:
             return self.spectrum.temp_ave * np.ones(len(freq))
 
-        gain = self.loss_model(freq)
+        gain = self.loss_model(freq, self.reflections.s11_model(freq))
         return gain * self.spectrum.temp_ave + (1 - gain) * self.ambient_temperature
 
     @cached_property
@@ -499,14 +362,13 @@ class CalibrationObservation:
     @classmethod
     def from_io(
         cls,
-        io_obj: io.CalibrationObservation,
+        io_obj: io.CalibrationObservation | io3.CalibrationObservation,
         *,
         semi_rigid_path: tp.PathLike = ":semi_rigid_s_parameters_WITH_HEADER.txt",
         freq_bin_size: int = 1,
         spectrum_kwargs: dict[str, dict[str, Any]] | None = None,
         s11_kwargs: dict[str, dict[str, Any]] | None = None,
         internal_switch_kwargs: dict[str, Any] | None = None,
-        lna_kwargs: dict[str, Any] | None = None,
         f_low: tp.FreqType = 40.0 * un.MHz,
         f_high: tp.FreqType = np.inf * un.MHz,
         sources: tuple[str] = ("ambient", "hot_load", "open", "short"),
@@ -562,12 +424,6 @@ class CalibrationObservation:
         if f_high < f_low:
             raise ValueError("f_high must be larger than f_low!")
 
-        if lna_kwargs is not None:
-            warnings.warn(
-                "Use of 'lna_kwargs' is deprecated, use 'receiver_kwargs' instead."
-            )
-            receiver_kwargs = lna_kwargs
-
         spectrum_kwargs = spectrum_kwargs or {}
         s11_kwargs = s11_kwargs or {}
         internal_switch_kwargs = internal_switch_kwargs or {}
@@ -613,13 +469,13 @@ class CalibrationObservation:
                 reflection_kwargs={
                     **s11_kwargs.get("default", {}),
                     **s11_kwargs.get(name, {}),
-                    **{"internal_switch_kwargs": internal_switch_kwargs},
+                    "internal_switch_kwargs": internal_switch_kwargs,
                 },
                 spec_kwargs={
                     **spectrum_kwargs["default"],
                     **spectrum_kwargs.get(name, {}),
                 },
-                loss_kwargs={**hot_load_loss_kwargs, **{"path": semi_rigid_path}},
+                loss_kwargs={**hot_load_loss_kwargs, "path": semi_rigid_path},
                 ambient_temperature=ambient_temperature,
             )
 
@@ -638,7 +494,7 @@ class CalibrationObservation:
             metadata={
                 "path": io_obj.path,
                 "s11_kwargs": s11_kwargs,
-                "lna_kwargs": lna_kwargs,
+                "lna_kwargs": receiver_kwargs,
                 "spectra": {
                     name: load.spectrum.metadata for name, load in loads.items()
                 },
@@ -647,7 +503,147 @@ class CalibrationObservation:
             **kwargs,
         )
 
-    def with_load_calkit(self, calkit, loads: Sequence[str] = None):
+    @classmethod
+    def from_edges3(
+        cls,
+        io_obj: io3.CalibrationObservation,
+        *,
+        freq_bin_size: int = 1,
+        spectrum_kwargs: dict[str, dict[str, Any]] | None = None,
+        s11_kwargs: dict[str, dict[str, Any]] | None = None,
+        internal_switch_kwargs: dict[str, Any] | None = None,
+        f_low: tp.FreqType = 40.0 * un.MHz,
+        f_high: tp.FreqType = np.inf * un.MHz,
+        sources: tuple[str] = ("ambient", "hot_load", "open", "short"),
+        receiver_kwargs: dict[str, Any] | None = None,
+        restrict_s11_model_freqs: bool = True,
+        loss_models: dict[str, callable] | None = None,
+        **kwargs,
+    ) -> CalibrationObservation:
+        """Create the object from an edges-io observation.
+
+        Parameters
+        ----------
+        io_obj
+            An calibration observation object from which all the data can be read.
+        freq_bin_size
+            The size of each frequency bin (of the spectra) in units of the raw size.
+        spectrum_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`LoadSpectrum`
+            objects. See its documentation for relevant parameters. Parameters specified
+            here are used for _all_ calibrator sources.
+        s11_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`LoadS11`
+            objects. See its documentation for relevant parameters. Parameters specified
+            here are used for _all_ calibrator sources.
+        internal_switch_kwargs
+            Keyword arguments used to instantiate the :class:`~s11.InternalSwitch`
+            objects. See its documentation for relevant parameters. The same internal
+            switch is used to calibrate the S11 for each input source.
+        f_low : float
+            Minimum frequency to keep for all loads (and their S11's). If for some
+            reason different frequency bounds are desired per-load, one can pass in
+            full load objects through ``load_spectra``.
+        f_high : float
+            Maximum frequency to keep for all loads (and their S11's). If for some
+            reason different frequency bounds are desired per-load, one can pass in
+            full load objects through ``load_spectra``.
+        sources
+            A sequence of strings specifying which loads to actually use in the
+            calibration. Default is all four standard calibrators.
+        receiver_kwargs
+            Keyword arguments used to instantiate the calibrator :class:`~s11.Receiver`
+            objects. See its documentation for relevant parameters. ``lna_kwargs`` is a
+            deprecated alias.
+        restrict_s11_model_freqs
+            Whether to restrict the S11 modelling (i.e. smoothing) to the given freq
+            range. The final output will be calibrated only between the given freq
+            range, but the S11 models themselves can be fit over a broader set of
+            frequencies.
+        loss_models
+            A dictionary of loss models for each source. If a particular source has no
+            loss its entry can be missing or None. By default, the only source with loss
+            is the hot_load, which uses a 4" cable.
+        """
+        if f_high < f_low:
+            raise ValueError("f_high must be larger than f_low!")
+
+        spectrum_kwargs = spectrum_kwargs or {}
+        s11_kwargs = s11_kwargs or {}
+        internal_switch_kwargs = internal_switch_kwargs or {}
+        receiver_kwargs = receiver_kwargs or {}
+        loss_models = loss_models or {
+            "hot_load": loss.get_cable_loss_model(
+                "UT-141C-SP", cable_length=4 * un.imperial.inch
+            )
+        }
+
+        for v in [spectrum_kwargs, s11_kwargs, internal_switch_kwargs, receiver_kwargs]:
+            assert isinstance(v, dict)
+
+        f_low = f_low.to("MHz", copy=False)
+        f_high = f_high.to("MHz", copy=False)
+
+        if "calkit" not in receiver_kwargs:
+            receiver_kwargs["calkit"] = rc.get_calkit(
+                rc.AGILENT_ALAN,
+                resistance_of_match=49.962 * un.Ohm,
+            )
+
+        receiver = s11.Receiver.from_edges3(
+            obs=io_obj,
+            f_low=f_low if restrict_s11_model_freqs else 0 * un.MHz,
+            f_high=f_high if restrict_s11_model_freqs else np.inf * un.MHz,
+            **receiver_kwargs,
+        ).with_model_delay()
+
+        if "default" not in spectrum_kwargs:
+            spectrum_kwargs["default"] = {}
+
+        if "freq_bin_size" not in spectrum_kwargs["default"]:
+            spectrum_kwargs["default"]["freq_bin_size"] = freq_bin_size
+
+        def get_load(name, ambient_temperature=None):
+            return Load.from_edges3(
+                io_obj=io_obj,
+                load_name=name,
+                f_low=f_low,
+                f_high=f_high,
+                reflection_kwargs={
+                    "calkit": receiver_kwargs["calkit"],
+                    **s11_kwargs.get("default", {}),
+                    **s11_kwargs.get(name, {}),
+                },
+                spec_kwargs={
+                    **spectrum_kwargs["default"],
+                    **spectrum_kwargs.get(name, {}),
+                },
+                ambient_temperature=ambient_temperature,
+                restrict_s11_freqs=restrict_s11_model_freqs,
+                loss_model=loss_models.get(name, None),
+            )
+
+        amb = get_load("ambient")
+        loads = {
+            src: get_load(src, ambient_temperature=amb.temp_ave) for src in sources
+        }
+
+        return cls(
+            loads=loads,
+            receiver=receiver,
+            metadata={
+                "path": io_obj.temperature_file.parent.parent,
+                "s11_kwargs": s11_kwargs,
+                "lna_kwargs": receiver_kwargs,
+                "spectra": {
+                    name: load.spectrum.metadata for name, load in loads.items()
+                },
+                "io": io_obj,
+            },
+            **kwargs,
+        )
+
+    def with_load_calkit(self, calkit, loads: Sequence[str] | None = None):
         """Return a new observation with loads having given calkit."""
         if loads is None:
             loads = self.load_names
@@ -664,17 +660,17 @@ class CalibrationObservation:
     @safe_property
     def t_load(self) -> float:
         """Assumed temperature of the load."""
-        return self.loads[list(self.loads.keys())[0]].t_load
+        return self.loads[next(iter(self.loads.keys()))].t_load
 
     @safe_property
     def t_load_ns(self) -> float:
         """Assumed temperature of the load + noise source."""
-        return self.loads[list(self.loads.keys())[0]].t_load_ns
+        return self.loads[next(iter(self.loads.keys()))].t_load_ns
 
     @cached_property
     def freq(self) -> FrequencyRange:
         """The frequencies at which spectra were measured."""
-        return self.loads[list(self.loads.keys())[0]].freq
+        return self.loads[next(iter(self.loads.keys()))].freq
 
     @safe_property
     def internal_switch(self):
@@ -713,7 +709,7 @@ class CalibrationObservation:
         reflection_kwargs = reflection_kwargs or {}
         spec_kwargs = spec_kwargs or {}
 
-        spec_kwargs["freq_bin_size"] = self.freq.bin_size
+        spec_kwargs["freq_bin_size"] = self.metadata.get("freq_bin_size", 1)
         spec_kwargs["t_load"] = self.open.spectrum.t_load
         spec_kwargs["t_load_ns"] = self.open.spectrum.t_load_ns
 
@@ -722,14 +718,15 @@ class CalibrationObservation:
                 "frequency_smoothing"
             ]
 
-        spec_kwargs["f_low"] = self.freq._f_low
-        spec_kwargs["f_high"] = self.freq._f_high
+        spec_kwargs["f_low"], spec_kwargs["f_high"] = self.open.spectrum.metadata[
+            "pre_smooth_freq_range"
+        ]
 
         return Load.from_io(
             io_obj=io_obj,
             load_name=load_name,
-            f_low=self.freq.post_bin_f_low,
-            f_high=self.freq.post_bin_f_high,
+            f_low=self.freq._f_low,
+            f_high=self.freq._f_high,
             reflection_kwargs=reflection_kwargs,
             spec_kwargs=spec_kwargs,
         )
@@ -773,12 +770,22 @@ class CalibrationObservation:
         dict:
             Each entry has a key of the source name, and the value is a matplotlib fig.
         """
-        out = {
-            name: source.reflections.plot_residuals(**kwargs)
-            for name, source in self.loads.items()
-        }
-        out.update({"lna": self.receiver.plot_residuals(**kwargs)})
-        return out
+        fig, ax = plt.subplots(
+            4,
+            len(self.loads) + 1,
+            figsize=((len(self.loads) + 1) * 4, 6),
+            sharex=True,
+            gridspec_kw={"hspace": 0.05},
+            layout="constrained",
+        )
+
+        for i, (name, source) in enumerate(self.loads.items()):
+            source.reflections.plot_residuals(ax=ax[:, i], title=False, **kwargs)
+            ax[0, i].set_title(name)
+
+        self.receiver.plot_residuals(ax=ax[:, -1], title=False, **kwargs)
+        ax[0, -1].set_title("Receiver")
+        return ax
 
     @cached_property
     def s11_correction_models(self):
@@ -825,7 +832,7 @@ class CalibrationObservation:
         return scale, off, Tu, TC, TS
 
     @cached_property
-    def C1_poly(self):  # noqa: N802
+    def C1_poly(self):
         """`np.poly1d` object describing the Scaling calibration coefficient C1.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
@@ -835,7 +842,7 @@ class CalibrationObservation:
         return self._calibration_coefficients[0]
 
     @cached_property
-    def C2_poly(self):  # noqa: N802
+    def C2_poly(self):
         """`np.poly1d` object describing the offset calibration coefficient C2.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
@@ -845,7 +852,7 @@ class CalibrationObservation:
         return self._calibration_coefficients[1]
 
     @cached_property
-    def Tunc_poly(self):  # noqa: N802
+    def Tunc_poly(self):
         """`np.poly1d` object describing the uncorrelated noise-wave parameter, Tunc.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
@@ -855,7 +862,7 @@ class CalibrationObservation:
         return self._calibration_coefficients[2]
 
     @cached_property
-    def Tcos_poly(self):  # noqa: N802
+    def Tcos_poly(self):
         """`np.poly1d` object describing the cosine noise-wave parameter, Tcos.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
@@ -865,7 +872,7 @@ class CalibrationObservation:
         return self._calibration_coefficients[3]
 
     @cached_property
-    def Tsin_poly(self):  # noqa: N802
+    def Tsin_poly(self):
         """`np.poly1d` object describing the sine noise-wave parameter, Tsin.
 
         The polynomial is defined to act on normalized frequencies such that `freq.min`
@@ -874,7 +881,7 @@ class CalibrationObservation:
         """
         return self._calibration_coefficients[4]
 
-    def C1(self, f: tp.FreqType | None = None):  # noqa: N802
+    def C1(self, f: tp.FreqType | None = None):
         """
         Scaling calibration parameter.
 
@@ -889,7 +896,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.C1_poly(fnorm)
 
-    def C2(self, f: tp.FreqType | None = None):  # noqa: N802
+    def C2(self, f: tp.FreqType | None = None):
         """
         Offset calibration parameter.
 
@@ -904,7 +911,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.C2_poly(fnorm)
 
-    def Tunc(self, f: tp.FreqType | None = None):  # noqa: N802
+    def Tunc(self, f: tp.FreqType | None = None):
         """
         Uncorrelated noise-wave parameter.
 
@@ -919,7 +926,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.Tunc_poly(fnorm)
 
-    def Tcos(self, f: tp.FreqType | None = None):  # noqa: N802
+    def Tcos(self, f: tp.FreqType | None = None):
         """
         Cosine noise-wave parameter.
 
@@ -934,7 +941,7 @@ class CalibrationObservation:
         fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
         return self.Tcos_poly(fnorm)
 
-    def Tsin(self, f: tp.FreqType | None = None):  # noqa: N802
+    def Tsin(self, f: tp.FreqType | None = None):
         """
         Sine noise-wave parameter.
 
@@ -954,8 +961,7 @@ class CalibrationObservation:
         """The corrected S11 of the LNA evaluated at the data frequencies."""
         if hasattr(self, "_injected_lna_s11") and self._injected_lna_s11 is not None:
             return self._injected_lna_s11
-        else:
-            return self.receiver.s11_model(self.freq.freq.to_value("MHz"))
+        return self.receiver.s11_model(self.freq.freq.to_value("MHz"))
 
     def get_linear_coefficients(self, load: Load | str):
         """
@@ -1011,10 +1017,10 @@ class CalibrationObservation:
         if isinstance(load, str):
             try:
                 load = self.loads[load]
-            except (AttributeError, KeyError):
+            except (AttributeError, KeyError) as e:
                 raise AttributeError(
                     f"load must be a Load object or a string (one of {self.load_names})"
-                )
+                ) from e
         else:
             assert isinstance(
                 load, Load
@@ -1045,11 +1051,15 @@ class CalibrationObservation:
         if freq.min() < self.freq.freq.min():
             warnings.warn(
                 "The minimum frequency is outside the calibrated range "
-                f"({self.freq.freq.min()} - {self.freq.freq.max()} MHz)"
+                f"({self.freq.freq.min()} - {self.freq.freq.max()} MHz)",
+                stacklevel=2,
             )
 
         if freq.max() > self.freq.freq.max():
-            warnings.warn("The maximum frequency is outside the calibrated range ")
+            warnings.warn(
+                "The maximum frequency is outside the calibrated range",
+                stacklevel=2,
+            )
 
         a, b = self.get_linear_coefficients(load)
         return (temp - b) / a
@@ -1320,14 +1330,14 @@ class CalibrationObservation:
     def inject(
         self,
         lna_s11: np.ndarray = None,
-        source_s11s: dict[str, np.ndarray] = None,
+        source_s11s: dict[str, np.ndarray] | None = None,
         c1: np.ndarray = None,
         c2: np.ndarray = None,
         t_unc: np.ndarray = None,
         t_cos: np.ndarray = None,
         t_sin: np.ndarray = None,
-        averaged_spectra: dict[str, np.ndarray] = None,
-        thermistor_temp_ave: dict[str, np.ndarray] = None,
+        averaged_spectra: dict[str, np.ndarray] | None = None,
+        thermistor_temp_ave: dict[str, np.ndarray] | None = None,
     ) -> CalibrationObservation:
         """Make a new :class:`CalibrationObservation` based on this, with injections.
 
@@ -1390,6 +1400,10 @@ class CalibrationObservation:
         return cls.from_io(io_obs, **config)
 
 
+class CalFileReadError(Exception):
+    pass
+
+
 @hickleable()
 @attr.s(kw_only=True)
 class Calibrator:
@@ -1404,6 +1418,10 @@ class Calibrator:
     _Tcos: Callable[[np.ndarray], np.ndarray] = attr.ib()
     _Tsin: Callable[[np.ndarray], np.ndarray] = attr.ib()
     _receiver_s11: Callable[[np.ndarray], np.ndarray] = attr.ib()
+
+    coefficient_freq_units: un.Unit = attr.ib(default="norm")
+    receiver_s11_freq_units: un.Unit = attr.ib(default="MHz")
+
     internal_switch = attr.ib()
     t_load: float = attr.ib(300)
     t_load_ns: float = attr.ib(350)
@@ -1412,11 +1430,19 @@ class Calibrator:
     def __attrs_post_init__(self):
         """Initialize properties of the class."""
         for key in ["C1", "C2", "Tunc", "Tcos", "Tsin"]:
-            setattr(self, key, partial(self._call_func, key=key, norm=True))
+            setattr(
+                self,
+                key,
+                partial(self._call_func, key=key, unit=self.coefficient_freq_units),
+            )
         for key in [
             "receiver_s11",
         ]:
-            setattr(self, key, partial(self._call_func, key=key, norm=False))
+            setattr(
+                self,
+                key,
+                partial(self._call_func, key=key, unit=self.receiver_s11_freq_units),
+            )
 
     def clone(self, **kwargs):
         """Clone the instance with new parameters."""
@@ -1424,6 +1450,9 @@ class Calibrator:
 
     @internal_switch.validator
     def _isw_vld(self, att, val):
+        if val is None:
+            return
+
         if isinstance(val, s11.InternalSwitch):
             return
 
@@ -1433,19 +1462,15 @@ class Calibrator:
             ):
                 raise ValueError(f"internal_switch must provide {key}_model method")
 
-    def _call_func(self, freq: tp.FreqType | None = None, *, key=None, norm=False):
+    def _call_func(self, freq: tp.FreqType | None = None, *, key=None, unit="MHz"):
         if freq is None:
             freq = self.freq.freq
 
         if not hasattr(freq, "unit"):
             raise ValueError("freq must have units of frequency")
 
-        if norm:
-            freq = self.freq.normalize(freq)
-        else:
-            freq = freq.to_value("MHz")
-
-        return getattr(self, "_" + key)(freq)
+        freq = self.freq.normalize(freq) if unit == "norm" else freq.to_value(unit)
+        return getattr(self, f"_{key}")(freq)
 
     @classmethod
     def from_calobs_file(cls, path: tp.PathLike) -> Calibrator:
@@ -1457,21 +1482,26 @@ class Calibrator:
     def from_calfile(cls, path: tp.PathLike) -> Calibrator:
         """Generate from calfile."""
         with h5py.File(path, "r") as fl:
-            cterms = fl.attrs["cterms"]
-            wterms = fl.attrs["wterms"]
-            t_load = fl.attrs["t_load"]
-            t_load_ns = fl.attrs["t_load_ns"]
+            try:
+                cterms = fl.attrs["cterms"]
+                wterms = fl.attrs["wterms"]
+                t_load = fl.attrs["t_load"]
+                t_load_ns = fl.attrs["t_load_ns"]
 
-            C1 = np.poly1d(fl["C1"])
-            C2 = np.poly1d(fl["C2"])
-            Tunc = np.poly1d(fl["Tunc"])
-            Tcos = np.poly1d(fl["Tcos"])
-            Tsin = np.poly1d(fl["Tsin"])
+                C1 = np.poly1d(fl["C1"])
+                C2 = np.poly1d(fl["C2"])
+                Tunc = np.poly1d(fl["Tunc"])
+                Tcos = np.poly1d(fl["Tcos"])
+                Tsin = np.poly1d(fl["Tsin"])
 
-            freq = hickle.load(fl["frequencies"])
-            receiver_s11 = hickle.load(fl["receiver_s11"])
-            internal_switch = hickle.load(fl["internal_switch"])
-            metadata = hickle.load(fl["metadata"])
+                freq = hickle.load(fl["frequencies"])
+                receiver_s11 = hickle.load(fl["receiver_s11"])
+                internal_switch = hickle.load(fl["internal_switch"])
+                metadata = hickle.load(fl["metadata"])
+            except Exception as e:
+                raise CalFileReadError(
+                    f"Something went wrong reading the calfile: {path}"
+                ) from e
 
         return cls(
             cterms=cterms,
@@ -1684,9 +1714,9 @@ def perform_term_sweep(
             break
 
     logger.info(
-        f"Best parameters found for Nc={cterms[i-1]}, "
-        f"Nw={wterms[winner[i-1]]}, "
-        f"with RMS = {rms[i-1, winner[i-1]]}."
+        f"Best parameters found for Nc={cterms[i - 1]}, "
+        f"Nw={wterms[winner[i - 1]]}, "
+        f"with RMS = {rms[i - 1, winner[i - 1]]}."
     )
 
     best = np.unravel_index(np.argmin(rms), rms.shape)

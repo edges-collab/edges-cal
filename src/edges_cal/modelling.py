@@ -1,17 +1,18 @@
 """Functions for generating least-squares model fits for linear models."""
 from __future__ import annotations
 
+from abc import ABCMeta, abstractmethod
+from collections.abc import Sequence
+from copy import copy
+from functools import cached_property
+from typing import Literal, Union
+
 import attr
 import attrs
 import numpy as np
 import scipy as sp
 import yaml
-from abc import ABCMeta, abstractmethod
-from cached_property import cached_property
-from copy import copy
-from edges_io.h5 import register_h5type
 from hickleable import hickleable
-from typing import Literal, Sequence, Type, Union
 
 from . import receiver_calibration_func as rcf
 from .simulate import simulate_q_from_calobs
@@ -61,7 +62,7 @@ class FixedLinearModel(yaml.YAMLObject):
     @_init_basis.validator
     def _init_basis_vld(self, att, val):
         if val is None:
-            return None
+            return
 
         if val.shape[1] != len(self.x):
             raise ValueError("The init_basis values must be the same shape as x.")
@@ -210,7 +211,6 @@ class ModelTransform(metaclass=ABCMeta):
     @abstractmethod
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
-        pass
 
     @classmethod
     def get(cls, model: str) -> type[ModelTransform]:
@@ -295,15 +295,13 @@ class LogTransform(ModelTransform):
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
-        return np.log(x)
+        return np.log(x / self.scale)
 
 
 @hickleable()
 @attrs.define(frozen=True, kw_only=True, slots=False)
-class Log10Transform(ModelTransform):
-    """A transform that takes the logarithm of the input."""
-
-    scale: float = attrs.field(default=1.0)
+class Log10Transform(LogTransform):
+    """A transform that takes the base10 logarithm of the input."""
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
@@ -312,10 +310,8 @@ class Log10Transform(ModelTransform):
 
 @hickleable()
 @attrs.define(frozen=True, kw_only=True, slots=False)
-class ZerotooneTransform(ModelTransform):
+class ZerotooneTransform(UnitTransform):
     """A transform that takes an input range down to (0,1)."""
-
-    range: tuple[float, float] = attrs.field(converter=tuple_converter)
 
     def transform(self, x: np.ndarray) -> np.ndarray:
         """Transform the coordinates."""
@@ -323,7 +319,6 @@ class ZerotooneTransform(ModelTransform):
 
 
 @hickleable()
-@register_h5type
 @attr.s(frozen=True, kw_only=True, slots=False)
 class Model(metaclass=ABCMeta):
     """A base class for a linear model."""
@@ -349,8 +344,7 @@ class Model(metaclass=ABCMeta):
     def _n_terms_default(self):
         if self.parameters is not None:
             return len(self.parameters)
-        else:
-            return self.__class__.default_n_terms
+        return self.__class__.default_n_terms
 
     @n_terms.validator
     def _n_terms_validator(self, att, val):
@@ -368,7 +362,6 @@ class Model(metaclass=ABCMeta):
     @abstractmethod
     def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Define the basis terms for the model."""
-        pass
 
     def get_basis_term_transformed(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Get the basis term after coordinate transformation."""
@@ -471,10 +464,9 @@ def get_mdl(model: str | type[Model]) -> type[Model]:
     """Get a linear model class from a string input."""
     if isinstance(model, str):
         return _MODELS[model]
-    elif np.issubclass_(model, Model):
+    if np.issubclass_(model, Model):
         return model
-    else:
-        raise ValueError("model needs to be a string or Model subclass")
+    raise ValueError("model needs to be a string or Model subclass")
 
 
 def get_mdl_inst(model: str | Model | type[Model], **kwargs) -> Model:
@@ -482,8 +474,7 @@ def get_mdl_inst(model: str | Model | type[Model], **kwargs) -> Model:
     if isinstance(model, Model):
         if kwargs:
             return attrs.evolve(model, **kwargs)
-        else:
-            return model
+        return model
 
     return get_mdl(model)(**kwargs)
 
@@ -529,12 +520,11 @@ class PhysicalLin(Foreground):
             y25 = x**self.spectral_index
             return y25 * logy**indx
 
-        elif indx == 3:
+        if indx == 3:
             return x ** (self.spectral_index - 2)
-        elif indx == 4:
+        if indx == 4:
             return 1 / (x * x)
-        else:
-            raise ValueError("too many terms supplied!")
+        raise ValueError("too many terms supplied!")
 
 
 @hickleable()
@@ -624,10 +614,9 @@ class Fourier(Model):
         """Define the basis functions of the model."""
         if indx == 0:
             return np.ones_like(x)
-        elif indx % 2:
+        if indx % 2:
             return np.cos(self._period_fac * ((indx + 1) // 2) * x)
-        else:
-            return np.sin(self._period_fac * ((indx + 1) // 2) * x)
+        return np.sin(self._period_fac * ((indx + 1) // 2) * x)
 
 
 @hickleable()
@@ -763,7 +752,7 @@ class CompositeModel:
 
         model_ = model_.with_nterms(n_terms=n_terms, parameters=parameters)
 
-        return attrs.evolve(self, models={**self.models, **{model: model_}})
+        return attrs.evolve(self, models={**self.models, model: model_})
 
     def with_params(self, parameters: Sequence):
         """Get a new model with specified parameters."""
@@ -1054,8 +1043,7 @@ class NoiseWaves:
 
         if with_k:
             return CompositeModel(models=models, extra_basis=extra_basis).at(x=x)
-        else:
-            return CompositeModel(models=models).at(x=x)
+        return CompositeModel(models=models).at(x=x)
 
     @cached_property
     def linear_model(self) -> CompositeModel:
@@ -1078,8 +1066,7 @@ class NoiseWaves:
         if src:
             indx = self.src_names.index(src)
             return out[indx * len(self.freq) : (indx + 1) * len(self.freq)]
-        else:
-            return out[: len(self.freq)]
+        return out[: len(self.freq)]
 
     def get_full_model(
         self, src: str, parameters: Sequence | None = None
@@ -1104,10 +1091,9 @@ class NoiseWaves:
         def modify(thing, n):
             if len(thing) < n:
                 return thing + [0] * (n - len(thing))
-            elif len(thing) > n:
+            if len(thing) > n:
                 return thing[:n]
-            else:
-                return thing
+            return thing
 
         tu = modify(calobs.Tunc_poly.coefficients[::-1].tolist(), wterms)
         tc = modify(calobs.Tcos_poly.coefficients[::-1].tolist(), wterms)
@@ -1296,7 +1282,7 @@ class ModelFit:
         elif np.ndim(w) == 1:
             w = np.diag(w)
 
-        npar, ndata = basis.shape
+        npar, _ndata = basis.shape
 
         wa = np.dot(basis, w)
 
@@ -1332,10 +1318,8 @@ class ModelFit:
         scl[scl == 0] = 1
 
         # Solve the least squares problem.
-        c, resids, rank, s = np.linalg.lstsq((lhs.T / scl), rhs.T, rcond)
-        c = (c.T / scl).T
-
-        return c
+        c, _resids, _rank, _s = np.linalg.lstsq((lhs.T / scl), rhs.T, rcond)
+        return (c.T / scl).T
 
     def _ls(self, van, y):
         """Ripped straight outta numpy for speed.
@@ -1439,7 +1423,7 @@ yaml.BaseLoader.add_constructor("!Model", _model_yaml_constructor)
 yaml.add_multi_representer(Model, _model_yaml_representer)
 yaml.add_multi_representer(ModelTransform, _transform_yaml_representer)
 
-Modelable = Union[str, Type[Model]]
+Modelable = Union[str, type[Model]]
 
 
 def _alan_qrd(a: np.ndarray, b: np.ndarray):
@@ -1502,8 +1486,7 @@ def _alan_qrd(a: np.ndarray, b: np.ndarray):
     for k in range(n):
         if u[k, k] == 0:
             return
-        else:
-            u[k, k] = 1.0 / u[k, k]
+        u[k, k] = 1.0 / u[k, k]
 
     for i in range(n - 2, 0, -1):
         for j in range(n - 1, i, -1):

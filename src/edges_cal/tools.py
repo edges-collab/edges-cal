@@ -1,19 +1,27 @@
 """Tools to use in other modules."""
 from __future__ import annotations
 
-import attr
-import numpy as np
 import warnings
-from astropy import units
-from astropy import units as u
-from hickleable import hickleable
+from collections.abc import Sequence
 from itertools import product
 from pathlib import Path
+from typing import Any, Callable
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
+
+import attr
+import numpy as np
+from astropy import units
+from astropy import units as u
+from edges_io import types as tp
+from hickleable import hickleable
+from pygsdata import GSData
 from scipy.ndimage import convolve1d
-from typing import Any, Callable, Sequence
 
 from . import DATA_PATH
-from . import types as tp
 from .cached_property import cached_property
 
 
@@ -21,8 +29,7 @@ def get_data_path(pth: str | Path) -> Path:
     """Impute the global data path to a given input in place of a colon."""
     if isinstance(pth, str):
         return DATA_PATH / pth[1:] if pth.startswith(":") else Path(pth)
-    else:
-        return pth
+    return pth
 
 
 def is_unit(unit: str) -> bool:
@@ -75,7 +82,8 @@ def unit_convert_or_apply(
     if warn and not isinstance(x, units.Quantity):
         warnings.warn(
             f"Value passed without units, assuming '{unit}'. "
-            "Consider specifying units for future compatibility."
+            "Consider specifying units for future compatibility.",
+            stacklevel=2,
         )
 
     return units.Quantity(x, unit, copy=not in_place)
@@ -143,12 +151,6 @@ class FrequencyRange:
         A minimum frequency to keep in the array. Default is min(f).
     f_high
         A minimum frequency to keep in the array. Default is min(f).
-    bin_size
-        Bin input frequencies into bins of this size.
-    alan_mode
-        Only applicable if bin_size > 1. If True, then take every
-        bin_size frequency, starting from the 0th channel. Otherwise
-        take the mean of each bin as the resulting frequency.
     """
 
     _f: tp.FreqType = attr.ib(
@@ -160,24 +162,6 @@ class FrequencyRange:
     _f_high: float = attr.ib(
         np.inf * u.MHz, validator=vld_unit("frequency"), kw_only=True
     )
-    bin_size: int = attr.ib(default=1, converter=int, kw_only=True)
-    alan_mode: bool = attr.ib(default=False, converter=bool, kw_only=True)
-    post_bin_f_low: tp.Freqtype = attr.ib(
-        0 * u.MHz, validator=vld_unit("frequency"), kw_only=True
-    )
-    post_bin_f_high: float = attr.ib(
-        np.inf * u.MHz, validator=vld_unit("frequency"), kw_only=True
-    )
-
-    @bin_size.validator
-    def _bin_size_validator(self, att, val):
-        if val < 1:
-            raise ValueError("Cannot use bin_size < 1")
-
-        if val > self._f.size:
-            raise ValueError(
-                "Cannot use bin_size larger than the total number of freqs."
-            )
 
     @_f.validator
     def _f_validator(self, att, val):
@@ -185,11 +169,18 @@ class FrequencyRange:
             raise ValueError("Cannot have negative input frequencies!")
         if val.ndim > 1:
             raise ValueError("Frequency array must be 1D!")
+        if np.any(np.diff(val) < 0):
+            raise ValueError("Input frequencies must be in increasing order!")
 
     @_f_high.validator
     def _fhigh_validator(self, att, val):
         if val <= self._f_low:
             raise ValueError("Cannot have f_high <= f_low.")
+
+    @property
+    def nfull(self) -> int:
+        """The number of frequencies in the full array."""
+        return self.freq_full.size
 
     @property
     def n(self) -> int:
@@ -201,7 +192,8 @@ class FrequencyRange:
         """Resolution of the frequencies."""
         if not np.allclose(np.diff(self.freq, 2), 0):
             warnings.warn(
-                "Not all frequency intervals are even, so using df is ill-advised!"
+                "Not all frequency intervals are even, so using df is ill-advised!",
+                stacklevel=2,
             )
         return self.freq[1] - self.freq[0]
 
@@ -210,39 +202,28 @@ class FrequencyRange:
         """Alias for `f`."""
         return self._f
 
-    @cached_property
-    def min(self):  # noqa
+    @property
+    def min(self):
         """Minimum frequency in the array."""
-        return self.freq.min()
+        return self.freq[0]
 
-    @cached_property
-    def max(self):  # noqa
+    @property
+    def max(self):
         """Maximum frequency in the array."""
-        return self.freq.max()
+        return self.freq[-1]
 
     @cached_property
-    def mask(self):
+    def mask(self) -> slice:
         """Mask used to take input frequencies to output frequencies."""
-        return np.logical_and(
-            self.freq_full >= self._f_low, self.freq_full <= self._f_high
+        return slice(
+            np.nonzero(self.freq_full >= self._f_low)[0][0],
+            np.nonzero(self.freq_full <= self._f_high)[0][-1] + 1,
         )
 
-    @cached_property
+    @property
     def freq(self):
         """The frequency array."""
-        if self.alan_mode:
-            freq = self.freq_full[self.mask][:: self.bin_size]
-        else:
-            freq = (
-                bin_array(self.freq_full[self.mask].value, self.bin_size)
-                * self.freq_full.unit
-            )
-
-        # We have a secondary mask that is done after binning, because sometimes the
-        # binning changes the exact edges so you get different results for if you
-        # mask before or after binning.
-        secondary_mask = (freq >= self.post_bin_f_low) & (freq <= self.post_bin_f_high)
-        return freq[secondary_mask]
+        return self.freq_full[self.mask]
 
     @cached_property
     def range(self):
@@ -356,10 +337,40 @@ class FrequencyRange:
         """Make a new frequency range object with updated parameters."""
         return attr.evolve(self, **kwargs)
 
-    def with_new_mask(self, **kwargs):
-        """Make a new read-only frequency range object with the same freqs."""
-        f = as_readonly(self.freq_full.value)
-        return attr.evolve(self, f=f * self.freq_full.unit, **kwargs)
+    def decimate(
+        self, bin_size: int, decimate_at: int | str = "centre", embed_mask: bool = True
+    ) -> Self:
+        """Decimate the frequency array.
+
+        Parameters
+        ----------
+        bin_size
+            The number of raw bins to combine into one.
+        decimate_at
+            Where to start the decimation from. If 'centre', then the new
+            frequency array will be the mean frequency in each bin (equivalent
+            to `decimate_at=bin_size//2` for odd `bin_size`, but for even bin
+            size, the new frequencies are between the central two of the bin).
+            If an integer, then the decimation starts at that index.
+        embed_mask
+            Whether to embed the mask in the new frequency array. IF False, the
+            returned object will have an underlying frequency array with the full
+            range of data, but with a mask similar to this object. If True, the
+            returned object will have the frequencies outside the mask range
+            removed completely.
+        """
+        freq = self.freq if embed_mask else self._f
+
+        if decimate_at == "centre":
+            new_freq = bin_array(freq, size=bin_size)
+        else:
+            new_freq = freq[decimate_at::bin_size]
+
+        return FrequencyRange(
+            f=new_freq,
+            f_low=0 * u.MHz if embed_mask else self._f_low,
+            f_high=np.inf * u.MHz if embed_mask else self._f_high,
+        )
 
 
 def bin_array(x: np.ndarray, size: int = 1) -> np.ndarray:
@@ -409,7 +420,7 @@ def gauss_smooth(
     assert isinstance(size, int)
 
     if decimate_at is None:
-        decimate_at = int(size / 2)
+        decimate_at = size // 2
 
     assert isinstance(decimate_at, int)
     assert decimate_at < size
@@ -422,3 +433,27 @@ def gauss_smooth(
     wghts = convolve1d(np.ones_like(x), window, mode="nearest")[..., decimate_at::size]
 
     return sums / wghts
+
+
+def dicke_calibration(data: GSData) -> GSData:
+    """Calibrate field data using the Dicke switch data."""
+    iant = data.loads.index("ant")
+    iload = data.loads.index("internal_load")
+    ilns = data.loads.index("internal_load_plus_noise_source")
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        q = (data.data[iant] - data.data[iload]) / (data.data[ilns] - data.data[iload])
+
+    return data.update(
+        data=q[np.newaxis],
+        data_unit="uncalibrated",
+        times=data.times[:, [iant]],
+        lsts=data.lsts[:, [iant]],
+        time_ranges=data.time_ranges[:, [iant]],
+        lst_ranges=data.lst_ranges[:, [iant]],
+        loads=("ant",),
+        nsamples=data.nsamples[[iant]],
+        flags={name: flag.any(axis="load") for name, flag in data.flags.items()},
+        residuals=None,
+        effective_integration_time=data.effective_integration_time[[iant]],
+    )

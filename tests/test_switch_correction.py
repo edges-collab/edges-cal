@@ -1,8 +1,6 @@
 import pytest
-
-from edges_io.io import SwitchingState
-
 from edges_cal import s11 as s11
+from edges_io.io import SwitchingState
 
 
 @pytest.fixture(scope="module")
