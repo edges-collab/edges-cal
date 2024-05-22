@@ -5,7 +5,12 @@ import warnings
 from collections.abc import Sequence
 from itertools import product
 from pathlib import Path
-from typing import Any, Callable, Self
+from typing import Any, Callable
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 import attr
 import numpy as np

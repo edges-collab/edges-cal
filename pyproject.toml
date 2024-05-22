@@ -42,6 +42,7 @@ dependencies = [
     "statsmodels",
     "rich",
     "hickleable>=0.2.4",
+    "typing_extensions"
 ]
 dynamic = ["version"]
 
