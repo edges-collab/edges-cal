@@ -831,56 +831,6 @@ class CalibrationObservation:
         )
         return scale, off, Tu, TC, TS
 
-    @cached_property
-    def C1_poly(self):
-        """`np.poly1d` object describing the Scaling calibration coefficient C1.
-
-        The polynomial is defined to act on normalized frequencies such that `freq.min`
-        and `freq.max` map to -1 and 1 respectively. Use :func:`~C1` as a direct
-        function on frequency.
-        """
-        return self._calibration_coefficients[0]
-
-    @cached_property
-    def C2_poly(self):
-        """`np.poly1d` object describing the offset calibration coefficient C2.
-
-        The polynomial is defined to act on normalized frequencies such that `freq.min`
-        and `freq.max` map to -1 and 1 respectively. Use :func:`~C2` as a direct
-        function on frequency.
-        """
-        return self._calibration_coefficients[1]
-
-    @cached_property
-    def Tunc_poly(self):
-        """`np.poly1d` object describing the uncorrelated noise-wave parameter, Tunc.
-
-        The polynomial is defined to act on normalized frequencies such that `freq.min`
-        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tunc` as a direct
-        function on frequency.
-        """
-        return self._calibration_coefficients[2]
-
-    @cached_property
-    def Tcos_poly(self):
-        """`np.poly1d` object describing the cosine noise-wave parameter, Tcos.
-
-        The polynomial is defined to act on normalized frequencies such that `freq.min`
-        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tcos` as a direct
-        function on frequency.
-        """
-        return self._calibration_coefficients[3]
-
-    @cached_property
-    def Tsin_poly(self):
-        """`np.poly1d` object describing the sine noise-wave parameter, Tsin.
-
-        The polynomial is defined to act on normalized frequencies such that `freq.min`
-        and `freq.max` map to -1 and 1 respectively. Use :func:`~Tsin` as a direct
-        function on frequency.
-        """
-        return self._calibration_coefficients[4]
-
     def C1(self, f: tp.FreqType | None = None):
         """
         Scaling calibration parameter.
@@ -893,8 +843,8 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_c1") and self._injected_c1 is not None:
             return np.array(self._injected_c1)
-        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-        return self.C1_poly(fnorm)
+
+        return self._calibration_coefficients[0](self.freq.freq if f is None else f)
 
     def C2(self, f: tp.FreqType | None = None):
         """
@@ -908,8 +858,7 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_c2") and self._injected_c2 is not None:
             return np.array(self._injected_c2)
-        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-        return self.C2_poly(fnorm)
+        return self._calibration_coefficients[1](self.freq.freq if f is None else f)
 
     def Tunc(self, f: tp.FreqType | None = None):
         """
@@ -923,8 +872,8 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_t_unc") and self._injected_t_unc is not None:
             return np.array(self._injected_t_unc)
-        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-        return self.Tunc_poly(fnorm)
+
+        return self._calibration_coefficients[2](self.freq.freq if f is None else f)
 
     def Tcos(self, f: tp.FreqType | None = None):
         """
@@ -938,8 +887,8 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_t_cos") and self._injected_t_cos is not None:
             return np.array(self._injected_t_cos)
-        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-        return self.Tcos_poly(fnorm)
+
+        return self._calibration_coefficients[3](self.freq.freq if f is None else f)
 
     def Tsin(self, f: tp.FreqType | None = None):
         """
@@ -953,8 +902,8 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_t_sin") and self._injected_t_sin is not None:
             return np.array(self._injected_t_sin)
-        fnorm = self.freq.freq_recentred if f is None else self.freq.normalize(f)
-        return self.Tsin_poly(fnorm)
+
+        return self._calibration_coefficients[4](self.freq.freq if f is None else f)
 
     @cached_property
     def receiver_s11(self):

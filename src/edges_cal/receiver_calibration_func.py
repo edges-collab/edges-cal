@@ -4,7 +4,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
-import scipy as sp
+
+from . import modelling as mdl
 
 
 def temperature_thermistor(
@@ -54,7 +55,7 @@ def temperature_thermistor(
 
 
 def noise_wave_param_fit(
-    f_norm: np.ndarray,
+    freq: np.ndarray,
     gamma_rec: np.ndarray,
     gamma_open: np.ndarray,
     gamma_short: np.ndarray,
@@ -69,9 +70,8 @@ def noise_wave_param_fit(
 
     Parameters
     ----------
-    f_norm : array_like
-        Normalized frequencies (arbitrarily normalised, but standard assumption is
-        that the centre is zero, and the scale is such that the range is (-1, 1))
+    freq : array_like
+        Frequencies at which the data was taken.
     gamma_rec : array-like
         Reflection coefficient, as function of frequency, of the receiver.
     gamma_open : array-like
@@ -94,7 +94,7 @@ def noise_wave_param_fit(
     Tunc, Tcos, Tsin : array_like
         The solutions to each of T_unc, T_cos and T_sin as functions of frequency.
     """
-    if np.any(np.isnan(f_norm)):
+    if np.any(np.isnan(freq)):
         raise ValueError("Some frequencies are NaN")
     if np.any(np.isnan(gamma_rec)):
         raise ValueError("Some receiver reflection coefficients are NaN")
@@ -110,49 +110,37 @@ def noise_wave_param_fit(
         raise ValueError("Some open thermistor temperatures are NaN")
     if np.any(np.isnan(temp_thermistor_short)):
         raise ValueError("Some short thermistor temperatures are NaN")
-    # S11 quantities
-    Fo = get_F(gamma_rec, gamma_open)
-    Fs = get_F(gamma_rec, gamma_short)
-    alpha_open = get_alpha(gamma_rec, gamma_open)
-    alpha_short = get_alpha(gamma_rec, gamma_short)
 
-    G = 1 - np.abs(gamma_rec) ** 2
-    K1o = (1 - np.abs(gamma_open) ** 2) * (np.abs(Fo) ** 2) / G
-    K1s = (1 - np.abs(gamma_short) ** 2) * (np.abs(Fs) ** 2) / G
+    Kopen = get_K(gamma_rec, gamma_open)
+    Kshort = get_K(gamma_rec, gamma_short)
 
-    K2o = (np.abs(gamma_open) ** 2) * (np.abs(Fo) ** 2) / G
-    K2s = (np.abs(gamma_short) ** 2) * (np.abs(Fs) ** 2) / G
+    tr = mdl.ScaleTransform(scale=freq[len(freq) // 2])
 
-    K3o = (np.abs(gamma_open) * np.abs(Fo) / G) * np.cos(alpha_open)
-    K3s = (np.abs(gamma_short) * np.abs(Fs) / G) * np.cos(alpha_short)
-    K4o = (np.abs(gamma_open) * np.abs(Fo) / G) * np.sin(alpha_open)
-    K4s = (np.abs(gamma_short) * np.abs(Fs) / G) * np.sin(alpha_short)
+    models = {
+        name: mdl.Polynomial(n_terms=wterms, transform=tr)
+        for name in ["tunc", "tcos", "tsin"]
+    }
 
-    # Matrices A and b
-    A = np.zeros((3 * wterms, 2 * len(f_norm)))
-    for i in range(wterms):
-        A[i, :] = np.append(K2o * f_norm**i, K2s * f_norm**i)
-        A[i + 1 * wterms, :] = np.append(K3o * f_norm**i, K3s * f_norm**i)
-        A[i + 2 * wterms, :] = np.append(K4o * f_norm**i, K4s * f_norm**i)
-    b = np.append(
-        (temp_raw_open - temp_thermistor_open * K1o),
-        (temp_raw_short - temp_thermistor_short * K1s),
+    extra_basis = {
+        "tunc": np.concatenate((Kopen[1], Kshort[1])),
+        "tcos": np.concatenate((Kopen[2], Kshort[2])),
+        "tsin": np.concatenate((Kopen[3], Kshort[3])),
+    }
+
+    model = mdl.CompositeModel(models=models, extra_basis=extra_basis).at(
+        x=np.concatenate((freq, freq))
     )
 
-    # Transposing matrices so 'frequency' dimension is along columns
-    M = A.T
-    ydata = np.reshape(b, (-1, 1))
+    fit = model.fit(
+        ydata=np.concatenate(
+            (
+                (temp_raw_open - temp_thermistor_open * Kopen[0]),
+                (temp_raw_short - temp_thermistor_short * Kshort[0]),
+            )
+        )
+    )
 
-    # Solving system using 'short' QR decomposition
-    # (see R. Butt, Num. Anal. Using MATLAB)
-    Q1, R1 = sp.linalg.qr(M, mode="economic")
-    param = sp.linalg.solve(R1, np.dot(Q1.T, ydata)).flatten()
-
-    TU = np.poly1d(param[:wterms][::-1])
-    TC = np.poly1d(param[wterms : 2 * wterms][::-1])
-    TS = np.poly1d(param[2 * wterms : 3 * wterms][::-1])
-
-    return TU, TC, TS
+    return fit.model["tunc"], fit.model["tcos"], fit.model["tsin"]
 
 
 def get_F(gamma_rec: np.ndarray, gamma_ant: np.ndarray) -> np.ndarray:  # noqa: N802
