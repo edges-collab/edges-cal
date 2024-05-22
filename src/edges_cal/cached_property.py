@@ -1,5 +1,5 @@
 """A wrapper of cached_property that also saves which things are cached."""
-from cached_property import cached_property as cp
+from functools import cached_property as cp
 
 
 class cached_property(cp):  # noqa
@@ -9,8 +9,8 @@ class cached_property(cp):  # noqa
             value = super().__get__(obj, cls)
         except AttributeError as e:
             raise RuntimeError(
-                f"{self.func.__name__} failed with an AttributeError: {e}"
-            )
+                f"{self.func.__name__} failed with an AttributeError"
+            ) from e
 
         # Add the name of the decorated func to the _cached_ item of the dict
         if obj is not None:
@@ -29,6 +29,6 @@ def safe_property(f):
         try:
             return f(*args, **kwargs)
         except AttributeError as e:
-            raise RuntimeError(f"Wrapped AttributeError in {f.__name__}: {e}")
+            raise RuntimeError(f"Wrapped AttributeError in {f.__name__}") from e
 
     return property(getter)

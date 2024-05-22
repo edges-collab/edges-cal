@@ -17,7 +17,6 @@ dependencies:
     - numpy
     - scipy
     - matplotlib
-    - cached_property
     - astropy
     - edges-io>=2.3.3<3.0
     - toml

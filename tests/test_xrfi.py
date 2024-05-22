@@ -1,14 +1,13 @@
 """Tests of the xrfi module."""
-import pytest
-
 import itertools
-import numpy as np
-import yaml
 from pathlib import Path
+
+import numpy as np
+import pytest
+import yaml
+from edges_cal import xrfi
 from pytest_cases import fixture_ref as fxref
 from pytest_cases import parametrize
-
-from edges_cal import xrfi
 
 NFREQ = 1000
 
@@ -51,7 +50,7 @@ def rfi_regular_1d():
 
 @pytest.fixture(scope="module")
 def rfi_regular_leaky():
-    """RFI that leaks into neighbouring bins"""
+    """RFI that leaks into neighbouring bins."""
     a = np.zeros(NFREQ)
     a[50:-30:50] = 1
     a[49:-30:50] = (
@@ -147,7 +146,7 @@ class TestMedfilt:
         sky, std, noise, rfi = make_sky(sky_model, rfi_model, scale)
 
         true_flags = rfi_model > 0
-        flags, significance = xrfi.xrfi_medfilt(
+        flags, _significance = xrfi.xrfi_medfilt(
             sky, max_iter=1, threshold=10, kf=5, use_meanfilt=True
         )
 
@@ -217,7 +216,7 @@ class TestXRFIModel:
 
     def test_init_flags(self, sky_pl_1d, rfi_null_1d, freq):
         # ensure init flags don't propagate through
-        flags, info = xrfi.xrfi_model(sky_pl_1d, freq=freq, init_flags=(90, 100))
+        flags, _info = xrfi.xrfi_model(sky_pl_1d, freq=freq, init_flags=(90, 100))
         assert not np.any(flags)
 
     @parametrize("rfi_model", [fxref(rfi_random_1d), fxref(rfi_regular_1d)])
@@ -238,10 +237,12 @@ class TestXRFIModel:
         assert len(wrong) == 0
 
     def test_bad_std_estimator(self, sky_flat_1d, rfi_random_1d, freq):
-        sky, std, noise, rfi = make_sky(sky_flat_1d, rfi_random_1d, scale=1000)
+        sky, _std, _noise, _rfi = make_sky(sky_flat_1d, rfi_random_1d, scale=1000)
 
         with pytest.raises(ValueError):
-            flags, info = xrfi.xrfi_model(sky, freq=freq, std_estimator="bad_estimator")
+            _flags, _info = xrfi.xrfi_model(
+                sky, freq=freq, std_estimator="bad_estimator"
+            )
 
 
 class TestWatershed:
@@ -379,7 +380,7 @@ class TestModelSweep:
         spec = np.ones(500)
         spec[50:150] = np.nan
 
-        flags, info = xrfi.xrfi_model_sweep(spec)
+        flags, _info = xrfi.xrfi_model_sweep(spec)
         assert flags.shape == (500,)
 
     @parametrize(
@@ -408,9 +409,9 @@ class TestModelSweep:
             xrfi.xrfi_model_sweep(sky_flat_1d, which_bin="last", watershed=4)
 
     def test_giving_weights(self, sky_flat_1d):
-        sky, std, noise, rfi = make_sky(sky_flat_1d)
+        sky, _std, _noise, _rfi = make_sky(sky_flat_1d)
 
-        flags, info = xrfi.xrfi_model_sweep(
+        flags, _info = xrfi.xrfi_model_sweep(
             sky,
             weights=np.ones_like(sky),
             max_iter=10,
@@ -419,7 +420,7 @@ class TestModelSweep:
             use_median=True,
         )
 
-        flags2, info2 = xrfi.xrfi_model_sweep(
+        flags2, _info2 = xrfi.xrfi_model_sweep(
             sky, max_iter=10, which_bin="all", threshold=5, use_median=True
         )
 
@@ -463,8 +464,8 @@ class TestXRFIExplicit:
 
 @pytest.fixture(scope="module")
 def model_info(sky_pl_1d, rfi_random_1d, freq):
-    sky, std, noise, rfi = make_sky(sky_pl_1d, rfi_random_1d)
-    flags, info = xrfi.xrfi_model(sky, freq=freq, max_iter=3)
+    sky, _std, _noise, _rfi = make_sky(sky_pl_1d, rfi_random_1d)
+    _flags, info = xrfi.xrfi_model(sky, freq=freq, max_iter=3)
     return info
 
 

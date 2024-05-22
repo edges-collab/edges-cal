@@ -79,15 +79,15 @@ def plot_resistance_measurements(
         resistance = resistance.read()[0]
 
     if ax is None:
-        fig, ax = plt.subplots(1, 1)
+        _fig, ax = plt.subplots(1, 1)
 
     try:
         out = resistance[quantity]
-    except (KeyError, ValueError) as e:
+    except (KeyError, ValueError):
         if quantity == "thermistor_temp":
             out = rcf.temperature_thermistor(resistance["load_resistance"])
         else:
-            raise e
+            raise
 
     ax.plot(out)
 

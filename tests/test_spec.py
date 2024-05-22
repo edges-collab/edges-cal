@@ -1,13 +1,9 @@
-"""
-Test spectrum reading.
-"""
-import pytest
-
+"""Test spectrum reading."""
 import numpy as np
+import pytest
 from astropy import units as u
-from edges_io.io import CalibrationObservation
-
 from edges_cal import LoadSpectrum
+from edges_io.io import CalibrationObservation
 
 
 def test_read(io_obs: CalibrationObservation):
