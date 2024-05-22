@@ -15,7 +15,8 @@ from edges_cal.cli import alancal
 def test_edges3_2022_316_against_alan(data_path, tmp_path_factory):
     # Skip this test if we are not on enterprise where the actual data is.
     datadir = Path("/data5/edges/data/EDGES3_Data/MRO")
-    pytest.mark.skipif(not datadir.exists())
+    if not datadir.exists():
+        pytest.skip("This text can only be executed on enterprise")
     out = tmp_path_factory.mktemp("day316")
 
     runner = CliRunner()
