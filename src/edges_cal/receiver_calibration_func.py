@@ -376,7 +376,7 @@ def get_calibration_quantities_iterative(
         )
 
     # Initializing arrays
-    niter = 4
+    niter = 8
     ta_iter = np.zeros((niter, len(fmask)))
     th_iter = np.zeros((niter, len(fmask)))
 
