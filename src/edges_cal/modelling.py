@@ -464,7 +464,7 @@ def get_mdl(model: str | type[Model]) -> type[Model]:
     """Get a linear model class from a string input."""
     if isinstance(model, str):
         return _MODELS[model]
-    if np.issubclass_(model, Model):
+    if issubclass(model, Model):
         return model
     raise ValueError("model needs to be a string or Model subclass")
 
