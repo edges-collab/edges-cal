@@ -14,7 +14,7 @@ import scipy as sp
 import yaml
 from hickleable import hickleable
 
-from . import receiver_calibration_func as rcf
+from . import noise_waves as rcf
 from .simulate import simulate_q_from_calobs
 from .tools import as_readonly
 
@@ -464,7 +464,7 @@ def get_mdl(model: str | type[Model]) -> type[Model]:
     """Get a linear model class from a string input."""
     if isinstance(model, str):
         return _MODELS[model]
-    if issubclass(model, Model):
+    if np.issubclass_(model, Model):
         return model
     raise ValueError("model needs to be a string or Model subclass")
 
@@ -1089,18 +1089,23 @@ class NoiseWaves:
         wterms = wterms or calobs.wterms
 
         def modify(thing, n):
+            if isinstance(thing, np.ndarray):
+                thing = thing.tolist()
+            elif isinstance(thing, tuple):
+                thing = list(thing)
+
             if len(thing) < n:
                 return thing + [0] * (n - len(thing))
             if len(thing) > n:
                 return thing[:n]
             return thing
 
-        tu = modify(calobs.Tunc_poly.coefficients[::-1].tolist(), wterms)
-        tc = modify(calobs.Tcos_poly.coefficients[::-1].tolist(), wterms)
-        ts = modify(calobs.Tsin_poly.coefficients[::-1].tolist(), wterms)
+        tu = modify(calobs.cal_coefficient_models["Tunc"].parameters, wterms)
+        tc = modify(calobs.cal_coefficient_models["Tcos"].parameters, wterms)
+        ts = modify(calobs.cal_coefficient_models["Tsin"].parameters, wterms)
 
         if self.with_tload:
-            c2 = (-calobs.C2_poly.coefficients[::-1]).tolist()
+            c2 = -np.asarray(calobs.cal_coefficient_models["C2"].parameters)
             c2[0] += calobs.t_load
             c2 = modify(c2, cterms)
 

@@ -1,146 +1,9 @@
 """Functions for calibrating the receiver."""
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import numpy as np
 
 from . import modelling as mdl
-
-
-def temperature_thermistor(
-    resistance: float | np.ndarray,
-    coeffs: str | Sequence = "oven_industries_TR136_170",
-    kelvin: bool = True,
-):
-    """
-    Convert resistance of a thermistor to temperature.
-
-    Uses a pre-defined set of standard coefficients.
-
-    Parameters
-    ----------
-    resistance : float or array_like
-        The measured resistance (Ohms).
-    coeffs : str or len-3 iterable of floats, optional
-        If str, should be an identifier of a standard set of coefficients, otherwise,
-        should specify the coefficients.
-    kelvin : bool, optional
-        Whether to return the temperature in K or C.
-
-    Returns
-    -------
-    float or array_like
-        The temperature for each `resistance` given.
-    """
-    # Steinhart-Hart coefficients
-    _coeffs = {"oven_industries_TR136_170": [1.03514e-3, 2.33825e-4, 7.92467e-8]}
-
-    if isinstance(coeffs, str):
-        coeffs = _coeffs[coeffs]
-
-    assert len(coeffs) == 3
-
-    # TK in Kelvin
-    temp = 1 / (
-        coeffs[0]
-        + coeffs[1] * np.log(resistance)
-        + coeffs[2] * (np.log(resistance)) ** 3
-    )
-
-    # Kelvin or Celsius
-    if kelvin:
-        return temp
-    return temp - 273.15
-
-
-def noise_wave_param_fit(
-    freq: np.ndarray,
-    gamma_rec: np.ndarray,
-    gamma_open: np.ndarray,
-    gamma_short: np.ndarray,
-    temp_raw_open: np.ndarray,
-    temp_raw_short: np.ndarray,
-    temp_thermistor_open: np.ndarray,
-    temp_thermistor_short: np.ndarray,
-    wterms: int,
-):
-    """
-    Fit noise-wave polynomial parameters.
-
-    Parameters
-    ----------
-    freq : array_like
-        Frequencies at which the data was taken.
-    gamma_rec : array-like
-        Reflection coefficient, as function of frequency, of the receiver.
-    gamma_open : array-like
-        Reflection coefficient, as function of frequency, of the open load.
-    gamma_short : array-like
-        Reflection coefficient, as function of frequency, of the shorted load.
-    temp_raw_open : array-like
-        Raw measured spectrum temperature of open load.
-    temp_raw_short : array-like
-        Raw measured spectrum temperature of shorted load.
-    temp_thermistor_open : array-like
-        Measured (known) temperature of open load.
-    temp_thermistor_short : array-like
-        Measured (known) temperature of shorted load.
-    wterms : int
-        The number of polynomial terms to use for each of the noise-wave functions.
-
-    Returns
-    -------
-    Tunc, Tcos, Tsin : array_like
-        The solutions to each of T_unc, T_cos and T_sin as functions of frequency.
-    """
-    if np.any(np.isnan(freq)):
-        raise ValueError("Some frequencies are NaN")
-    if np.any(np.isnan(gamma_rec)):
-        raise ValueError("Some receiver reflection coefficients are NaN")
-    if np.any(np.isnan(gamma_open)):
-        raise ValueError("Some open reflection coefficients are NaN")
-    if np.any(np.isnan(gamma_short)):
-        raise ValueError("Some short reflection coefficients are NaN")
-    if np.any(np.isnan(temp_raw_open)):
-        raise ValueError("Some open raw temperatures are NaN")
-    if np.any(np.isnan(temp_raw_short)):
-        raise ValueError("Some short raw temperatures are NaN")
-    if np.any(np.isnan(temp_thermistor_open)):
-        raise ValueError("Some open thermistor temperatures are NaN")
-    if np.any(np.isnan(temp_thermistor_short)):
-        raise ValueError("Some short thermistor temperatures are NaN")
-
-    Kopen = get_K(gamma_rec, gamma_open)
-    Kshort = get_K(gamma_rec, gamma_short)
-
-    tr = mdl.ScaleTransform(scale=freq[len(freq) // 2])
-
-    models = {
-        name: mdl.Polynomial(n_terms=wterms, transform=tr)
-        for name in ["tunc", "tcos", "tsin"]
-    }
-
-    extra_basis = {
-        "tunc": np.concatenate((Kopen[1], Kshort[1])),
-        "tcos": np.concatenate((Kopen[2], Kshort[2])),
-        "tsin": np.concatenate((Kopen[3], Kshort[3])),
-    }
-
-    model = mdl.CompositeModel(models=models, extra_basis=extra_basis).at(
-        x=np.concatenate((freq, freq))
-    )
-
-    fit = model.fit(
-        ydata=np.concatenate(
-            (
-                (temp_raw_open - temp_thermistor_open * Kopen[0]),
-                (temp_raw_short - temp_thermistor_short * Kshort[0]),
-            )
-        )
-    )
-
-    return fit.model["tunc"], fit.model["tcos"], fit.model["tsin"]
 
 
 def get_F(gamma_rec: np.ndarray, gamma_ant: np.ndarray) -> np.ndarray:  # noqa: N802
@@ -233,9 +96,96 @@ def power_ratio(
         scale * temp_noise_source,
     ]
 
-    if return_terms:
-        return terms
-    return sum(terms[:5]) / terms[5]
+    return terms if return_terms else sum(terms[:5]) / terms[5]
+
+
+def noise_wave_param_fit(
+    freq: np.ndarray,
+    gamma_rec: np.ndarray,
+    gamma_open: np.ndarray,
+    gamma_short: np.ndarray,
+    temp_raw_open: np.ndarray,
+    temp_raw_short: np.ndarray,
+    temp_thermistor_open: np.ndarray,
+    temp_thermistor_short: np.ndarray,
+    wterms: int,
+):
+    """
+    Fit noise-wave polynomial parameters.
+
+    Parameters
+    ----------
+    freq : array_like
+        Frequencies at which the data was taken.
+    gamma_rec : array-like
+        Reflection coefficient, as function of frequency, of the receiver.
+    gamma_open : array-like
+        Reflection coefficient, as function of frequency, of the open load.
+    gamma_short : array-like
+        Reflection coefficient, as function of frequency, of the shorted load.
+    temp_raw_open : array-like
+        Raw measured spectrum temperature of open load.
+    temp_raw_short : array-like
+        Raw measured spectrum temperature of shorted load.
+    temp_thermistor_open : array-like
+        Measured (known) temperature of open load.
+    temp_thermistor_short : array-like
+        Measured (known) temperature of shorted load.
+    wterms : int
+        The number of polynomial terms to use for each of the noise-wave functions.
+
+    Returns
+    -------
+    Tunc, Tcos, Tsin : array_like
+        The solutions to each of T_unc, T_cos and T_sin as functions of frequency.
+    """
+    if np.any(np.isnan(freq)):
+        raise ValueError("Some frequencies are NaN")
+    if np.any(np.isnan(gamma_rec)):
+        raise ValueError("Some receiver reflection coefficients are NaN")
+    if np.any(np.isnan(gamma_open)):
+        raise ValueError("Some open reflection coefficients are NaN")
+    if np.any(np.isnan(gamma_short)):
+        raise ValueError("Some short reflection coefficients are NaN")
+    if np.any(np.isnan(temp_raw_open)):
+        raise ValueError("Some open raw temperatures are NaN")
+    if np.any(np.isnan(temp_raw_short)):
+        raise ValueError("Some short raw temperatures are NaN")
+    if np.any(np.isnan(temp_thermistor_open)):
+        raise ValueError("Some open thermistor temperatures are NaN")
+    if np.any(np.isnan(temp_thermistor_short)):
+        raise ValueError("Some short thermistor temperatures are NaN")
+
+    Kopen = get_K(gamma_rec, gamma_open)
+    Kshort = get_K(gamma_rec, gamma_short)
+
+    tr = mdl.ScaleTransform(scale=freq[len(freq) // 2])
+
+    models = {
+        name: mdl.Polynomial(n_terms=wterms, transform=tr)
+        for name in ["tunc", "tcos", "tsin"]
+    }
+
+    extra_basis = {
+        "tunc": np.concatenate((Kopen[1], Kshort[1])),
+        "tcos": np.concatenate((Kopen[2], Kshort[2])),
+        "tsin": np.concatenate((Kopen[3], Kshort[3])),
+    }
+
+    model = mdl.CompositeModel(models=models, extra_basis=extra_basis).at(
+        x=np.concatenate((freq, freq))
+    )
+
+    fit = model.fit(
+        ydata=np.concatenate(
+            (
+                (temp_raw_open - temp_thermistor_open * Kopen[0]),
+                (temp_raw_short - temp_thermistor_short * Kshort[0]),
+            )
+        )
+    ).fit
+
+    return fit.model["tunc"], fit.model["tcos"], fit.model["tsin"]
 
 
 def get_K(gamma_rec, gamma_ant, f_ratio=None, alpha=None, gain=None):  # noqa: N802
@@ -284,7 +234,7 @@ def get_K(gamma_rec, gamma_ant, f_ratio=None, alpha=None, gain=None):  # noqa: N
 
 
 def get_calibration_quantities_iterative(
-    f_norm: np.ndarray,
+    freq: np.ndarray,
     temp_raw: dict,
     gamma_rec: np.ndarray,
     gamma_ant: dict,
@@ -292,6 +242,7 @@ def get_calibration_quantities_iterative(
     cterms: int,
     wterms: int,
     temp_amb_internal: float = 300,
+    niter: int = 4,
 ):
     """
     Derive calibration parameters using the scheme laid out in Monsalve (2017).
@@ -329,18 +280,9 @@ def get_calibration_quantities_iterative(
         1D polynomial fits for each of the Scale (C_1), Offset (C_2), and noise-wave
         temperatures for uncorrelated, cos and sin components.
     """
-    mask = ~(
-        np.isnan(temp_raw["short"])
-        | np.isinf(temp_raw["short"])
-        | np.isnan(temp_raw["ambient"])
-        | np.isinf(temp_raw["ambient"])
-        | np.isnan(temp_raw["hot_load"])
-        | np.isinf(temp_raw["hot_load"])
-        | np.isnan(temp_raw["open"])
-        | np.isinf(temp_raw["open"])
-    )
+    mask = np.all([np.isfinite(temp) for temp in temp_raw.values()], axis=0)
 
-    fmask = f_norm[mask]
+    fmask = freq[mask]
     gamma_ant = {key: value[mask] for key, value in gamma_ant.items()}
     temp_raw = {key: value[mask] for key, value in temp_raw.items()}
     temp_ant = {
@@ -364,65 +306,60 @@ def get_calibration_quantities_iterative(
         )
 
     # Initializing arrays
-    niter = 4
-    ta_iter = np.zeros((niter, len(fmask)))
-    th_iter = np.zeros((niter, len(fmask)))
+    nf = len(fmask)
+    ta_iter = np.zeros(nf)
+    th_iter = np.zeros(nf)
 
-    sca = np.zeros((niter, len(fmask)))
-    off = np.zeros((niter, len(fmask)))
+    sca, off, tunc, tcos, tsin = (
+        np.ones(nf),
+        np.zeros(nf),
+        np.zeros(nf),
+        np.zeros(nf),
+        np.zeros(nf),
+    )
 
-    # Calibrated temperature iterations
-    temp_cal_iter = {k: np.zeros((niter, len(fmask))) for k in temp_ant}
+    tr = mdl.ScaleTransform(scale=freq[len(freq) // 2])
+    sca_mdl = mdl.Polynomial(n_terms=cterms, transform=tr).at(x=fmask)
+    off_mdl = mdl.Polynomial(n_terms=cterms, transform=tr).at(x=fmask)
 
-    tunc = np.zeros((niter, len(fmask)))
-    tcos = np.zeros((niter, len(fmask)))
-    tsin = np.zeros((niter, len(fmask)))
-
+    temp_cal_iter = {}
     # Calibration loop
     for i in range(niter):
         # Step 1: approximate physical temperature
         if i == 0:
-            ta_iter[i, :] = temp_raw["ambient"] / K1["ambient"]
-            th_iter[i, :] = temp_raw["hot_load"] / K1["hot_load"]
+            ta_iter = temp_raw["ambient"] / K1["ambient"]
+            th_iter = temp_raw["hot_load"] / K1["hot_load"]
         else:
             for load, arry in zip(["ambient", "hot_load"], (ta_iter, th_iter)):
-                noise_wave_param = (
-                    tunc[i - 1, :] * K2[load]
-                    + tcos[i - 1, :] * K3[load]
-                    + tsin[i - 1, :] * K4[load]
-                )
-                arry[i, :] = (temp_cal_iter[load][i - 1, :] - noise_wave_param) / K1[
-                    load
-                ]
+                noise_wave_param = tunc * K2[load] + tcos * K3[load] + tsin * K4[load]
+                arry[:] = (temp_cal_iter[load] - noise_wave_param) / K1[load]
 
         # Step 2: scale and offset
 
         # Updating scale and offset
-        sca_new = (temp_ant_hot - temp_ant["ambient"]) / (th_iter[i, :] - ta_iter[i, :])
-        off_new = ta_iter[i, :] - temp_ant["ambient"]
+        sca_new = (temp_ant_hot - temp_ant["ambient"]) / (th_iter - ta_iter)
+        off_new = ta_iter - temp_ant["ambient"]
 
         if i == 0:
             sca_raw = sca_new
             off_raw = off_new
         else:
-            sca_raw = sca[i - 1, :] * sca_new
-            off_raw = off[i - 1, :] + off_new
+            sca_raw = sca * sca_new
+            off_raw = off + off_new
 
-        # Modeling scale
-        p_sca = np.polyfit(fmask, sca_raw, cterms - 1)
-        sca[i, :] = np.polyval(p_sca, fmask)
+        # Model scale
+        p_sca = sca_mdl.fit(ydata=sca_raw).fit
+        sca = p_sca(fmask)
 
-        # Modeling offset
-        p_off = np.polyfit(fmask, off_raw, cterms - 1)
-        off[i, :] = np.polyval(p_off, fmask)
+        # Model offset
+        p_off = off_mdl.fit(ydata=off_raw).fit
+        off = p_off(fmask)
 
         # Step 3: corrected "uncalibrated spectrum" of cable
-        for k, v in temp_cal_iter.items():
-            v[i, :] = (
-                (temp_raw[k] - temp_amb_internal) * sca[i, :]
-                + temp_amb_internal
-                - off[i, :]
-            )
+        temp_cal_iter = {
+            k: (v - temp_amb_internal) * sca + temp_amb_internal - off
+            for k, v in temp_raw.items()
+        }
 
         # Step 4: computing NWP
         tu, tc, ts = noise_wave_param_fit(
@@ -430,18 +367,24 @@ def get_calibration_quantities_iterative(
             gamma_rec,
             gamma_ant["open"],
             gamma_ant["short"],
-            temp_cal_iter["open"][i, :],
-            temp_cal_iter["short"][i, :],
+            temp_cal_iter["open"],
+            temp_cal_iter["short"],
             temp_ant["open"],
             temp_ant["short"],
             wterms,
         )
 
-        tunc[i] = tu(fmask)
-        tcos[i] = tc(fmask)
-        tsin[i] = ts(fmask)
+        tunc = tu(fmask)
+        tcos = tc(fmask)
+        tsin = ts(fmask)
 
-    return np.poly1d(p_sca), np.poly1d(p_off), tu, tc, ts
+        yield (
+            p_sca,
+            p_off,
+            tu,
+            tc,
+            ts,
+        )
 
 
 def get_linear_coefficients(
@@ -526,7 +469,7 @@ def calibrated_antenna_temperature(
     return temp_raw * a + b
 
 
-def uncalibrated_antenna_temperature(
+def decalibrate_antenna_temperature(
     temp, gamma_ant, gamma_rec, sca, off, t_unc, t_cos, t_sin, t_load=300
 ):
     """

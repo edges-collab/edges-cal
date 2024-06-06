@@ -7,6 +7,7 @@ a one-stop interface for everything related to calibration.
 from __future__ import annotations
 
 import warnings
+from collections import deque
 from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
@@ -28,7 +29,7 @@ from matplotlib import pyplot as plt
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 
 from . import loss, s11
-from . import receiver_calibration_func as rcf
+from . import noise_waves as rcf
 from . import reflection_coefficient as rc
 from .cached_property import cached_property, safe_property
 from .loss import HotLoadCorrection
@@ -809,8 +810,8 @@ class CalibrationObservation:
         return {k: source.temp_ave for k, source in self.loads.items()}
 
     @cached_property
-    def _calibration_coefficients(self):
-        """The calibration polynomials, evaluated at `freq.freq`."""
+    def cal_coefficient_models(self):
+        """The calibration coefficient models."""
         if (
             hasattr(self, "_injected_averaged_spectra")
             and self._injected_averaged_spectra is not None
@@ -819,17 +820,20 @@ class CalibrationObservation:
         else:
             ave_spec = {k: source.averaged_spectrum for k, source in self.loads.items()}
 
-        scale, off, Tu, TC, TS = rcf.get_calibration_quantities_iterative(
-            self.freq.freq_recentred,
-            temp_raw=ave_spec,
-            gamma_rec=self.receiver_s11,
-            gamma_ant=self.s11_correction_models,
-            temp_ant=self.source_thermistor_temps,
-            cterms=self.cterms,
-            wterms=self.wterms,
-            temp_amb_internal=self.t_load,
-        )
-        return scale, off, Tu, TC, TS
+        scale, off, tunc, tcos, tsin = deque(
+            rcf.get_calibration_quantities_iterative(
+                self.freq.freq.to_value("MHz"),
+                temp_raw=ave_spec,
+                gamma_rec=self.receiver_s11,
+                gamma_ant=self.s11_correction_models,
+                temp_ant=self.source_thermistor_temps,
+                cterms=self.cterms,
+                wterms=self.wterms,
+                temp_amb_internal=self.t_load,
+            ),
+            maxlen=1,
+        ).pop()
+        return {"C1": scale, "C2": off, "Tunc": tunc, "Tcos": tcos, "Tsin": tsin}
 
     def C1(self, f: tp.FreqType | None = None):
         """
@@ -844,7 +848,7 @@ class CalibrationObservation:
         if hasattr(self, "_injected_c1") and self._injected_c1 is not None:
             return np.array(self._injected_c1)
 
-        return self._calibration_coefficients[0](self.freq.freq if f is None else f)
+        return self.cal_coefficient_models["C1"](self.freq.freq if f is None else f)
 
     def C2(self, f: tp.FreqType | None = None):
         """
@@ -858,7 +862,7 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_c2") and self._injected_c2 is not None:
             return np.array(self._injected_c2)
-        return self._calibration_coefficients[1](self.freq.freq if f is None else f)
+        return self.cal_coefficient_models["C2"](self.freq.freq if f is None else f)
 
     def Tunc(self, f: tp.FreqType | None = None):
         """
@@ -873,7 +877,7 @@ class CalibrationObservation:
         if hasattr(self, "_injected_t_unc") and self._injected_t_unc is not None:
             return np.array(self._injected_t_unc)
 
-        return self._calibration_coefficients[2](self.freq.freq if f is None else f)
+        return self.cal_coefficient_models["Tunc"](self.freq.freq if f is None else f)
 
     def Tcos(self, f: tp.FreqType | None = None):
         """
@@ -888,7 +892,7 @@ class CalibrationObservation:
         if hasattr(self, "_injected_t_cos") and self._injected_t_cos is not None:
             return np.array(self._injected_t_cos)
 
-        return self._calibration_coefficients[3](self.freq.freq if f is None else f)
+        return self.cal_coefficient_models["Tcos"](self.freq.freq if f is None else f)
 
     def Tsin(self, f: tp.FreqType | None = None):
         """
@@ -903,7 +907,7 @@ class CalibrationObservation:
         if hasattr(self, "_injected_t_sin") and self._injected_t_sin is not None:
             return np.array(self._injected_t_sin)
 
-        return self._calibration_coefficients[4](self.freq.freq if f is None else f)
+        return self.cal_coefficient_models["Tsin"](self.freq.freq if f is None else f)
 
     @cached_property
     def receiver_s11(self):
@@ -1238,11 +1242,9 @@ class CalibrationObservation:
             fl.attrs["t_load"] = self.open.spectrum.t_load
             fl.attrs["t_load_ns"] = self.open.spectrum.t_load_ns
 
-            fl["C1"] = self.C1_poly.coefficients
-            fl["C2"] = self.C2_poly.coefficients
-            fl["Tunc"] = self.Tunc_poly.coefficients
-            fl["Tcos"] = self.Tcos_poly.coefficients
-            fl["Tsin"] = self.Tsin_poly.coefficients
+            hickle.dump(
+                self.cal_coefficient_models, fl.create_group("cal_coefficients")
+            )
 
             hickle.dump(self.freq, fl.create_group("frequencies"))
             hickle.dump(
@@ -1265,11 +1267,11 @@ class CalibrationObservation:
             wterms=self.wterms,
             t_load=self.t_load,
             t_load_ns=self.t_load_ns,
-            C1=self.C1_poly,
-            C2=self.C2_poly,
-            Tunc=self.Tunc_poly,
-            Tcos=self.Tcos_poly,
-            Tsin=self.Tsin_poly,
+            C1=self.cal_coefficient_models["C1"],
+            C2=self.cal_coefficient_models["C2"],
+            Tunc=self.cal_coefficient_models["Tunc"],
+            Tcos=self.cal_coefficient_models["Tcos"],
+            Tsin=self.cal_coefficient_models["Tsin"],
             freq=self.freq,
             receiver_s11=self.receiver.s11_model,
             internal_switch=self.internal_switch,
@@ -1368,7 +1370,7 @@ class Calibrator:
     _Tsin: Callable[[np.ndarray], np.ndarray] = attr.ib()
     _receiver_s11: Callable[[np.ndarray], np.ndarray] = attr.ib()
 
-    coefficient_freq_units: un.Unit = attr.ib(default="norm")
+    coefficient_freq_units: un.Unit = attr.ib(default="MHz")
     receiver_s11_freq_units: un.Unit = attr.ib(default="MHz")
 
     internal_switch = attr.ib()
@@ -1437,11 +1439,7 @@ class Calibrator:
                 t_load = fl.attrs["t_load"]
                 t_load_ns = fl.attrs["t_load_ns"]
 
-                C1 = np.poly1d(fl["C1"])
-                C2 = np.poly1d(fl["C2"])
-                Tunc = np.poly1d(fl["Tunc"])
-                Tcos = np.poly1d(fl["Tcos"])
-                Tsin = np.poly1d(fl["Tsin"])
+                cal = hickle.load(fl["cal_coefficients"])
 
                 freq = hickle.load(fl["frequencies"])
                 receiver_s11 = hickle.load(fl["receiver_s11"])
@@ -1457,11 +1455,11 @@ class Calibrator:
             wterms=wterms,
             t_load=t_load,
             t_load_ns=t_load_ns,
-            C1=C1,
-            C2=C2,
-            Tunc=Tunc,
-            Tcos=Tcos,
-            Tsin=Tsin,
+            C1=cal["C1"],
+            C2=cal["C2"],
+            Tunc=cal["Tunc"],
+            Tcos=cal["Tcos"],
+            Tsin=cal["Tsin"],
             freq=freq,
             receiver_s11=receiver_s11.s11_model,
             internal_switch=internal_switch,

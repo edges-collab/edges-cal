@@ -23,10 +23,9 @@ from pygsdata.concat import concat
 from pygsdata.select import select_freqs, select_times
 
 from . import __version__, tools
-from . import receiver_calibration_func as rcf
 from .cached_property import cached_property
 from .config import config
-from .tools import FrequencyRange, dicke_calibration
+from .tools import FrequencyRange, dicke_calibration, temperature_thermistor
 
 
 @hickleable()
@@ -100,7 +99,7 @@ class ThermistorReadings:
 
     def get_physical_temperature(self) -> np.ndarray:
         """The associated thermistor temperature in K."""
-        return rcf.temperature_thermistor(self.data["load_resistance"])
+        return temperature_thermistor(self.data["load_resistance"])
 
     def get_thermistor_indices(self, timestamps: Time) -> list[int | np.nan]:
         """Get the index of the closest therm measurement for each spectrum."""
