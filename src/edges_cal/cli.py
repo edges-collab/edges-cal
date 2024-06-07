@@ -7,6 +7,7 @@ from importlib.util import find_spec
 from pathlib import Path
 
 import click
+import numpy as np
 import papermill as pm
 import yaml
 from astropy import units as un
@@ -697,6 +698,24 @@ def alancal(
         tload=tload,
         tcal=tcal,
     )
+
+    # TODO: TAKE OUT THE FOLLOWING. IT IS TEMPORARY!
+    print("IF THIS SHOWS, STEVEN FORGOT TO REMOVE TEMPORARY CODE. STOP AND TELL HIM")  # noqa
+    _alans11m = np.genfromtxt(
+        "/home/smurray/data4/edges-cal/tests/data/edges3-2022-316-alan/s11_modelled.txt",
+        comments="#",
+        names=True,
+    )  # np.genfromtxt("alans-code/s11_modelled.txt", comments="#", names=True)
+
+    alans11m = {}
+    for load in [*loads, "lna"]:
+        alans11m[load] = _alans11m[f"{load}_real"] + 1j * _alans11m[f"{load}_imag"]
+
+    calobs = calobs.inject(
+        lna_s11=alans11m["lna"],
+        source_s11s={name: alans11m[name] for name in loads},
+    )
+    # END OF STUFF TO TAKE OUT
 
     with open(outfile, "w") as fl:
         for i in range(calobs.freq.n):
