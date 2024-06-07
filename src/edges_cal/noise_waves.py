@@ -400,13 +400,13 @@ def get_calibration_quantities_iterative(
                     hot_load_loss,
                     sca,
                     off,
+                    temp_cal_iter["open"],
+                    temp_cal_iter["short"],
                     tunc,
                     tcos,
                     tsin,
                     p_sca(fmask),
                     p_off(fmask),
-                    temp_cal_iter["open"],
-                    temp_cal_iter["short"],
                 ]
             ).T,
         )
