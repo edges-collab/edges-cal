@@ -702,7 +702,7 @@ def alancal(
     # TODO: TAKE OUT THE FOLLOWING. IT IS TEMPORARY!
     print("IF THIS SHOWS, STEVEN FORGOT TO REMOVE TEMPORARY CODE. STOP AND TELL HIM")  # noqa
     _alans11m = np.genfromtxt(
-        "/home/smurray/data4/edges-cal/tests/data/edges3-2022-316-alan/s11_modelled.txt",
+        "/home/smurray/data4/edges/edges-cal/tests/data/edges3-2022-316-alan/s11_modelled.txt",
         comments="#",
         names=True,
     )  # np.genfromtxt("alans-code/s11_modelled.txt", comments="#", names=True)
