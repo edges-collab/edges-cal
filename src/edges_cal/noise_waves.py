@@ -405,6 +405,8 @@ def get_calibration_quantities_iterative(
                     tsin,
                     p_sca(fmask),
                     p_off(fmask),
+                    temp_cal_iter["open"],
+                    temp_cal_iter["short"],
                 ]
             ).T,
         )
