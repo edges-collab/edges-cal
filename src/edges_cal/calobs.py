@@ -843,7 +843,7 @@ class CalibrationObservation:
                 temp_raw=ave_spec,
                 gamma_rec=self.receiver_s11,
                 gamma_ant=self.s11_correction_models,
-                temp_ant=self.source_thermistor_temps,
+                temp_ant=temp_ant,
                 cterms=self.cterms,
                 wterms=self.wterms,
                 temp_amb_internal=self.t_load,
