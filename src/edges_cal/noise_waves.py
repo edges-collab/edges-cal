@@ -342,10 +342,11 @@ def get_calibration_quantities_iterative(
         tamb_iter = (temp_cal_iter["ambient"] - nwp) / K1["ambient"]
 
         nwp = tunc * K2["hot_load"] + tcos * K3["hot_load"] + tsin * K4["hot_load"]
-        tamb_iter = (temp_cal_iter["hot_load"] - nwp) / K1["hot_load"]
+        thot_iter = (temp_cal_iter["hot_load"] - nwp) / K1["hot_load"]
 
         # Step 2: scale and offset
         if hot_load_loss is not None:
+            s = thot_iter.copy()  # TODO: take me out
             thot_iter = (
                 thot_iter - temp_ant["ambient"] * (1 - hot_load_loss)
             ) / hot_load_loss
@@ -388,6 +389,23 @@ def get_calibration_quantities_iterative(
         tcos = tc(fmask)
         tsin = ts(fmask)
 
+        np.savetxt(
+            f"calibration_loop_{_}.txt",
+            np.array(
+                [
+                    fmask,
+                    s,
+                    tamb_iter,
+                    thot_iter,
+                    hot_load_loss,
+                    sca,
+                    off,
+                    tunc,
+                    tcos,
+                    tsin,
+                ]
+            ).T,
+        )
         yield (
             p_sca,
             p_off,

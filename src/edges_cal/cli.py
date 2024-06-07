@@ -14,7 +14,7 @@ from nbconvert import PDFExporter
 from rich.console import Console
 from traitlets.config import Config
 
-from edges_cal import cal_coefficients as cc
+from edges_cal import calobs as cc
 from edges_cal.alanmode import (
     acqplot7amoon,
     corrcsv,
