@@ -713,7 +713,12 @@ def alancal(
 
     calobs = calobs.inject(
         lna_s11=alans11m["lna"],
-        source_s11s={name: alans11m[name] for name in loads},
+        source_s11s={
+            "ambient": alans11m["amb"],
+            "hot_load": alans11m["hot"],
+            "short": alans11m["short"],
+            "open": alans11m["open"],
+        },
     )
     # END OF STUFF TO TAKE OUT
 
