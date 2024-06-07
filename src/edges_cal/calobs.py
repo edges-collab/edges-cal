@@ -250,13 +250,20 @@ class Load:
             loss_model=loss_model,
         )
 
-    def get_temp_with_loss(self, freq: tp.FreqType | None = None):
-        """Calculate the temperature of the load accounting for loss."""
+    def loss(self, freq: tp.FreqType | None = None):
+        """The loss of this load."""
         if freq is None:
             freq = self.freq.freq
 
         if self.loss_model is None:
-            return self.spectrum.temp_ave * np.ones(len(freq))
+            return np.ones(len(freq))
+
+        return self.loss_model(freq, self.reflections.s11_model(freq))
+
+    def get_temp_with_loss(self, freq: tp.FreqType | None = None):
+        """Calculate the temperature of the load accounting for loss."""
+        if self.loss_model is None:
+            return self.spectrum.temp_ave
 
         gain = self.loss_model(freq, self.reflections.s11_model(freq))
         return gain * self.spectrum.temp_ave + (1 - gain) * self.ambient_temperature
@@ -347,6 +354,8 @@ class CalibrationObservation:
     receiver: s11.Receiver = attr.ib()
     cterms: int = attr.ib(default=5, kw_only=True)
     wterms: int = attr.ib(default=7, kw_only=True)
+    apply_loss_to_true_temp: bool = attr.ib(default=False, kw_only=True)
+    smooth_scale_offset_within_loop: bool = attr.ib(default=False, kw_only=True)
 
     _metadata: dict[str, Any] = attr.ib(default=attr.Factory(dict), kw_only=True)
 
@@ -820,6 +829,14 @@ class CalibrationObservation:
         else:
             ave_spec = {k: source.averaged_spectrum for k, source in self.loads.items()}
 
+        if self.apply_loss_to_true_temp:
+            temp_ant = self.source_thermistor_temps
+            loss = None
+        else:
+            temp_ant = dict(self.source_thermistor_temps)
+            temp_ant["hot_load"] = self.hot_load.specturm.temp_ave
+            loss = self.hot_load.loss()
+
         scale, off, tunc, tcos, tsin = deque(
             rcf.get_calibration_quantities_iterative(
                 self.freq.freq.to_value("MHz"),
@@ -830,6 +847,8 @@ class CalibrationObservation:
                 cterms=self.cterms,
                 wterms=self.wterms,
                 temp_amb_internal=self.t_load,
+                hot_load_loss=loss,
+                smooth_scale_offset_within_loop=self.smooth_scale_offset_within_loop,
             ),
             maxlen=1,
         ).pop()

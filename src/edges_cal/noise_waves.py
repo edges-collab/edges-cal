@@ -243,6 +243,8 @@ def get_calibration_quantities_iterative(
     wterms: int,
     temp_amb_internal: float = 300,
     niter: int = 4,
+    hot_load_loss: np.ndarray | None = None,
+    smooth_scale_offset_within_loop: bool = True,
 ):
     """
     Derive calibration parameters using the scheme laid out in Monsalve (2017).
@@ -273,12 +275,27 @@ def get_calibration_quantities_iterative(
     temp_amb_internal : float
         The ambient internal temperature, interpreted as T_L.
         Note: this must be the same as the T_L used to generate T*.
+    niter : int
+        The number of iterations to perform.
+    hot_load_loss : array_like, optional
+        The loss of the hot load. If None, then either no loss is assumed, or the loss
+        is already assumed to be applied to the "true" temperature of the hot load.
+    smooth_scale_offset_within_loop : bool
+        If True, then the scale and offset are smoothed within the loop. If False, then
+        the scale and offset are only smoothed at the end of the loop.
 
     Returns
     -------
     sca, off, tu, tc, ts : np.poly1d
         1D polynomial fits for each of the Scale (C_1), Offset (C_2), and noise-wave
         temperatures for uncorrelated, cos and sin components.
+
+    Notes
+    -----
+    To achieve the same results as the legacy C pipeline, the `hot_load_loss` parameter
+    should be given, and not applied to the "true" temperature. There is a small
+    mathematical difference that arises if you do it the other way. Furthermore, the
+    `smooth_scale_offset_within_loop` parameter should be set to False.
     """
     mask = np.all([np.isfinite(temp) for temp in temp_raw.values()], axis=0)
 
@@ -292,23 +309,17 @@ def get_calibration_quantities_iterative(
     gamma_rec = gamma_rec[mask]
     temp_ant_hot = temp_ant["hot_load"]
 
-    # Get F and alpha for each load (Eqs. 3 and 4)
-    F = {k: get_F(gamma_rec, v) for k, v in gamma_ant.items()}
-    alpha = {k: get_alpha(gamma_rec, v) for k, v in gamma_ant.items()}
-
     # The denominator of each term in Eq. 7
     G = 1 - np.abs(gamma_rec) ** 2
 
     K1, K2, K3, K4 = {}, {}, {}, {}
     for k, gamma_a in gamma_ant.items():
-        K1[k], K2[k], K3[k], K4[k] = get_K(
-            gamma_rec, gamma_a, f_ratio=F[k], gain=G, alpha=alpha[k]
-        )
+        K1[k], K2[k], K3[k], K4[k] = get_K(gamma_rec, gamma_a, gain=G)
 
-    # Initializing arrays
+    # Initialize arrays
     nf = len(fmask)
-    ta_iter = np.zeros(nf)
-    th_iter = np.zeros(nf)
+    tamb_iter = np.zeros(nf)
+    thot_iter = np.zeros(nf)
 
     sca, off, tunc, tcos, tsin = (
         np.ones(nf),
@@ -322,38 +333,37 @@ def get_calibration_quantities_iterative(
     sca_mdl = mdl.Polynomial(n_terms=cterms, transform=tr).at(x=fmask)
     off_mdl = mdl.Polynomial(n_terms=cterms, transform=tr).at(x=fmask)
 
-    temp_cal_iter = {}
+    temp_cal_iter = dict(temp_raw)  # copy
+
     # Calibration loop
-    for i in range(niter):
+    for _ in range(niter):
         # Step 1: approximate physical temperature
-        if i == 0:
-            ta_iter = temp_raw["ambient"] / K1["ambient"]
-            th_iter = temp_raw["hot_load"] / K1["hot_load"]
-        else:
-            for load, arry in zip(["ambient", "hot_load"], (ta_iter, th_iter)):
-                noise_wave_param = tunc * K2[load] + tcos * K3[load] + tsin * K4[load]
-                arry[:] = (temp_cal_iter[load] - noise_wave_param) / K1[load]
+        nwp = tunc * K2["ambient"] + tcos * K3["ambient"] + tsin * K4["ambient"]
+        tamb_iter = (temp_cal_iter["ambient"] - nwp) / K1["ambient"]
+
+        nwp = tunc * K2["hot_load"] + tcos * K3["hot_load"] + tsin * K4["hot_load"]
+        tamb_iter = (temp_cal_iter["hot_load"] - nwp) / K1["hot_load"]
 
         # Step 2: scale and offset
+        if hot_load_loss is not None:
+            thot_iter = (
+                thot_iter - temp_ant["ambient"] * (1 - hot_load_loss)
+            ) / hot_load_loss
 
         # Updating scale and offset
-        sca_new = (temp_ant_hot - temp_ant["ambient"]) / (th_iter - ta_iter)
-        off_new = ta_iter - temp_ant["ambient"]
+        sca_new = (temp_ant_hot - temp_ant["ambient"]) / (thot_iter - tamb_iter)
+        off_new = tamb_iter - temp_ant["ambient"]
 
-        if i == 0:
-            sca_raw = sca_new
-            off_raw = off_new
-        else:
-            sca_raw = sca * sca_new
-            off_raw = off + off_new
+        sca *= sca_new
+        off += off_new
 
-        # Model scale
-        p_sca = sca_mdl.fit(ydata=sca_raw).fit
-        sca = p_sca(fmask)
+        # Model scale and offset
+        p_sca = sca_mdl.fit(ydata=sca).fit
+        p_off = off_mdl.fit(ydata=off).fit
 
-        # Model offset
-        p_off = off_mdl.fit(ydata=off_raw).fit
-        off = p_off(fmask)
+        if smooth_scale_offset_within_loop:
+            sca = p_sca(fmask)
+            off = p_off(fmask)
 
         # Step 3: corrected "uncalibrated spectrum" of cable
         temp_cal_iter = {
