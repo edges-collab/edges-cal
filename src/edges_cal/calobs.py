@@ -834,7 +834,7 @@ class CalibrationObservation:
             loss = None
         else:
             temp_ant = dict(self.source_thermistor_temps)
-            temp_ant["hot_load"] = self.hot_load.specturm.temp_ave
+            temp_ant["hot_load"] = self.hot_load.spectrum.temp_ave
             loss = self.hot_load.loss()
 
         scale, off, tunc, tcos, tsin = deque(
