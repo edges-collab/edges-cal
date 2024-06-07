@@ -403,6 +403,8 @@ def get_calibration_quantities_iterative(
                     tunc,
                     tcos,
                     tsin,
+                    p_sca(fmask),
+                    p_off(fmask),
                 ]
             ).T,
         )
