@@ -1,6 +1,7 @@
 """Functions for calibrating the receiver."""
 from __future__ import annotations
 
+import attrs
 import numpy as np
 
 from . import modelling as mdl
@@ -35,6 +36,51 @@ def get_alpha(gamma_rec: np.ndarray, gamma_ant: np.ndarray) -> np.ndarray:
         The reflection coefficient fo the antenna.
     """
     return np.angle(gamma_ant * get_F(gamma_rec, gamma_ant))
+
+
+def get_K(gamma_rec, gamma_ant, f_ratio=None, alpha=None, gain=None):  # noqa: N802
+    """
+    Determine the S11-dependent factors for each term in Eq. 7 (Monsalve 2017).
+
+    Parameters
+    ----------
+    gamma_rec : array_like
+        Receiver S11
+    gamma_ant : array_like
+        Antenna (or load) S11.
+    f_ratio : array_like, optional
+        The F factor (Eq. 3 of Monsalve 2017). Computed if not given.
+    alpha : array_like, optional
+        The alpha factor (Eq. 4 of Monsalve, 2017). Computed if not given.
+    gain : array_like, optional
+        The transmission function, (1 - Gamma_rec^2). Computed if not given.
+
+    Returns
+    -------
+    K0, K1, K2, K3: array_like
+        Factors corresponding to T_ant, T_unc, T_cos, T_sin respectively.
+    """
+    # Get F and alpha for each load (Eqs. 3 and 4)
+    if f_ratio is None:
+        f_ratio = get_F(gamma_rec=gamma_rec, gamma_ant=gamma_ant)
+
+    if alpha is None:
+        alpha = get_alpha(gamma_rec=gamma_rec, gamma_ant=gamma_ant)
+
+    # The denominator of each term in Eq. 7
+    if gain is None:
+        gain = 1 - np.abs(gamma_rec) ** 2
+
+    f_ratio = np.abs(f_ratio)
+    gant = np.abs(gamma_ant)
+    fgant = gant * f_ratio / gain
+
+    K2 = fgant**2 * gain
+    K1 = f_ratio**2 / gain - K2
+    K3 = fgant * np.cos(alpha)
+    K4 = fgant * np.sin(alpha)
+
+    return K1, K2, K3, K4
 
 
 def power_ratio(
@@ -97,6 +143,185 @@ def power_ratio(
     ]
 
     return terms if return_terms else sum(terms[:5]) / terms[5]
+
+
+@attrs.define(slots=False)
+class NoiseWaveLinearModelFit:
+    freq: np.ndarray = attrs.field()
+    gamma_rec: callable = attrs.field()
+    gamma_src: dict[str, callable] = attrs.field()
+    modelfit: mdl.CompositeModel = attrs.field()
+    delay: float = attrs.field(default=0.0)
+
+    @property
+    def model(self):
+        """The model, with assigned parameters from best-fit."""
+        return self.modelfit.fit
+
+    def get_tunc(self, freq: np.ndarray | None, full_term=False):
+        r"""Compute the model for Tunc(freq).
+
+        If `full_term` is True, return the full term, i.e.
+
+        .. math:: Tunc \frac{|Gamma_{\rm ant}|^2 |F|^2}{1 - |Gamma_{\rm rcv}|^2}
+
+        otherwise just return Tunc itself. This is not implemented yet (it's a little
+        trickier because it depends on which source you want it for).
+        """
+        if freq is None:
+            freq = self.freq
+
+        return self.model.models["unc"](x=freq, with_scaler=False)
+
+    def get_tcos(self, freq: np.ndarray | None, full_term=False):
+        r"""Compute the model for Tcos(freq).
+
+        If `full_term` is True, return the full term, i.e.
+
+        .. math:: Tcos \frac{|Gamma_{\rm ant}| |F| \cos\alpha}{1 - |Gamma_{\rm rcv}|^2}
+
+        otherwise just return Tcos itself. This is not implemented yet (it's a little
+        trickier because it depends on which source you want it for).
+        """
+        if freq is None:
+            freq = self.freq
+
+        ph = np.exp(1j * 2 * np.pi * freq * self.delay)
+
+        tcos = self.model.models["cos"](x=freq, with_scaler=False)
+        tsin = self.model.models["sin"](x=freq, with_scaler=False)
+
+        return tcos * ph.real + tsin * ph.imag
+
+    def get_tsin(self, freq: np.ndarray | None, full_term=False):
+        r"""Compute the model for Tcos(freq).
+
+        If `full_term` is True, return the full term, i.e.
+
+        .. math:: Tcos \frac{|Gamma_{\rm ant}| |F| \cos\alpha}{1 - |Gamma_{\rm rcv}|^2}
+
+        otherwise just return Tcos itself. This is not implemented yet (it's a little
+        trickier because it depends on which source you want it for).
+        """
+        if freq is None:
+            freq = self.freq
+
+        ph = np.exp(1j * 2 * np.pi * freq * self.delay)
+
+        tcos = self.model.models["cos"](x=freq, with_scaler=False)
+        tsin = self.model.models["sin"](x=freq, with_scaler=False)
+
+        return tsin * ph.real - tcos * ph.imag
+
+    def residual(self):
+        """The residual of the fit."""
+        return self.modelfit.residual
+
+    def rms(self):
+        """The RMS of the residual of the fit."""
+        return self.modelfit.weighted_rms
+
+
+@attrs.define(slots=False)
+class NoiseWaveLinearModel:
+    """
+    A linear model for the noise wave terms.
+
+    Parameters
+    ----------
+    Kopen : tuple
+        The K terms for the open load.
+    Kshort : tuple
+        The K terms for the short load.
+
+    Returns
+    -------
+    model : :class:`np.poly1d`
+        The linear model for the noise wave terms.
+    """
+
+    freq: np.ndarray = attrs.field()
+    gamma_rec: callable = attrs.field()
+    gamma_src: dict[str, callable] = attrs.field()
+    model_type: mdl.Model = attrs.field(default=mdl.Polynomial)
+    n_terms: int = attrs.field(default=5)
+    delay: float = attrs.field(default=0.0)
+
+    def cos_kfactor(self, freq):
+        """Compute the scaler to the Tcos basis function."""
+        ph = np.exp(1j * 2 * np.pi * freq * self.delay)
+
+        out = []
+        for gamma in self.gamma_src.values():
+            K = get_K(self.gamma_rec(freq), gamma(freq))
+            out.append(K[2] * ph.real - K[3] * ph.imag)
+
+        return np.concatenate(out)
+
+    def sin_kfactor(self, freq):
+        """Compute the scaler to the Tsin basis function."""
+        ph = np.exp(1j * 2 * np.pi * freq * self.delay)
+
+        out = []
+        for gamma in self.gamma_src.values():
+            K = get_K(self.gamma_rec(freq), gamma(freq))
+
+            out.append(K[2] * ph.imag + K[3] * ph.real)
+        return out
+
+    def unc_kfactor(self, freq):
+        """Compute the scaler to the Tunc basis function."""
+        return np.concatenate(
+            [
+                get_K(self.gamma_rec(freq), gamma(freq))[1]
+                for gamma in self.gamma_src.values()
+            ]
+        )
+
+    def fit(
+        self,
+        spectrum: dict[str, np.ndarray],
+        temp_thermistor: dict[str, np.ndarray],
+    ):
+        """Obtain a fit of the compositie model to given data."""
+        x = np.concatenate([self.freq] * len(self.gamma_src))
+        tr = mdl.ScaleTransform(scale=self.freq[len(self.freq) // 2])
+
+        unc_model = self.model_type(
+            n_terms=self.n_terms,
+            xtransform=tr,
+            basis_scaler=self.unc_kfactor,
+        ).at(x=x)
+
+        cos_model = self.model_type(
+            n_terms=self.n_terms,
+            xtransform=tr,
+            basis_scaler=self.cos_kfactor,
+        ).at(x=x)
+
+        sin_model = self.model_type(
+            n_terms=self.n_terms,
+            xtransform=tr,
+            basis_scaler=self.sin_kfactor,
+        ).at(x=x)
+
+        model = mdl.CompositeModel(
+            models={"unc": unc_model, "cos": cos_model, "sin": sin_model}
+        )
+
+        K0 = {k: get_K(self.gamma_rec, self.gamma_src[k])[0] for k in self.gamma_src}
+
+        data = np.concatenate(
+            [spectrum[k] - temp_thermistor[k] * K0[k] for k in self.gamma_src]
+        )
+
+        return NoiseWaveLinearModelFit(
+            freq=self.freq,
+            gamma_rec=self.gamma_rec,
+            gamma_src=self.gamma_src,
+            modelfit=model.fit(ydata=data),
+            delay=self.delay,
+        )
 
 
 def noise_wave_param_fit(
@@ -188,63 +413,19 @@ def noise_wave_param_fit(
     return fit.model["tunc"], fit.model["tcos"], fit.model["tsin"]
 
 
-def get_K(gamma_rec, gamma_ant, f_ratio=None, alpha=None, gain=None):  # noqa: N802
-    """
-    Determine the S11-dependent factors for each term in Eq. 7 (Monsalve 2017).
-
-    Parameters
-    ----------
-    gamma_rec : array_like
-        Receiver S11
-    gamma_ant : array_like
-        Antenna (or load) S11.
-    f_ratio : array_like, optional
-        The F factor (Eq. 3 of Monsalve 2017). Computed if not given.
-    alpha : array_like, optional
-        The alpha factor (Eq. 4 of Monsalve, 2017). Computed if not given.
-    gain : array_like, optional
-        The transmission function, (1 - Gamma_rec^2). Computed if not given.
-
-    Returns
-    -------
-    K0, K1, K2, K3: array_like
-        Factors corresponding to T_ant, T_unc, T_cos, T_sin respectively.
-    """
-    # Get F and alpha for each load (Eqs. 3 and 4)
-    if f_ratio is None:
-        f_ratio = get_F(gamma_rec=gamma_rec, gamma_ant=gamma_ant)
-
-    if alpha is None:
-        alpha = get_alpha(gamma_rec=gamma_rec, gamma_ant=gamma_ant)
-
-    # The denominator of each term in Eq. 7
-    if gain is None:
-        gain = 1 - np.abs(gamma_rec) ** 2
-
-    f_ratio = np.abs(f_ratio)
-    gant = np.abs(gamma_ant)
-    fgant = gant * f_ratio / gain
-
-    K2 = fgant**2 * gain
-    K1 = f_ratio**2 / gain - K2
-    K3 = fgant * np.cos(alpha)
-    K4 = fgant * np.sin(alpha)
-
-    return K1, K2, K3, K4
-
-
 def get_calibration_quantities_iterative(
     freq: np.ndarray,
     temp_raw: dict,
-    gamma_rec: np.ndarray,
-    gamma_ant: dict,
-    temp_ant: dict,
+    gamma_rec: callable,
+    gamma_ant: dict[str, callable],
+    temp_ant: dict[str, np.ndarray | float],
     cterms: int,
     wterms: int,
     temp_amb_internal: float = 300,
     niter: int = 4,
     hot_load_loss: np.ndarray | None = None,
     smooth_scale_offset_within_loop: bool = True,
+    delays_to_fit: np.ndarray = np.array([0.0]),
 ):
     """
     Derive calibration parameters using the scheme laid out in Monsalve (2017).
@@ -283,6 +464,9 @@ def get_calibration_quantities_iterative(
     smooth_scale_offset_within_loop : bool
         If True, then the scale and offset are smoothed within the loop. If False, then
         the scale and offset are only smoothed at the end of the loop.
+    delays_to_fit : array_like
+        The delays to sweep over when fitting noise-wave parameters. The delay resulting
+        in the lowest residuals will be used.
 
     Returns
     -------
@@ -300,21 +484,19 @@ def get_calibration_quantities_iterative(
     mask = np.all([np.isfinite(temp) for temp in temp_raw.values()], axis=0)
 
     fmask = freq[mask]
-    gamma_ant = {key: value[mask] for key, value in gamma_ant.items()}
     temp_raw = {key: value[mask] for key, value in temp_raw.items()}
     temp_ant = {
         key: (value[mask] if hasattr(value, "__len__") else value)
         for key, value in temp_ant.items()
     }
-    gamma_rec = gamma_rec[mask]
     temp_ant_hot = temp_ant["hot_load"]
 
     # The denominator of each term in Eq. 7
-    G = 1 - np.abs(gamma_rec) ** 2
+    G = 1 - np.abs(gamma_rec(fmask)) ** 2
 
     K1, K2, K3, K4 = {}, {}, {}, {}
     for k, gamma_a in gamma_ant.items():
-        K1[k], K2[k], K3[k], K4[k] = get_K(gamma_rec, gamma_a, gain=G)
+        K1[k], K2[k], K3[k], K4[k] = get_K(gamma_rec(fmask), gamma_a(fmask), gain=G)
 
     # Initialize arrays
     nf = len(fmask)
@@ -373,21 +555,23 @@ def get_calibration_quantities_iterative(
         }
 
         # Step 4: computing NWP
-        tu, tc, ts = noise_wave_param_fit(
-            fmask,
-            gamma_rec,
-            gamma_ant["open"],
-            gamma_ant["short"],
-            temp_cal_iter["open"],
-            temp_cal_iter["short"],
-            temp_ant["open"],
-            temp_ant["short"],
-            wterms,
-        )
+        best = None
+        for delay in delays_to_fit:
+            nwm = NoiseWaveLinearModel(
+                freq=fmask,
+                gamma_rec=gamma_rec,
+                gamma_src=gamma_ant,
+                model_type=mdl.Polynomial,
+                n_terms=wterms,
+                delay=delay,
+            )
+            nwmfit = nwm.fit(temp_cal_iter, temp_ant)
+            if best is None or nwmfit.rms < best.rms:
+                best = nwmfit
 
-        tunc = tu(fmask)
-        tcos = tc(fmask)
-        tsin = ts(fmask)
+        tunc = best.get_tunc(fmask)
+        tcos = best.get_tcos(fmask)
+        tsin = best.get_tsin(fmask)
 
         np.savetxt(
             f"calibration_loop_{_}.txt",
@@ -410,13 +594,7 @@ def get_calibration_quantities_iterative(
                 ]
             ).T,
         )
-        yield (
-            p_sca,
-            p_off,
-            tu,
-            tc,
-            ts,
-        )
+        yield (p_sca, p_off, best)
 
 
 def get_linear_coefficients(

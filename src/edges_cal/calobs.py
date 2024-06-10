@@ -837,22 +837,23 @@ class CalibrationObservation:
             temp_ant["hot_load"] = self.hot_load.spectrum.temp_ave
             loss = self.hot_load.loss()
 
-        scale, off, tunc, tcos, tsin = deque(
+        scale, off, nwp = deque(
             rcf.get_calibration_quantities_iterative(
                 self.freq.freq.to_value("MHz"),
                 temp_raw=ave_spec,
-                gamma_rec=self.receiver_s11,
-                gamma_ant=self.s11_correction_models,
+                gamma_rec=self.receiver.s11_model,
+                gamma_ant={name: load.s11_model for name, load in self.loads.items()},
                 temp_ant=temp_ant,
                 cterms=self.cterms,
                 wterms=self.wterms,
                 temp_amb_internal=self.t_load,
                 hot_load_loss=loss,
                 smooth_scale_offset_within_loop=self.smooth_scale_offset_within_loop,
+                delays_to_fit=np.arange(0, 1e-8, 1e-9),
             ),
             maxlen=1,
         ).pop()
-        return {"C1": scale, "C2": off, "Tunc": tunc, "Tcos": tcos, "Tsin": tsin}
+        return {"C1": scale, "C2": off, "NW": nwp}
 
     def C1(self, f: tp.FreqType | None = None):
         """
@@ -896,7 +897,7 @@ class CalibrationObservation:
         if hasattr(self, "_injected_t_unc") and self._injected_t_unc is not None:
             return np.array(self._injected_t_unc)
 
-        return self.cal_coefficient_models["Tunc"](self.freq.freq if f is None else f)
+        return self.cal_coefficient_models["NW"].get_tunc(f)
 
     def Tcos(self, f: tp.FreqType | None = None):
         """
@@ -911,7 +912,7 @@ class CalibrationObservation:
         if hasattr(self, "_injected_t_cos") and self._injected_t_cos is not None:
             return np.array(self._injected_t_cos)
 
-        return self.cal_coefficient_models["Tcos"](self.freq.freq if f is None else f)
+        return self.cal_coefficient_models["NW"].get_tcos(f)
 
     def Tsin(self, f: tp.FreqType | None = None):
         """
@@ -926,7 +927,7 @@ class CalibrationObservation:
         if hasattr(self, "_injected_t_sin") and self._injected_t_sin is not None:
             return np.array(self._injected_t_sin)
 
-        return self.cal_coefficient_models["Tsin"](self.freq.freq if f is None else f)
+        return self.cal_coefficient_models["NW"].get_tsin(f)
 
     @cached_property
     def receiver_s11(self):
