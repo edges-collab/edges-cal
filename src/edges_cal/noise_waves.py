@@ -192,7 +192,7 @@ class NoiseWaveLinearModelFit:
         if freq is None:
             freq = self.freq
 
-        ph = np.exp(1j * 2 * np.pi * freq * self.delay)
+        ph = np.exp(1j * 2 * np.pi * freq * self.delay * 1e6)
 
         tcos = self.model.model.models["cos"](x=freq, with_scaler=False)
         tsin = self.model.model.models["sin"](x=freq, with_scaler=False)
@@ -212,7 +212,7 @@ class NoiseWaveLinearModelFit:
         if freq is None:
             freq = self.freq
 
-        ph = np.exp(1j * 2 * np.pi * freq * self.delay)
+        ph = np.exp(1j * 2 * np.pi * freq * self.delay * 1e6)
 
         tcos = self.model.model.models["cos"](x=freq, with_scaler=False)
         tsin = self.model.model.models["sin"](x=freq, with_scaler=False)
