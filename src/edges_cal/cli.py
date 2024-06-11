@@ -532,6 +532,10 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     type=int,
     default=27,
 )
+@click.option(
+    "--plot/--no-plot",
+    default=True,
+)
 def alancal(
     s11date,
     specyear,
@@ -564,6 +568,7 @@ def alancal(
     wfit,
     nfit3,
     nfit2,
+    plot,
 ):
     """Run a calibration in as close a manner to Alan's code as possible.
 
@@ -766,15 +771,16 @@ def alancal(
                 f"{lna[i].real} {lna[i].imag}\n"
             )
 
-    # Make plots...
-    console.print("Plotting S11 models...")
-    ax = calobs.plot_s11_models()
-    ax.flatten()[0].figure.savefig(out / "s11_models.png")
+    if plot:
+        # Make plots...
+        console.print("Plotting S11 models...")
+        ax = calobs.plot_s11_models()
+        ax.flatten()[0].figure.savefig(out / "s11_models.png")
 
-    console.print("Plotting raw spectra...")
-    fig = calobs.plot_raw_spectra()
-    fig.savefig(out / "raw_spectra.png")
+        console.print("Plotting raw spectra...")
+        fig = calobs.plot_raw_spectra()
+        fig.savefig(out / "raw_spectra.png")
 
-    console.print("Plotting calibration coefficients...")
-    fig = calobs.plot_coefficients()
-    fig.savefig(out / "calibration_coefficients.png")
+        console.print("Plotting calibration coefficients...")
+        fig = calobs.plot_coefficients()
+        fig.savefig(out / "calibration_coefficients.png")
