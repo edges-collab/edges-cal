@@ -11,7 +11,7 @@ from read_acq.gsdata import read_acq_to_gsdata
 
 from . import modelling as mdl
 from . import reflection_coefficient as rc
-from .cal_coefficients import CalibrationObservation, Load
+from .calobs import CalibrationObservation, Load
 from .loss import get_cable_loss_model
 from .s11 import LoadS11, Receiver, StandardsReadings, VNAReading
 from .spectra import LoadSpectrum
@@ -159,6 +159,7 @@ def edges3cal(
     nfit2: int = 27,
     tload: float = 300,
     tcal: float = 1000.0,
+    nter: int = 8,
     mfit: int | None = None,
     smooth: int | None = None,
     lmode: int | None = None,
@@ -262,6 +263,10 @@ def edges3cal(
         receiver=receiver,
         cterms=cfit,
         wterms=wfit,
+        apply_loss_to_true_temp=False,
+        smooth_scale_offset_within_loop=False,
+        ncal_iter=nter,
+        cable_delay_sweep=np.arange(0, 1e-8, 1e-9),  # hard-coded in the C code.
     )
 
 
