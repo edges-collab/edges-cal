@@ -1400,8 +1400,16 @@ class CalibrationObservation:
             A new observation object with the injected models.
         """
         new = self.clone()
-        new._injected_lna_s11 = lna_s11
-        new._injected_source_s11s = source_s11s
+        f = new.freq.freq.to_value("MHz")
+        if lna_s11 is not None:
+            new._injected_lna_s11 = lna_s11
+            new.receiver.s11_model = ComplexSpline(f, lna_s11)
+
+        if source_s11s is not None:
+            new._injected_source_s11s = source_s11s
+            for name, s in source_s11s.items():
+                new.loads[name].reflections.s11_model = ComplexSpline(f, s)
+
         new._injected_c1 = c1
         new._injected_c2 = c2
         new._injected_t_unc = t_unc
