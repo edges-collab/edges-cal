@@ -302,16 +302,30 @@ def read_specal(fname):
         usecols=(1, 3, 4, 6, 8, 10, 12, 14, 16),
     )
 
+
 def read_caliter(fname1, fname2):
     """Read a cal output file, from an iteration of calibration loop."""
     # Define the data types for each column in the files
-    dtype_file1 = [('freq', float), ('s', float), ('s1', float), ('s2', float), 
-    ('Lh', float), ('C1', float), ('C2', float), ('open', float), ('short', float)]
-    dtype_file2 = [('Tunc', float), ('Tcos', float), ('Tsin', float)]
+    dtype_file1 = [
+        ("freq", float),
+        ("s", float),
+        ("s1", float),
+        ("s2", float),
+        ("Lh", float),
+        ("C1", float),
+        ("C2", float),
+        ("open", float),
+        ("short", float),
+    ]
+    dtype_file2 = [("Tunc", float), ("Tcos", float), ("Tsin", float)]
 
     # Read the data from the files using np.genfromtxt
-    data1 = np.genfromtxt(fname1, dtype=dtype_file1, comments='#', delimiter=None, names=True)
-    data2 = np.genfromtxt(fname2, dtype=dtype_file2, comments='#', delimiter=None, names=True)
+    data1 = np.genfromtxt(
+        fname1, dtype=dtype_file1, comments="#", delimiter=None, names=True
+    )
+    data2 = np.genfromtxt(
+        fname2, dtype=dtype_file2, comments="#", delimiter=None, names=True
+    )
 
     # Create a combined data type for the final structured array
     combined_dtype = dtype_file1 + dtype_file2
@@ -326,4 +340,3 @@ def read_caliter(fname1, fname2):
         combined_data[name] = data2[name]
 
     return combined_data
-
