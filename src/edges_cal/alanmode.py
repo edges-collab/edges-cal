@@ -266,7 +266,7 @@ def edges3cal(
         apply_loss_to_true_temp=False,
         smooth_scale_offset_within_loop=False,
         ncal_iter=nter,
-        # cable_delay_sweep=np.arange(0, -1e-8, -1e-9),  # hard-coded in the C code.
+        cable_delay_sweep=np.arange(0, -1e-8, -1e-9),  # hard-coded in the C code.
     )
 
 
