@@ -536,6 +536,32 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     "--plot/--no-plot",
     default=True,
 )
+@click.option(
+    "--avg-spectra-path",
+    type=click.Path(dir_okay=False, file_okay=True, exists=True),
+    help=(
+        "Path to a file containing averaged spectra in the format output by this "
+        "script (or the C code)"
+    ),
+)
+@click.option(
+    "--modelled-s11-path",
+    type=click.Path(dir_okay=False, file_okay=True, exists=True),
+    help=(
+        "path to a file containing modelled S11s in the format output by this "
+        "script (or the C code)"
+    ),
+)
+@click.option(
+    "--inject-lna-s11/--no-inject-lna-s11",
+    default=True,
+    help="inject LNA s11 form modelled_s11_path (if given)",
+)
+@click.option(
+    "--inject-source-s11s/--no-inject-source-s11s",
+    default=True,
+    help="inject source s11s from modelled_s11_path (if given)",
+)
 def alancal(
     s11date,
     specyear,
@@ -569,6 +595,10 @@ def alancal(
     nfit3,
     nfit2,
     plot,
+    avg_spectra_path,
+    modelled_s11_path,
+    inject_lna_s11,
+    inject_source_s11s,
 ):
     """Run a calibration in as close a manner to Alan's code as possible.
 
@@ -642,7 +672,7 @@ def alancal(
     spectra = {}
     for load in loads:
         outfile = out / f"sp{load}.txt"
-        if redo_spectra or not outfile.exists():
+        if (redo_spectra or not outfile.exists()) and not avg_spectra_path:
             console.print(f"Averaging {load} spectra")
 
             specdate = f"{specyear:04}_{specday:03}"
@@ -668,7 +698,11 @@ def alancal(
         else:
             console.print(f"Reading averaged {load} spectra")
 
-            spec = read_spec_txt(outfile)
+            if outfile.exists():
+                spec = read_spec_txt(outfile)
+            elif avg_spectra_path:
+                spec = read_spec_txt(avg_spectra_path)
+
             spfreq = spec["freq"] * un.MHz
             spectra[load] = spec["spectra"]
 
@@ -704,28 +738,28 @@ def alancal(
         tcal=tcal,
     )
 
-    # TODO: TAKE OUT THE FOLLOWING. IT IS TEMPORARY!
-    print("IF THIS SHOWS, STEVEN FORGOT TO REMOVE TEMPORARY CODE. STOP AND TELL HIM")  # noqa
-    _alans11m = np.genfromtxt(
-        "/home/smurray/data4/edges/edges-cal/tests/data/edges3-2022-316-alan/s11_modelled.txt",
-        comments="#",
-        names=True,
-    )  # np.genfromtxt("alans-code/s11_modelled.txt", comments="#", names=True)
+    if modelled_s11_path:
+        _alans11m = np.genfromtxt(
+            modelled_s11_path,
+            comments="#",
+            names=True,
+        )  # np.genfromtxt("alans-code/s11_modelled.txt", comments="#", names=True)
 
-    alans11m = {}
-    for load in [*loads, "lna"]:
-        alans11m[load] = _alans11m[f"{load}_real"] + 1j * _alans11m[f"{load}_imag"]
+        alans11m = {}
+        for load in [*loads, "lna"]:
+            alans11m[load] = _alans11m[f"{load}_real"] + 1j * _alans11m[f"{load}_imag"]
 
-    calobs = calobs.inject(
-        lna_s11=alans11m["lna"],
-        source_s11s={
-            "ambient": alans11m["amb"],
-            "hot_load": alans11m["hot"],
-            "short": alans11m["short"],
-            "open": alans11m["open"],
-        },
-    )
-    # END OF STUFF TO TAKE OUT
+        calobs = calobs.inject(
+            lna_s11=alans11m["lna"] if inject_lna_s11 else None,
+            source_s11s={
+                "ambient": alans11m["amb"],
+                "hot_load": alans11m["hot"],
+                "short": alans11m["short"],
+                "open": alans11m["open"],
+            }
+            if inject_source_s11s
+            else None,
+        )
 
     with open(outfile, "w") as fl:
         for i in range(calobs.freq.n):
