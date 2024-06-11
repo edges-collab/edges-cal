@@ -259,7 +259,7 @@ class NoiseWaveLinearModel:
         """Compute the scaler to the Tcos basis function."""
         freq = freq[: len(freq) // len(self.gamma_src)]
 
-        ph = np.exp(1j * 2 * np.pi * freq * self.delay)
+        ph = np.exp(1j * 2 * np.pi * freq * self.delay * 1e6)
 
         out = []
         for gamma in self.gamma_src.values():
@@ -271,7 +271,7 @@ class NoiseWaveLinearModel:
     def sin_kfactor(self, freq):
         """Compute the scaler to the Tsin basis function."""
         freq = freq[: len(freq) // len(self.gamma_src)]
-        ph = np.exp(1j * 2 * np.pi * freq * self.delay)
+        ph = np.exp(1j * 2 * np.pi * freq * self.delay * 1e6)
 
         out = []
         for gamma in self.gamma_src.values():
