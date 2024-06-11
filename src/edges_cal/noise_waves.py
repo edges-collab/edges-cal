@@ -295,6 +295,7 @@ class NoiseWaveLinearModel:
         self,
         spectrum: dict[str, np.ndarray],
         temp_thermistor: dict[str, np.ndarray],
+        method="lstsq",
     ):
         """Obtain a fit of the compositie model to given data."""
         x = np.concatenate([self.freq] * len(self.gamma_src))
@@ -335,7 +336,7 @@ class NoiseWaveLinearModel:
             freq=self.freq,
             gamma_rec=self.gamma_rec,
             gamma_src=self.gamma_src,
-            modelfit=model.fit(xdata=x, ydata=data),
+            modelfit=model.fit(xdata=x, ydata=data, method=method),
             delay=self.delay,
         )
 
@@ -423,7 +424,7 @@ def noise_wave_param_fit(
                 (temp_raw_open - temp_thermistor_open * Kopen[0]),
                 (temp_raw_short - temp_thermistor_short * Kshort[0]),
             )
-        )
+        ),
     ).fit
 
     return fit.model["tunc"], fit.model["tcos"], fit.model["tsin"]
@@ -442,6 +443,7 @@ def get_calibration_quantities_iterative(
     hot_load_loss: np.ndarray | None = None,
     smooth_scale_offset_within_loop: bool = True,
     delays_to_fit: np.ndarray = np.array([0.0]),
+    fit_method="lstsq",
 ):
     """
     Derive calibration parameters using the scheme laid out in Monsalve (2017).
@@ -585,6 +587,7 @@ def get_calibration_quantities_iterative(
             nwmfit = nwm.fit(
                 {k: temp_cal_iter[k] for k in srcs},
                 {k: temp_ant[k] for k in srcs},
+                method=fit_method,
             )
             if best is None or nwmfit.rms < best.rms:
                 best = nwmfit

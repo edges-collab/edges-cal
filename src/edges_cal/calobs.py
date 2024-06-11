@@ -358,6 +358,7 @@ class CalibrationObservation:
     smooth_scale_offset_within_loop: bool = attr.ib(default=False, kw_only=True)
     cable_delay_sweep: np.ndarray = attr.ib(default=np.array([0]))
     ncal_iter: int = attr.ib(default=4, kw_only=True)
+    fit_method: str = attr.ib(default="lstsq")
 
     _metadata: dict[str, Any] = attr.ib(default=attr.Factory(dict), kw_only=True)
 
