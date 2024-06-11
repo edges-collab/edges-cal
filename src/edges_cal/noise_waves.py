@@ -577,14 +577,14 @@ def get_calibration_quantities_iterative(
             nwm = NoiseWaveLinearModel(
                 freq=fmask,
                 gamma_rec=gamma_rec,
-                gamma_src={k: v for k, v in gamma_ant.items() if k in srcs},
+                gamma_src={k: gamma_ant[k] for k in srcs},
                 model_type=mdl.Polynomial,
                 n_terms=wterms,
                 delay=delay,
             )
             nwmfit = nwm.fit(
-                {k: v for k, v in temp_cal_iter.items() if k in srcs},
-                {k: v for k, v in temp_ant.items() if k in srcs},
+                {k: temp_cal_iter[k] for k in srcs},
+                {k: temp_ant[k] for k in srcs},
             )
             if best is None or nwmfit.rms < best.rms:
                 best = nwmfit
