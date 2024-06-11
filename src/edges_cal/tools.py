@@ -19,6 +19,7 @@ from astropy import units as u
 from edges_io import types as tp
 from hickleable import hickleable
 from pygsdata import GSData
+from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 from scipy.ndimage import convolve1d
 
 from . import DATA_PATH
@@ -503,3 +504,10 @@ def temperature_thermistor(
     if kelvin:
         return temp
     return temp - 273.15
+
+
+def ComplexSpline(x, y, **kwargs):  # noqa: N802
+    """Return a complex spline object."""
+    rl = Spline(x, y.real, **kwargs)
+    im = Spline(x, y.imag, **kwargs)
+    return lambda x: rl(x) + 1j * im(x)

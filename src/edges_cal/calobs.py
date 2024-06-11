@@ -34,7 +34,7 @@ from . import reflection_coefficient as rc
 from .cached_property import cached_property, safe_property
 from .loss import HotLoadCorrection
 from .spectra import LoadSpectrum
-from .tools import FrequencyRange, bin_array
+from .tools import ComplexSpline, FrequencyRange, bin_array
 
 
 @hickleable()
@@ -356,6 +356,8 @@ class CalibrationObservation:
     wterms: int = attr.ib(default=7, kw_only=True)
     apply_loss_to_true_temp: bool = attr.ib(default=False, kw_only=True)
     smooth_scale_offset_within_loop: bool = attr.ib(default=False, kw_only=True)
+    cable_delay_sweep: np.ndarray = attr.ib(default=np.array([0]))
+    ncal_iter: int = attr.ib(default=4, kw_only=True)
 
     _metadata: dict[str, Any] = attr.ib(default=attr.Factory(dict), kw_only=True)
 
@@ -849,7 +851,8 @@ class CalibrationObservation:
                 temp_amb_internal=self.t_load,
                 hot_load_loss=loss,
                 smooth_scale_offset_within_loop=self.smooth_scale_offset_within_loop,
-                delays_to_fit=np.arange(0, 1e-8, 1e-9),
+                delays_to_fit=self.cable_delay_sweep,
+                niter=self.ncal_iter,
             ),
             maxlen=1,
         ).pop()
@@ -868,7 +871,12 @@ class CalibrationObservation:
         if hasattr(self, "_injected_c1") and self._injected_c1 is not None:
             return np.array(self._injected_c1)
 
-        return self.cal_coefficient_models["C1"](self.freq.freq if f is None else f)
+        if f is None:
+            f = self.freq.freq.to_value("MHz")
+        elif hasattr(f, "unit"):
+            f = f.to_value("MHz")
+
+        return self.cal_coefficient_models["C1"](f)
 
     def C2(self, f: tp.FreqType | None = None):
         """
@@ -882,7 +890,13 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_c2") and self._injected_c2 is not None:
             return np.array(self._injected_c2)
-        return self.cal_coefficient_models["C2"](self.freq.freq if f is None else f)
+
+        if f is None:
+            f = self.freq.freq.to_value("MHz")
+        elif hasattr(f, "unit"):
+            f = f.to_value("MHz")
+
+        return self.cal_coefficient_models["C2"](f)
 
     def Tunc(self, f: tp.FreqType | None = None):
         """
@@ -896,6 +910,11 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_t_unc") and self._injected_t_unc is not None:
             return np.array(self._injected_t_unc)
+
+        if f is None:
+            f = self.freq.freq.to_value("MHz")
+        elif hasattr(f, "unit"):
+            f = f.to_value("MHz")
 
         return self.cal_coefficient_models["NW"].get_tunc(f)
 
@@ -912,6 +931,11 @@ class CalibrationObservation:
         if hasattr(self, "_injected_t_cos") and self._injected_t_cos is not None:
             return np.array(self._injected_t_cos)
 
+        if f is None:
+            f = self.freq.freq.to_value("MHz")
+        elif hasattr(f, "unit"):
+            f = f.to_value("MHz")
+
         return self.cal_coefficient_models["NW"].get_tcos(f)
 
     def Tsin(self, f: tp.FreqType | None = None):
@@ -926,6 +950,11 @@ class CalibrationObservation:
         """
         if hasattr(self, "_injected_t_sin") and self._injected_t_sin is not None:
             return np.array(self._injected_t_sin)
+
+        if f is None:
+            f = self.freq.freq.to_value("MHz")
+        elif hasattr(f, "unit"):
+            f = f.to_value("MHz")
 
         return self.cal_coefficient_models["NW"].get_tsin(f)
 
@@ -1118,6 +1147,9 @@ class CalibrationObservation:
 
         temp_ave = self.source_thermistor_temps.get(load.load_name, load.temp_ave)
 
+        if np.isscalar(temp_ave):
+            temp_ave = np.ones(self.freq.n) * temp_ave
+
         ax.plot(
             self.freq.freq,
             temp_ave,
@@ -1243,7 +1275,7 @@ class CalibrationObservation:
         """
         return attr.evolve(self, **kwargs)
 
-    def write(self, filename: str | Path):
+    def write(self, filename: str | Path, fixed_freqs: bool = True):
         """
         Write all information required to calibrate a new spectrum to file.
 
@@ -1261,24 +1293,55 @@ class CalibrationObservation:
             fl.attrs["wterms"] = self.wterms
             fl.attrs["t_load"] = self.open.spectrum.t_load
             fl.attrs["t_load_ns"] = self.open.spectrum.t_load_ns
-
-            hickle.dump(
-                self.cal_coefficient_models, fl.create_group("cal_coefficients")
-            )
+            fl.attrs["format.version"] = "2.0"
+            fl.attrs["fixed_freqs"] = fixed_freqs
 
             hickle.dump(self.freq, fl.create_group("frequencies"))
-            hickle.dump(
-                self.receiver,
-                fl.create_group("receiver_s11"),
+            hickle.dump(self.metadata, fl.create_group("metadata"))
+
+            # Write calibration coefficients
+            if fixed_freqs:
+                self._write_fixed_freq_h5(fl)
+            else:
+                self._write_model_based_h5(fl)
+
+    def _write_fixed_freq_h5(self, fl: h5py.File):
+        ccgroup = fl.create_group("cal_coefficients")
+        ccgroup["C1"] = self.C1()
+        ccgroup["C2"] = self.C2()
+        ccgroup["Tunc"] = self.Tunc()
+        ccgroup["Tcos"] = self.Tcos()
+        ccgroup["Tsin"] = self.Tsin()
+
+        rcv_group = fl.create_group("receiver_s11")
+        rcv_group["s11"] = self.receiver_s11
+
+        sw_group = fl.create_group("internal_switch")
+        if hasattr(self.internal_switch, "s11_model"):
+            sw_group["s11"] = self.internal_switch.s11_model(
+                self.freq.freq.to_value("MHz")
             )
-            hickle.dump(
-                self.internal_switch,
-                fl.create_group("internal_switch"),
+            sw_group["s12"] = self.internal_switch.s12_model(
+                self.freq.freq.to_value("MHz")
             )
-            hickle.dump(
-                self.metadata,
-                fl.create_group("metadata"),
+            sw_group["s22"] = self.internal_switch.s22_model(
+                self.freq.freq.to_value("MHz")
             )
+
+    def _write_model_based_h5(self, fl: h5py.File):
+        hickle.dump(
+            self.receiver,
+            fl.create_group("receiver_s11"),
+        )
+
+        hickle.dump(
+            self.internal_switch,
+            fl.create_group("internal_switch"),
+        )
+
+        raise NotImplementedError(
+            "writing files with callable calibration models not yet supported"
+        )
 
     def to_calibrator(self):
         """Directly create a :class:`Calibrator` object without writing to file."""
@@ -1289,9 +1352,9 @@ class CalibrationObservation:
             t_load_ns=self.t_load_ns,
             C1=self.cal_coefficient_models["C1"],
             C2=self.cal_coefficient_models["C2"],
-            Tunc=self.cal_coefficient_models["Tunc"],
-            Tcos=self.cal_coefficient_models["Tcos"],
-            Tsin=self.cal_coefficient_models["Tsin"],
+            Tunc=self.cal_coefficient_models["NW"].get_tunc,
+            Tcos=self.cal_coefficient_models["NW"].get_tcos,
+            Tsin=self.cal_coefficient_models["NW"].get_tsin,
             freq=self.freq,
             receiver_s11=self.receiver.s11_model,
             internal_switch=self.internal_switch,
@@ -1453,22 +1516,31 @@ class Calibrator:
     def from_calfile(cls, path: tp.PathLike) -> Calibrator:
         """Generate from calfile."""
         with h5py.File(path, "r") as fl:
+            version = fl.attrs.get("format.version", "1.0")
+            if "lna_s11_real" in fl:
+                version = "0.0"
+
             try:
-                cterms = fl.attrs["cterms"]
-                wterms = fl.attrs["wterms"]
-                t_load = fl.attrs["t_load"]
-                t_load_ns = fl.attrs["t_load_ns"]
-
-                cal = hickle.load(fl["cal_coefficients"])
-
-                freq = hickle.load(fl["frequencies"])
-                receiver_s11 = hickle.load(fl["receiver_s11"])
-                internal_switch = hickle.load(fl["internal_switch"])
-                metadata = hickle.load(fl["metadata"])
+                return getattr(cls, f"_read_calfile_v{version.split('.')[0]}")(fl)
             except Exception as e:
                 raise CalFileReadError(
-                    f"Something went wrong reading the calfile: {path}"
+                    f"Something went wrong reading the calfile: {path} which is "
+                    f"version {version}"
                 ) from e
+
+    @classmethod
+    def _read_calfile_v1(cls, fl: h5py.File):
+        cterms = fl.attrs["cterms"]
+        wterms = fl.attrs["wterms"]
+        t_load = fl.attrs["t_load"]
+        t_load_ns = fl.attrs["t_load_ns"]
+
+        cal = hickle.load(fl["cal_coefficients"])
+
+        freq = hickle.load(fl["frequencies"])
+        receiver_s11 = hickle.load(fl["receiver_s11"])
+        internal_switch = hickle.load(fl["internal_switch"])
+        metadata = hickle.load(fl["metadata"])
 
         return cls(
             cterms=cterms,
@@ -1484,46 +1556,45 @@ class Calibrator:
             receiver_s11=receiver_s11.s11_model,
             internal_switch=internal_switch,
             metadata=metadata,
+            coefficient_freq_units="norm",
         )
 
     @classmethod
-    def from_old_calfile(cls, path: tp.PathLike) -> Calibrator:
-        """Read from older calfiles."""
-        with h5py.File(path, "r") as fl:
-            cterms = int(fl.attrs["cterms"])
-            wterms = int(fl.attrs["wterms"])
-            t_load = fl.attrs.get("t_load", 300)
-            t_load_ns = fl.attrs.get("t_load_ns", 400)
+    def _read_calfile_v0(cls, fl: h5py.File):
+        cterms = int(fl.attrs["cterms"])
+        wterms = int(fl.attrs["wterms"])
+        t_load = fl.attrs.get("t_load", 300)
+        t_load_ns = fl.attrs.get("t_load_ns", 400)
 
-            C1_poly = np.poly1d(fl["C1"][...])
-            C2_poly = np.poly1d(fl["C2"][...])
-            Tcos_poly = np.poly1d(fl["Tcos"][...])
-            Tsin_poly = np.poly1d(fl["Tsin"][...])
-            Tunc_poly = np.poly1d(fl["Tunc"][...])
+        C1_poly = np.poly1d(fl["C1"][...])
+        C2_poly = np.poly1d(fl["C2"][...])
+        Tcos_poly = np.poly1d(fl["Tcos"][...])
+        Tsin_poly = np.poly1d(fl["Tsin"][...])
+        Tunc_poly = np.poly1d(fl["Tunc"][...])
 
-            freq = FrequencyRange(fl["frequencies"][...] * un.MHz)
+        freq = FrequencyRange(fl["frequencies"][...] * un.MHz)
 
-            try:
-                metadata = dict(fl["metadata"].attrs)
-            except KeyError:
-                # For backwards compat
-                metadata = {}
+        try:
+            metadata = dict(fl["metadata"].attrs)
+        except KeyError:
+            # For backwards compat
+            metadata = {}
 
-            _lna_s11_rl = Spline(freq.freq.to_value("MHz"), fl["lna_s11_real"][...])
-            _lna_s11_im = Spline(freq.freq.to_value("MHz"), fl["lna_s11_imag"][...])
+        _lna_s11_rl = Spline(freq.freq.to_value("MHz"), fl["lna_s11_real"][...])
+        _lna_s11_im = Spline(freq.freq.to_value("MHz"), fl["lna_s11_imag"][...])
 
-            _intsw_s11_rl = Spline(freq.freq, fl["internal_switch_s11_real"][...])
-            _intsw_s11_im = Spline(freq.freq, fl["internal_switch_s11_imag"][...])
-            _intsw_s12_rl = Spline(freq.freq, fl["internal_switch_s12_real"][...])
-            _intsw_s12_im = Spline(freq.freq, fl["internal_switch_s12_imag"][...])
-            _intsw_s22_rl = Spline(freq.freq, fl["internal_switch_s22_real"][...])
-            _intsw_s22_im = Spline(freq.freq, fl["internal_switch_s22_imag"][...])
+        _intsw_s11_rl = Spline(freq.freq, fl["internal_switch_s11_real"][...])
+        _intsw_s11_im = Spline(freq.freq, fl["internal_switch_s11_imag"][...])
+        _intsw_s12_rl = Spline(freq.freq, fl["internal_switch_s12_real"][...])
+        _intsw_s12_im = Spline(freq.freq, fl["internal_switch_s12_imag"][...])
+        _intsw_s22_rl = Spline(freq.freq, fl["internal_switch_s22_real"][...])
+        _intsw_s22_im = Spline(freq.freq, fl["internal_switch_s22_imag"][...])
 
-            internal_switch = SimpleNamespace(
-                s11_model=lambda freq: _intsw_s11_rl(freq) + _intsw_s11_im(freq) * 1j,
-                s12_model=lambda freq: _intsw_s12_rl(freq) + _intsw_s12_im(freq) * 1j,
-                s22_model=lambda freq: _intsw_s22_rl(freq) + _intsw_s22_im(freq) * 1j,
-            )
+        internal_switch = SimpleNamespace(
+            s11_model=lambda freq: _intsw_s11_rl(freq) + _intsw_s11_im(freq) * 1j,
+            s12_model=lambda freq: _intsw_s12_rl(freq) + _intsw_s12_im(freq) * 1j,
+            s22_model=lambda freq: _intsw_s22_rl(freq) + _intsw_s22_im(freq) * 1j,
+        )
 
         return cls(
             C1=C1_poly,
@@ -1539,7 +1610,59 @@ class Calibrator:
             cterms=cterms,
             wterms=wterms,
             metadata=metadata,
+            coefficient_freq_units="norm",
         )
+
+    @classmethod
+    def _read_calfile_v2(cls, fl: h5py.File):
+        """Read calfile v2."""
+        cterms = fl.attrs["cterms"]
+        wterms = fl.attrs["wterms"]
+        t_load = fl.attrs["t_load"]
+        t_load_ns = fl.attrs["t_load_ns"]
+        fixed_freq = fl.attrs["fixed_freqs"]
+
+        meta = hickle.load(fl["metadata"])
+        freq = hickle.load(fl["frequencies"])
+        f = freq.freq.to_value("MHz")
+
+        if fixed_freq:
+            cc = fl["cal_coefficients"]
+            cc = {k: cc[k][...] for k in cc}
+
+            rcv = fl["receiver_s11"]["s11"][()]
+            rcv = ComplexSpline(f, rcv)
+
+            swg = fl["internal_switch"]
+            if "s11" in swg:
+                sws11 = ComplexSpline(f, swg["s11"][()])
+                sws12 = ComplexSpline(f, swg["s12"][()])
+                sws22 = ComplexSpline(f, swg["s22"][()])
+                sw = SimpleNamespace(s11_model=sws11, s12_model=sws12, s22_model=sws22)
+            else:
+                sw = None
+
+            cc = {k: Spline(f, v) for k, v in cc.items()}
+        else:
+            raise NotImplementedError("model-based calibration files not yet supported")
+
+        return cls(
+            cterms=cterms,
+            wterms=wterms,
+            t_load=t_load,
+            t_load_ns=t_load_ns,
+            freq=freq,
+            receiver_s11=rcv,
+            internal_switch=sw,
+            metadata=meta,
+            **cc,
+        )
+
+    @classmethod
+    def from_old_calfile(cls, path: tp.PathLike) -> Calibrator:
+        """Read from older calfiles."""
+        with h5py.File(path, "r") as fl:
+            return cls._read_calfile_v0(fl)
 
     @classmethod
     def from_calobs(cls, calobs: CalibrationObservation) -> Calibrator:

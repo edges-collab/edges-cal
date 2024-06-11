@@ -54,7 +54,10 @@ def test_rms(calobs):
 def test_update(calobs):
     c2 = calobs.clone(wterms=10)
 
-    assert len(c2.cal_coefficient_models["Tunc"].parameters) == 10
+    assert len(c2.cal_coefficient_models["NW"].model.parameters) == 30
+    assert (
+        len(c2.cal_coefficient_models["NW"].model.model.models["unc"].parameters) == 10
+    )
 
 
 def test_calibration_init(calobs, tmpdir: Path):

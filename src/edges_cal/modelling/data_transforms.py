@@ -13,19 +13,19 @@ def _transform_yaml_constructor(
     loader: yaml.SafeLoader, node: yaml.nodes.MappingNode
 ) -> DataTransform:
     mapping = loader.construct_mapping(node, deep=True)
-    return DataTransform.get(node.tag[1:])(**mapping)
+    return DataTransform.get(node.tag[4:])(**mapping)
 
 
 def _transform_yaml_representer(
     dumper: yaml.SafeDumper, tr: DataTransform
 ) -> yaml.nodes.MappingNode:
     dct = attrs.asdict(tr, recurse=False)
-    return dumper.represent_mapping(f"!{tr.__class__.__name__}", dct)
+    return dumper.represent_mapping(f"!dt.{tr.__class__.__name__}", dct)
 
 
 @hickleable()
 @attrs.define(frozen=True, kw_only=True, slots=False)
-class DataTransform(metclass=ABCMeta):
+class DataTransform(metaclass=ABCMeta):
     """A base class for model transforms.
 
     A DataTransform must implement *both* the `transform` and `inverse` methods.
@@ -41,7 +41,7 @@ class DataTransform(metclass=ABCMeta):
         """Initialize a subclass and add it to the registered models."""
         super().__init_subclass__(**kwargs)
 
-        yaml.add_constructor(f"!{cls.__name__}", _transform_yaml_constructor)
+        yaml.add_constructor(f"!dt.{cls.__name__}", _transform_yaml_constructor)
 
         if not is_meta:
             cls._models[cls.__name__.lower()] = cls

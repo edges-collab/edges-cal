@@ -1,10 +1,16 @@
 """Functions for calibrating the receiver."""
 from __future__ import annotations
 
+from collections.abc import Sequence
+from functools import cached_property
+
 import attrs
 import numpy as np
+from hickleable import hickleable
 
 from . import modelling as mdl
+from .simulate import simulate_q_from_calobs
+from .tools import ComplexSpline
 
 
 def get_F(gamma_rec: np.ndarray, gamma_ant: np.ndarray) -> np.ndarray:  # noqa: N802
@@ -171,7 +177,7 @@ class NoiseWaveLinearModelFit:
         if freq is None:
             freq = self.freq
 
-        return self.model.models["unc"](x=freq, with_scaler=False)
+        return self.model.model.models["unc"](x=freq, with_scaler=False)
 
     def get_tcos(self, freq: np.ndarray | None, full_term=False):
         r"""Compute the model for Tcos(freq).
@@ -188,8 +194,8 @@ class NoiseWaveLinearModelFit:
 
         ph = np.exp(1j * 2 * np.pi * freq * self.delay)
 
-        tcos = self.model.models["cos"](x=freq, with_scaler=False)
-        tsin = self.model.models["sin"](x=freq, with_scaler=False)
+        tcos = self.model.model.models["cos"](x=freq, with_scaler=False)
+        tsin = self.model.model.models["sin"](x=freq, with_scaler=False)
 
         return tcos * ph.real + tsin * ph.imag
 
@@ -208,15 +214,17 @@ class NoiseWaveLinearModelFit:
 
         ph = np.exp(1j * 2 * np.pi * freq * self.delay)
 
-        tcos = self.model.models["cos"](x=freq, with_scaler=False)
-        tsin = self.model.models["sin"](x=freq, with_scaler=False)
+        tcos = self.model.model.models["cos"](x=freq, with_scaler=False)
+        tsin = self.model.model.models["sin"](x=freq, with_scaler=False)
 
         return tsin * ph.real - tcos * ph.imag
 
+    @cached_property
     def residual(self):
         """The residual of the fit."""
         return self.modelfit.residual
 
+    @cached_property
     def rms(self):
         """The RMS of the residual of the fit."""
         return self.modelfit.weighted_rms
@@ -249,6 +257,8 @@ class NoiseWaveLinearModel:
 
     def cos_kfactor(self, freq):
         """Compute the scaler to the Tcos basis function."""
+        freq = freq[: len(freq) // len(self.gamma_src)]
+
         ph = np.exp(1j * 2 * np.pi * freq * self.delay)
 
         out = []
@@ -260,6 +270,7 @@ class NoiseWaveLinearModel:
 
     def sin_kfactor(self, freq):
         """Compute the scaler to the Tsin basis function."""
+        freq = freq[: len(freq) // len(self.gamma_src)]
         ph = np.exp(1j * 2 * np.pi * freq * self.delay)
 
         out = []
@@ -267,10 +278,12 @@ class NoiseWaveLinearModel:
             K = get_K(self.gamma_rec(freq), gamma(freq))
 
             out.append(K[2] * ph.imag + K[3] * ph.real)
-        return out
+        return np.concatenate(out)
 
     def unc_kfactor(self, freq):
         """Compute the scaler to the Tunc basis function."""
+        freq = freq[: len(freq) // len(self.gamma_src)]
+
         return np.concatenate(
             [
                 get_K(self.gamma_rec(freq), gamma(freq))[1]
@@ -291,25 +304,28 @@ class NoiseWaveLinearModel:
             n_terms=self.n_terms,
             xtransform=tr,
             basis_scaler=self.unc_kfactor,
-        ).at(x=x)
+        )
 
         cos_model = self.model_type(
             n_terms=self.n_terms,
             xtransform=tr,
             basis_scaler=self.cos_kfactor,
-        ).at(x=x)
+        )
 
         sin_model = self.model_type(
             n_terms=self.n_terms,
             xtransform=tr,
             basis_scaler=self.sin_kfactor,
-        ).at(x=x)
+        )
 
         model = mdl.CompositeModel(
             models={"unc": unc_model, "cos": cos_model, "sin": sin_model}
         )
 
-        K0 = {k: get_K(self.gamma_rec, self.gamma_src[k])[0] for k in self.gamma_src}
+        K0 = {
+            k: get_K(self.gamma_rec(self.freq), self.gamma_src[k](self.freq))[0]
+            for k in self.gamma_src
+        }
 
         data = np.concatenate(
             [spectrum[k] - temp_thermistor[k] * K0[k] for k in self.gamma_src]
@@ -319,7 +335,7 @@ class NoiseWaveLinearModel:
             freq=self.freq,
             gamma_rec=self.gamma_rec,
             gamma_src=self.gamma_src,
-            modelfit=model.fit(ydata=data),
+            modelfit=model.fit(xdata=x, ydata=data),
             delay=self.delay,
         )
 
@@ -527,8 +543,8 @@ def get_calibration_quantities_iterative(
         thot_iter = (temp_cal_iter["hot_load"] - nwp) / K1["hot_load"]
 
         # Step 2: scale and offset
+        s = thot_iter.copy()  # TODO: take me out
         if hot_load_loss is not None:
-            s = thot_iter.copy()  # TODO: take me out
             thot_iter = (
                 thot_iter - temp_ant["ambient"] * (1 - hot_load_loss)
             ) / hot_load_loss
@@ -557,15 +573,19 @@ def get_calibration_quantities_iterative(
         # Step 4: computing NWP
         best = None
         for delay in delays_to_fit:
+            srcs = ["open", "short"]
             nwm = NoiseWaveLinearModel(
                 freq=fmask,
                 gamma_rec=gamma_rec,
-                gamma_src=gamma_ant,
+                gamma_src={k: v for k, v in gamma_ant.items() if k in srcs},
                 model_type=mdl.Polynomial,
                 n_terms=wterms,
                 delay=delay,
             )
-            nwmfit = nwm.fit(temp_cal_iter, temp_ant)
+            nwmfit = nwm.fit(
+                {k: v for k, v in temp_cal_iter.items() if k in srcs},
+                {k: v for k, v in temp_ant.items() if k in srcs},
+            )
             if best is None or nwmfit.rms < best.rms:
                 best = nwmfit
 
@@ -573,27 +593,28 @@ def get_calibration_quantities_iterative(
         tcos = best.get_tcos(fmask)
         tsin = best.get_tsin(fmask)
 
-        np.savetxt(
-            f"calibration_loop_{_}.txt",
-            np.array(
-                [
-                    fmask,
-                    s,
-                    tamb_iter,
-                    thot_iter,
-                    hot_load_loss,
-                    sca,
-                    off,
-                    temp_cal_iter["open"],
-                    temp_cal_iter["short"],
-                    tunc,
-                    tcos,
-                    tsin,
-                    p_sca(fmask),
-                    p_off(fmask),
-                ]
-            ).T,
-        )
+        if hot_load_loss is not None:
+            np.savetxt(
+                f"calibration_loop_{_}.txt",
+                np.array(
+                    [
+                        fmask,
+                        s,
+                        tamb_iter,
+                        thot_iter,
+                        hot_load_loss,
+                        sca,
+                        off,
+                        temp_cal_iter["open"],
+                        temp_cal_iter["short"],
+                        tunc,
+                        tcos,
+                        tsin,
+                        p_sca(fmask),
+                        p_off(fmask),
+                    ]
+                ).T,
+            )
         yield (p_sca, p_off, best)
 
 
@@ -707,3 +728,229 @@ def decalibrate_antenna_temperature(
         gamma_ant, gamma_rec, sca, off, t_unc, t_cos, t_sin, t_load
     )
     return (temp - b) / a
+
+
+@hickleable()
+@attrs.define(frozen=True, kw_only=True, slots=False)
+class NoiseWaves:
+    """A class to manage linear models for fitting noise-wave parameters.
+
+    This is different from :class:`NoiseWaveLinearModel` in several ways (ultimately
+    they may be merged). The main way they are different is that this class allows for
+    fitting not only the three noise-wave models (Tunc, Tcos, Tsin) but also the
+    offset Tload -- which is related to the known temperatures via a linear model as
+    well. Also, this class is not restricted to accepting only the long-cable data
+    (short and open), but can also accept the ambient and hot load calibration sources
+    as input data, to which the noise-wave models are fitted simultaneously.
+    """
+
+    freq: np.ndarray = attrs.field()
+    gamma_src: dict[str, np.ndarray] = attrs.field()
+    gamma_rec: np.ndarray = attrs.field()
+    c_terms: int = attrs.field(default=5)
+    w_terms: int = attrs.field(default=6)
+    parameters: Sequence | None = attrs.field(default=None)
+    with_tload: bool = attrs.field(default=True)
+
+    @cached_property
+    def src_names(self) -> tuple[str]:
+        """List of names of inputs sources (eg. ambient, hot_load, open, short)."""
+        return tuple(self.gamma_src.keys())
+
+    def get_linear_model(self, with_k: bool = True) -> mdl.CompositeModel:
+        """Define and return a Model.
+
+        Parameters
+        ----------
+        with_k
+            Whether to use the K matrix as an "extra basis" in the linear model.
+        """
+        gamma_rec_func = ComplexSpline(x=self.freq, y=self.gamma_rec)
+        gamma_src_func = {
+            k: ComplexSpline(x=self.freq, y=v) for k, v in self.gamma_src.items()
+        }
+        nwlm = NoiseWaveLinearModel(
+            freq=self.freq,
+            gamma_rec=gamma_rec_func,
+            gamma_src=gamma_src_func,
+            model_type=mdl.Polynomial,
+            n_terms=self.w_terms,
+            delay=0.0,  # TODO: make this a parameter?
+        )
+
+        # x is the frequencies repeated for every input source
+        x = np.tile(self.freq, len(self.gamma_src))
+        tr = mdl.UnitTransform(range=(x.min(), x.max()))
+
+        models = {
+            "tunc": mdl.Polynomial(
+                n_terms=self.w_terms,
+                parameters=self.parameters[: self.w_terms]
+                if self.parameters is not None
+                else None,
+                transform=tr,
+                basis_scaler=nwlm.unc_kfactor if with_k else None,
+            ),
+            "tcos": mdl.Polynomial(
+                n_terms=self.w_terms,
+                parameters=self.parameters[self.w_terms : 2 * self.w_terms]
+                if self.parameters is not None
+                else None,
+                transform=tr,
+                basis_scaler=nwlm.cos_kfactor if with_k else None,
+            ),
+            "tsin": mdl.Polynomial(
+                n_terms=self.w_terms,
+                parameters=self.parameters[2 * self.w_terms : 3 * self.w_terms]
+                if self.parameters is not None
+                else None,
+                transform=tr,
+                basis_scaler=nwlm.sin_kfactor if with_k else None,
+            ),
+        }
+
+        if self.with_tload:
+            models["tload"] = mdl.Polynomial(
+                n_terms=self.c_terms,
+                parameters=self.parameters[3 * self.w_terms :]
+                if self.parameters is not None
+                else None,
+                transform=tr,
+                basis_scaler=(lambda x: -np.ones(len(x))) if with_k else None,
+            )
+
+        return mdl.CompositeModel(models=models).at(x=x)
+
+    @cached_property
+    def linear_model(self) -> mdl.CompositeModel:
+        """The actual composite linear model object associated with the noise waves."""
+        return self.get_linear_model()
+
+    def get_noise_wave(
+        self,
+        noise_wave: str,
+        parameters: Sequence | None = None,
+        src: str | None = None,
+    ) -> np.ndarray:
+        """Get the model for a particular noise-wave term."""
+        out = self.linear_model.model.get_model(
+            noise_wave,
+            parameters=parameters,
+            x=self.linear_model.x,
+            with_scaler=bool(src),
+        )
+        if src:
+            indx = self.src_names.index(src)
+            return out[indx * len(self.freq) : (indx + 1) * len(self.freq)]
+        return out[: len(self.freq)]
+
+    def get_full_model(
+        self, src: str, parameters: Sequence | None = None
+    ) -> np.ndarray:
+        """Get the full model (all noise-waves) for a particular input source."""
+        out = self.linear_model(parameters=parameters)
+        indx = self.src_names.index(src)
+        return out[indx * len(self.freq) : (indx + 1) * len(self.freq)]
+
+    def get_fitted(
+        self, data: np.ndarray, weights: np.ndarray | None = None, **kwargs
+    ) -> NoiseWaves:
+        """Get a new noise wave model with fitted parameters."""
+        fit = self.linear_model.fit(ydata=data, weights=weights, **kwargs)
+        return attrs.evolve(self, parameters=fit.model_parameters)
+
+    def with_params_from_calobs(self, calobs, cterms=None, wterms=None) -> NoiseWaves:
+        """Get a new noise wave model with parameters fitted using standard methods."""
+        cterms = cterms or calobs.cterms
+        wterms = wterms or calobs.wterms
+
+        def modify(thing, n):
+            if isinstance(thing, np.ndarray):
+                thing = thing.tolist()
+            elif isinstance(thing, tuple):
+                thing = list(thing)
+
+            if len(thing) < n:
+                return thing + [0] * (n - len(thing))
+            if len(thing) > n:
+                return thing[:n]
+            return thing
+
+        tu = modify(calobs.cal_coefficient_models["NW"].model.parameters, wterms)
+        tc = modify(calobs.cal_coefficient_models["NW"].model.parameters, wterms)
+        ts = modify(calobs.cal_coefficient_models["NW"].model.parameters, wterms)
+
+        if self.with_tload:
+            c2 = -np.asarray(calobs.cal_coefficient_models["C2"].parameters)
+            c2[0] += calobs.t_load
+            c2 = modify(c2, cterms)
+
+        return attrs.evolve(self, parameters=tu + tc + ts + c2)
+
+    def get_data_from_calobs(
+        self,
+        calobs,
+        tns: mdl.Model | None = None,
+        sim: bool = False,
+        loads: dict | None = None,
+    ) -> np.ndarray:
+        """Generate input data to fit from a calibration observation."""
+        if loads is None:
+            loads = calobs.loads
+
+        data = []
+        for src in self.src_names:
+            load = loads[src]
+            if tns is None:
+                _tns = calobs.C1() * calobs.t_load_ns
+            else:
+                _tns = tns(x=calobs.freq.freq)
+
+            q = (
+                simulate_q_from_calobs(calobs, load=src)
+                if sim
+                else load.spectrum.averaged_Q
+            )
+            c = calobs.get_K()[src][0]
+            data.append(_tns * q - c * load.temp_ave)
+        return np.concatenate(tuple(data))
+
+    @classmethod
+    def from_calobs(
+        cls,
+        calobs,
+        cterms=None,
+        wterms=None,
+        sources=None,
+        with_tload: bool = True,
+        loads: dict | None = None,
+    ) -> NoiseWaves:
+        """Initialize a noise wave model from a calibration observation."""
+        if loads is None:
+            if sources is None:
+                sources = calobs.load_names
+
+            loads = {src: load for src, load in calobs.loads.items() if src in sources}
+
+        freq = calobs.freq.freq.to_value("MHz")
+
+        gamma_src = {name: source.s11_model(freq) for name, source in loads.items()}
+
+        try:
+            lna_s11 = calobs.receiver.s11_model(freq)
+        except AttributeError:
+            lna_s11 = calobs.receiver_s11(freq)
+
+        nw_model = cls(
+            freq=freq,
+            gamma_src=gamma_src,
+            gamma_rec=lna_s11,
+            c_terms=cterms or calobs.cterms,
+            w_terms=wterms or calobs.wterms,
+            with_tload=with_tload,
+        )
+        return nw_model.with_params_from_calobs(calobs, cterms=cterms, wterms=wterms)
+
+    def __call__(self, **kwargs) -> np.ndarray:
+        """Call the underlying linear model."""
+        return self.linear_model(**kwargs)

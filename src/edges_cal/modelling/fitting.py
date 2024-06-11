@@ -208,10 +208,12 @@ class ModelFit:
         """The chi^2 of the weighted fit."""
         return np.dot(self.residual.T, self.weights * self.residual)
 
+    @cached_property
     def reduced_weighted_chi2(self) -> float:
         """The weighted chi^2 divided by the degrees of freedom."""
         return (1 / self.degrees_of_freedom) * self.weighted_chi2
 
+    @cached_property
     def weighted_rms(self) -> float:
         """The weighted root-mean-square of the residuals."""
         return np.sqrt(self.weighted_chi2) / np.sum(self.weights)

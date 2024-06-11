@@ -10,6 +10,26 @@ N = 501
 FREQ = np.linspace(50, 100, N)
 
 
+def gamma_zero(freq):
+    return np.zeros(len(freq), dtype=complex)
+
+
+def gamma_low(freq):
+    return 1e-5 * np.exp(-1j * freq / 12)
+
+
+def gamma_high(freq):
+    return 1e-2 * np.exp(1j * freq / 6)
+
+
+def gamma_decay(freq):
+    return (freq / 75) ** -1 * np.exp(-1j * freq / 12)
+
+
+def gamma_decay_flip(freq):
+    return (freq / 75) ** -1 * np.exp(1j * freq / 12)
+
+
 @pytest.mark.parametrize(
     ("true_sca", "true_off", "true_t_unc", "true_t_cos", "true_t_sin"),
     [
@@ -41,16 +61,12 @@ FREQ = np.linspace(50, 100, N)
 )
 @pytest.mark.parametrize(
     "gamma_rec",
-    [
-        np.zeros(N, dtype=complex),
-        1e-5 * np.exp(-1j * FREQ / 12),
-        1e-2 * np.exp(1j * FREQ / 6),
-    ],
+    [gamma_zero, gamma_low, gamma_high],
     ids=["perfect_rx", "low-level-rx", "high-level-rx"],
 )
 @pytest.mark.parametrize(
     "gamma_amb",
-    [np.zeros(N, dtype=complex), 1e-5 * np.exp(-1j * FREQ / 12)],
+    [gamma_zero, gamma_low],
     ids=["perfect_ra", "low-level-ra"],
 )
 def test_fit_perfect_receiver(
@@ -60,8 +76,8 @@ def test_fit_perfect_receiver(
     gamma_ant = {
         "ambient": gamma_amb,
         "hot_load": gamma_amb,
-        "short": (FREQ / 75) ** -1 * np.exp(1j * FREQ / 12),
-        "open": (FREQ / 75) ** -1 * np.exp(-1j * FREQ / 12),
+        "short": gamma_decay,
+        "open": gamma_decay_flip,
     }
 
     temp = {"ambient": 300, "hot_load": 400, "short": 300, "open": 300}
@@ -69,8 +85,8 @@ def test_fit_perfect_receiver(
     uncal_temp = {
         k: nw.decalibrate_antenna_temperature(
             temp=temp[k],
-            gamma_ant=gamma_ant[k],
-            gamma_rec=gamma_rec,
+            gamma_ant=gamma_ant[k](FREQ),
+            gamma_rec=gamma_rec(FREQ),
             sca=true_sca,
             off=true_off,
             t_unc=true_t_unc,
@@ -92,10 +108,10 @@ def test_fit_perfect_receiver(
         ),
         maxlen=1,
     )
-    sca, off, tu, tc, ts = result.pop()
+    sca, off, nwv = result.pop()
 
     assert np.allclose(sca(FREQ), true_sca)
     assert np.allclose(off(FREQ), true_off)
-    assert np.allclose(tu(FREQ), true_t_unc)
-    assert np.allclose(tc(FREQ), true_t_cos)
-    assert np.allclose(ts(FREQ), true_t_sin)
+    assert np.allclose(nwv.get_tunc(FREQ), true_t_unc)
+    assert np.allclose(nwv.get_tcos(FREQ), true_t_cos)
+    assert np.allclose(nwv.get_tsin(FREQ), true_t_sin)

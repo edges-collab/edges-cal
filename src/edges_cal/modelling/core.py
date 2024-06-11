@@ -195,7 +195,7 @@ class Model(metaclass=ABCMeta):
     )
     n_terms: int = attrs.field(converter=attrs.converters.optional(int))
     _transform: xt.ModelTransform = attrs.field(default=xt.IdentityTransform())
-    _xtransform: xt.ModelTransform | None = attrs.field(default=None)
+    xtransform: xt.ModelTransform | None = attrs.field()
     basis_scaler: callable | None = attrs.field(default=None)
     data_transform: dt.ModelTransform = attrs.field(default=dt.IdentityTransform())
 
@@ -224,10 +224,9 @@ class Model(metaclass=ABCMeta):
         if self.parameters is not None and val != len(self.parameters):
             raise ValueError(f"Wrong number of parameters! Should be {val}.")
 
-    @property
-    def xtransform(self):
-        """Get the x-transform."""
-        return self._xtransform or self._transform
+    @xtransform.default
+    def _xt_default(self):
+        return self._transform
 
     @abstractmethod
     def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
@@ -237,13 +236,13 @@ class Model(metaclass=ABCMeta):
         self, indx: int, x: np.ndarray, with_scaler: bool = True
     ) -> np.ndarray:
         """Get the basis term after coordinate transformation."""
-        s = self.basis_scaler(x) if with_scaler else 1
+        s = self.basis_scaler(x) if with_scaler and self.basis_scaler is not None else 1
         return self.get_basis_term(indx=indx, x=self.xtransform(x)) * s
 
     def get_basis_terms(self, x: np.ndarray, with_scaler: bool = True) -> np.ndarray:
         """Get a 2D array of all basis terms at ``x``."""
         x = self.xtransform(x)
-        s = self.basis_scaler(x) if with_scaler else 1
+        s = self.basis_scaler(x) if with_scaler and self.basis_scaler is not None else 1
 
         return np.array(
             [self.get_basis_term(indx, x) * s for indx in range(self.n_terms)]
@@ -342,8 +341,12 @@ def get_mdl(model: str | type[Model]) -> type[Model]:
     """Get a linear model class from a string input."""
     if isinstance(model, str):
         return _MODELS[model]
-    if issubclass(model, Model):
-        return model
+    try:
+        if issubclass(model, Model):
+            return model
+    except TypeError:
+        pass
+
     raise ValueError("model needs to be a string or Model subclass")
 
 
@@ -359,6 +362,9 @@ def _model_yaml_constructor(
 ) -> Model:
     mapping = loader.construct_mapping(node, deep=True)
     model = get_mdl(mapping.pop("model"))
+    if "_transform" in mapping:
+        mapping["xtransform"] = mapping.pop("_transform")
+
     return model(**mapping)
 
 
@@ -369,6 +375,9 @@ def _model_yaml_representer(
     model_dct.update(model=model.__class__.__name__.lower())
     if model_dct["parameters"] is not None:
         model_dct["parameters"] = tuple(float(x) for x in model_dct["parameters"])
+
+    if "_transform" in model_dct:
+        del model_dct["_transform"]  # deprecated, use xtransform
 
     return dumper.represent_mapping("!Model", model_dct)
 

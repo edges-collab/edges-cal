@@ -1,5 +1,4 @@
-Combining Linear Models
------------------------
+## Combining Linear Models
 
 There are two ways to combine linear models. The result of combining linear models must be another linear model. The two ways to combine linear models are:
 

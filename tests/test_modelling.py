@@ -1,7 +1,9 @@
+import hickle
 import numpy as np
 import pytest
 import yaml
 from edges_cal import modelling as mdl
+from edges_cal.noise_waves import NoiseWaves
 
 
 def test_pass_params():
@@ -56,13 +58,12 @@ def test_simple_fit():
     model = pl.at(x=np.linspace(50, 100, 10))
 
     data = model()
-    print(data)
     fit = mdl.ModelFit(model, ydata=data)
 
     assert np.allclose(fit.model_parameters, [1, 2, 3])
     assert np.allclose(fit.residual, 0)
     assert np.allclose(fit.weighted_chi2, 0)
-    assert np.allclose(fit.reduced_weighted_chi2(), 0)
+    assert np.allclose(fit.reduced_weighted_chi2, 0)
     assert fit.hessian.shape == (3, 3)
 
 
@@ -117,6 +118,7 @@ def test_yaml_roundtrip():
     p = mdl.Polynomial(n_terms=5)
     s = yaml.dump(p)
     pp = yaml.load(s, Loader=yaml.FullLoader)
+    print(p.data_transform.__class__, pp.data_transform.__class__)
     assert p == pp
     assert "!Model" in s
 
@@ -172,7 +174,7 @@ def test_composite_model():
 
 def test_noise_waves(calobs):
     clb = calobs.clone(cterms=5, wterms=5)
-    nw = mdl.NoiseWaves.from_calobs(clb)
+    nw = NoiseWaves.from_calobs(clb)
 
     assert isinstance(nw.linear_model, mdl.FixedLinearModel)
     assert isinstance(nw.linear_model.model, mdl.CompositeModel)
@@ -184,7 +186,9 @@ def test_noise_waves(calobs):
     assert len(nw.get_data_from_calobs(clb)) == 4 * calobs.freq.n
 
     nok = nw.get_linear_model(with_k=False)
-    assert not nok.model.extra_basis
+    for k, m in nok.model.models.items():
+        print(k, m.basis_scaler)
+    assert all(m.basis_scaler is None for m in nok.model.models.values())
 
 
 def test_complex_model():
@@ -254,29 +258,28 @@ def test_composite_model_getattr():
         cmp["non-existent"]
 
 
-def test_composite_with_extra():
-    mdl1 = mdl.PhysicalLin(parameters=[0, 1, 2, 3, 4])
-    mdl2 = mdl.Polynomial(n_terms=5, parameters=[0, 1, 2, 3, 4])
-
-    cmp = mdl.CompositeModel(
-        models={"lin": mdl1, "pl": mdl2}, extra_basis={"lin": lambda x: x**2}
-    )
-    assert not np.allclose(
-        cmp.get_model("lin", x=np.linspace(10, 20, 10), with_extra=True),
-        cmp.get_model("lin", x=np.linspace(10, 20, 10), with_extra=False),
-    )
-
-
 def test_composite_with_n_terms():
-    mdl1 = mdl.PhysicalLin(parameters=[0, 1, 2, 3, 4])
+    mdl1 = mdl.PhysicalLin(
+        parameters=[0, 1, 2, 3, 4], xtransform=mdl.ScaleTransform(scale=1.5)
+    )
     mdl2 = mdl.Polynomial(n_terms=5, parameters=[0, 1, 2, 3, 4])
 
-    cmp = mdl.CompositeModel(
-        models={"lin": mdl1, "pl": mdl2}, extra_basis={"lin": lambda x: x**2}
-    )
+    cmp = mdl.CompositeModel(models={"lin": mdl1, "pl": mdl2})
 
     new = cmp.with_nterms("pl", n_terms=6, parameters=[0, 1, 2, 3, 4, 5])
     assert not np.allclose(new(x=np.linspace(1, 2, 10)), cmp(x=np.linspace(1, 2, 10)))
+
+
+def test_composite_hickle(tmpdir):
+    mdl1 = mdl.PhysicalLin(
+        parameters=[0, 1, 2, 3, 4], xtransform=mdl.ScaleTransform(scale=1.5)
+    )
+    mdl2 = mdl.Polynomial(n_terms=5, parameters=[0, 1, 2, 3, 4])
+    cmp = mdl.CompositeModel(models={"lin": mdl1, "pl": mdl2})
+
+    hickle.dump(cmp, tmpdir / "cmp.h5")
+    new = hickle.load(tmpdir / "cmp.h5")
+    assert new == cmp
 
 
 def test_complex_at():

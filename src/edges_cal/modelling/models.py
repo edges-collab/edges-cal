@@ -8,13 +8,13 @@ import attrs
 import numpy as np
 from hickleable import hickleable
 
-from .modelling import Model
+from . import core
 from .xtransforms import Log10Transform, LogTransform, ScaleTransform, XTransform
 
 
 @hickleable()
 @attr.s(frozen=True, kw_only=True, slots=False)
-class Foreground(Model, is_meta=True):
+class Foreground(core.Model, is_meta=True):
     """
     Base class for Foreground models.
 
@@ -30,11 +30,16 @@ class Foreground(Model, is_meta=True):
 
     with_cmb: bool = attrs.field(default=False, converter=bool)
     f_center: float = attrs.field(default=75.0, converter=float)
-    transform: XTransform = attrs.field()
+    _transform: XTransform = attrs.field()
+    xtransform: XTransform = attrs.field()
 
-    @transform.default
+    @_transform.default
     def _tr_default(self):
         return ScaleTransform(scale=self.f_center)
+
+    @xtransform.default
+    def _xt_default(self):
+        return self._transform
 
 
 @hickleable()
@@ -62,7 +67,7 @@ class PhysicalLin(Foreground):
 
 @hickleable()
 @attrs.define(frozen=True, kw_only=True, slots=False)
-class Polynomial(Model):
+class Polynomial(core.Model):
     r"""A polynomial foreground model.
 
     Parameters
@@ -134,7 +139,7 @@ def LogPoly(**kwargs):  # noqa: N802
 
 @hickleable()
 @attrs.define(frozen=True, kw_only=True, slots=False)
-class Fourier(Model):
+class Fourier(core.Model):
     """A Fourier-basis model."""
 
     period: float = attrs.field(default=2 * np.pi, converter=float)
@@ -154,7 +159,7 @@ class Fourier(Model):
 
 @hickleable()
 @attrs.define(frozen=True, kw_only=True, slots=False)
-class FourierDay(Model):
+class FourierDay(core.Model):
     """A Fourier-basis model with period of 24 (hours)."""
 
     @property
