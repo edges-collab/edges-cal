@@ -737,6 +737,8 @@ def alancal(
                 f"tlnac {tlnac[i]:10.6f} tlnas {tlnas[i]:10.6f} wtcal 1 cal_data\n"
             )
 
+    console.print("BEST DELAY: ", calobs.cal_coefficient_models["NW"].delay)
+
     # Also save the modelled S11s
     console.print("Saving modelled S11s")
     s11m = {
