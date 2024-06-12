@@ -268,6 +268,7 @@ def edges3cal(
         ncal_iter=nter,
         cable_delay_sweep=np.arange(0, -1e-8, -1e-9),  # hard-coded in the C code.
         fit_method="alan-qrd",
+        scale_offset_poly_spacing=0.5,
     )
 
 

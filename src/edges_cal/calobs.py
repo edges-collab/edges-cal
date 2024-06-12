@@ -854,6 +854,7 @@ class CalibrationObservation:
                 smooth_scale_offset_within_loop=self.smooth_scale_offset_within_loop,
                 delays_to_fit=self.cable_delay_sweep,
                 niter=self.ncal_iter,
+                poly_spacing=self.scale_offset_poly_spacing,
             ),
             maxlen=1,
         ).pop()

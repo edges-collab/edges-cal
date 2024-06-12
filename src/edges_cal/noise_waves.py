@@ -1,7 +1,7 @@
 """Functions for calibrating the receiver."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from functools import cached_property
 
 import attrs
@@ -341,95 +341,6 @@ class NoiseWaveLinearModel:
         )
 
 
-def noise_wave_param_fit(
-    freq: np.ndarray,
-    gamma_rec: np.ndarray,
-    gamma_open: np.ndarray,
-    gamma_short: np.ndarray,
-    temp_raw_open: np.ndarray,
-    temp_raw_short: np.ndarray,
-    temp_thermistor_open: np.ndarray,
-    temp_thermistor_short: np.ndarray,
-    wterms: int,
-):
-    """
-    Fit noise-wave polynomial parameters.
-
-    Parameters
-    ----------
-    freq : array_like
-        Frequencies at which the data was taken.
-    gamma_rec : array-like
-        Reflection coefficient, as function of frequency, of the receiver.
-    gamma_open : array-like
-        Reflection coefficient, as function of frequency, of the open load.
-    gamma_short : array-like
-        Reflection coefficient, as function of frequency, of the shorted load.
-    temp_raw_open : array-like
-        Raw measured spectrum temperature of open load.
-    temp_raw_short : array-like
-        Raw measured spectrum temperature of shorted load.
-    temp_thermistor_open : array-like
-        Measured (known) temperature of open load.
-    temp_thermistor_short : array-like
-        Measured (known) temperature of shorted load.
-    wterms : int
-        The number of polynomial terms to use for each of the noise-wave functions.
-
-    Returns
-    -------
-    Tunc, Tcos, Tsin : array_like
-        The solutions to each of T_unc, T_cos and T_sin as functions of frequency.
-    """
-    if np.any(np.isnan(freq)):
-        raise ValueError("Some frequencies are NaN")
-    if np.any(np.isnan(gamma_rec)):
-        raise ValueError("Some receiver reflection coefficients are NaN")
-    if np.any(np.isnan(gamma_open)):
-        raise ValueError("Some open reflection coefficients are NaN")
-    if np.any(np.isnan(gamma_short)):
-        raise ValueError("Some short reflection coefficients are NaN")
-    if np.any(np.isnan(temp_raw_open)):
-        raise ValueError("Some open raw temperatures are NaN")
-    if np.any(np.isnan(temp_raw_short)):
-        raise ValueError("Some short raw temperatures are NaN")
-    if np.any(np.isnan(temp_thermistor_open)):
-        raise ValueError("Some open thermistor temperatures are NaN")
-    if np.any(np.isnan(temp_thermistor_short)):
-        raise ValueError("Some short thermistor temperatures are NaN")
-
-    Kopen = get_K(gamma_rec, gamma_open)
-    Kshort = get_K(gamma_rec, gamma_short)
-
-    tr = mdl.ScaleTransform(scale=freq[len(freq) // 2])
-
-    models = {
-        name: mdl.Polynomial(n_terms=wterms, transform=tr)
-        for name in ["tunc", "tcos", "tsin"]
-    }
-
-    extra_basis = {
-        "tunc": np.concatenate((Kopen[1], Kshort[1])),
-        "tcos": np.concatenate((Kopen[2], Kshort[2])),
-        "tsin": np.concatenate((Kopen[3], Kshort[3])),
-    }
-
-    model = mdl.CompositeModel(models=models, extra_basis=extra_basis).at(
-        x=np.concatenate((freq, freq))
-    )
-
-    fit = model.fit(
-        ydata=np.concatenate(
-            (
-                (temp_raw_open - temp_thermistor_open * Kopen[0]),
-                (temp_raw_short - temp_thermistor_short * Kshort[0]),
-            )
-        ),
-    ).fit
-
-    return fit.model["tunc"], fit.model["tcos"], fit.model["tsin"]
-
-
 def get_calibration_quantities_iterative(
     freq: np.ndarray,
     temp_raw: dict,
@@ -444,7 +355,8 @@ def get_calibration_quantities_iterative(
     smooth_scale_offset_within_loop: bool = True,
     delays_to_fit: np.ndarray = np.array([0.0]),
     fit_method="lstsq",
-):
+    poly_spacing: float = 1.0,
+) -> Generator[tuple[mdl.Polynomial, mdl.Polynomial, NoiseWaveLinearModelFit]]:
     """
     Derive calibration parameters using the scheme laid out in Monsalve (2017).
 
@@ -485,11 +397,14 @@ def get_calibration_quantities_iterative(
     delays_to_fit : array_like
         The delays to sweep over when fitting noise-wave parameters. The delay resulting
         in the lowest residuals will be used.
+    poly_spacing
+        Spacing between polynomial term powers for scale and offset. Default of 1.0 is
+        for a standard polynomial basis set. Alan's C code use 0.5 for the scale/offset.
 
     Returns
     -------
-    sca, off, tu, tc, ts : np.poly1d
-        1D polynomial fits for each of the Scale (C_1), Offset (C_2), and noise-wave
+    sca, off, tu, tc, ts
+        Fitted Models for each of the Scale (C_1), Offset (C_2), and noise-wave
         temperatures for uncorrelated, cos and sin components.
 
     Notes
@@ -530,8 +445,12 @@ def get_calibration_quantities_iterative(
     )
 
     tr = mdl.ScaleTransform(scale=freq[len(freq) // 2])
-    sca_mdl = mdl.Polynomial(n_terms=cterms, transform=tr).at(x=fmask)
-    off_mdl = mdl.Polynomial(n_terms=cterms, transform=tr).at(x=fmask)
+    sca_mdl = mdl.Polynomial(n_terms=cterms, transform=tr, spacing=poly_spacing).at(
+        x=fmask
+    )
+    off_mdl = mdl.Polynomial(n_terms=cterms, transform=tr, spacing=poly_spacing).at(
+        x=fmask
+    )
 
     temp_cal_iter = dict(temp_raw)  # copy
 
@@ -559,8 +478,8 @@ def get_calibration_quantities_iterative(
         off += off_new
 
         # Model scale and offset
-        p_sca = sca_mdl.fit(ydata=sca).fit
-        p_off = off_mdl.fit(ydata=off).fit
+        p_sca = sca_mdl.fit(ydata=sca, method=fit_method).fit
+        p_off = off_mdl.fit(ydata=off, method=fit_method).fit
 
         if smooth_scale_offset_within_loop:
             sca = p_sca(fmask)

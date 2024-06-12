@@ -72,27 +72,22 @@ class Polynomial(core.Model):
 
     Parameters
     ----------
-    log_x : bool
-        Whether to fit the poly coefficients with log-space co-ordinates.
     offset : float
         An offset to use for each index in the polynomial model.
-    kwargs
-        All other arguments passed through to :class:`Foreground`.
 
     Notes
     -----
     The polynomial model can be written
 
-    .. math:: \sum_{i=0}^{n} c_i y^{i + offset},
-
-    where ``y`` is ``log(x)`` if ``log_x=True`` and simply ``x`` otherwise.
+    .. math:: \sum_{i=0}^{n} c_i x^{i + offset},
     """
 
     offset: float = attrs.field(default=0, converter=float)
+    spacing: float = attrs.field(default=1.0, converter=float)
 
     def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
         """Define the basis functions of the model."""
-        return x ** (indx + self.offset)
+        return x ** (indx * self.spacing + self.offset)
 
 
 @hickleable()
