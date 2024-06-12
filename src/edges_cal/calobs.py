@@ -359,6 +359,7 @@ class CalibrationObservation:
     cable_delay_sweep: np.ndarray = attr.ib(default=np.array([0]))
     ncal_iter: int = attr.ib(default=4, kw_only=True)
     fit_method: str = attr.ib(default="lstsq")
+    scale_offset_poly_spacing = attr.ib(default=1.0, converter=float)
 
     _metadata: dict[str, Any] = attr.ib(default=attr.Factory(dict), kw_only=True)
 
