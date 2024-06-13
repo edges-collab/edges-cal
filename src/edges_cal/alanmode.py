@@ -210,6 +210,7 @@ def edges3cal(
             set_transform_range=True,
             fit_kwargs={"method": "alan-qrd"},
             internal_switch=None,
+            model_kwargs={"period": 1.5},
         ).with_model_delay()
 
     receiver = Receiver(

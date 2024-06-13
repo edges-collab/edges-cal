@@ -308,10 +308,7 @@ class S11Model:
                     / 2,
                 )
 
-        model = model_type(
-            n_terms=n_terms,
-            transform=transform,
-        )
+        model = model_type(n_terms=n_terms, transform=transform, **self.model_kwargs)
         emodel = model.at(x=freq.to_value("MHz"))
 
         cmodel = self.complex_model_type(emodel, emodel)

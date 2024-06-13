@@ -658,7 +658,9 @@ def alancal(
             with open(out / f"s11{load}.csv", "w") as fl:
                 fl.write("BEGIN\n")
                 for freq, s11 in zip(s11freq, raws11s[load]):
-                    fl.write(f"{freq.to_value('MHz')},{s11.real},{s11.imag}\n")
+                    fl.write(
+                        f"{freq.to_value('MHz'):1.16e},{s11.real:1.16e},{s11.imag:1.16e}\n"
+                    )
                 fl.write("END")
         else:
             console.print(f"Reading calibrated {load} S11")
@@ -760,6 +762,9 @@ def alancal(
             if inject_source_s11s
             else None,
         )
+    else:
+        for name, load in calobs.loads.items():
+            console.print(f"Using delay={load.reflections.model_delay} for load {name}")
 
     with open(outfile, "w") as fl:
         for i in range(calobs.freq.n):
