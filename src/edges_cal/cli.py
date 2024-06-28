@@ -562,10 +562,6 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     default=True,
     help="inject source s11s from modelled_s11_path (if given)",
 )
-@click.option(
-    "--emulate-fittp-bug/--no-fittp-bug",
-    default=False,
-)
 def alancal(
     s11date,
     specyear,
@@ -603,7 +599,6 @@ def alancal(
     modelled_s11_path,
     inject_lna_s11,
     inject_source_s11s,
-    emulate_fittp_bug,
 ):
     """Run a calibration in as close a manner to Alan's code as possible.
 
@@ -743,7 +738,6 @@ def alancal(
         nfit2=nfit2,
         tload=tload,
         tcal=tcal,
-        emulate_fittp_index_bug=emulate_fittp_bug,
     )
 
     if modelled_s11_path:

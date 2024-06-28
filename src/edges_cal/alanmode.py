@@ -168,7 +168,6 @@ def edges3cal(
     adb: float | None = None,
     delaylna: float | None = None,
     nfit4: int | None = None,
-    emulate_fittp_index_bug: bool = False,
 ):
     """A function that does what the edges3 C-code does."""
     # Some of the parameters are defined, but not yet implemented,
@@ -194,19 +193,9 @@ def edges3cal(
     sources = ["ambient", "hot_load", "open", "short"]
     s11_models = {}
     if not isinstance(s11freq, FrequencyRange):
-        if emulate_fittp_index_bug:
-            # This emulates a bug in edges3c.c in which in the fittp() function
-            # the lower frequency index used in the fit is actually the *second*
-            # frequency above wfstart instead of the first.
-            mask = s11freq > wfstart * un.MHz
-
-            s11freq = FrequencyRange(
-                s11freq, f_low=s11freq[mask][1], f_high=wfstop * un.MHz
-            )
-        else:
-            s11freq = FrequencyRange(
-                s11freq, f_low=wfstart * un.MHz, f_high=wfstop * un.MHz
-            )
+        s11freq = FrequencyRange(
+            s11freq, f_low=wfstart * un.MHz, f_high=wfstop * un.MHz
+        )
 
     for name, s11 in zip(sources, [s11cold, s11hot, s11open, s11short]):
         s11_models[name] = LoadS11(
