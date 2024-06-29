@@ -506,8 +506,13 @@ def temperature_thermistor(
     return temp - 273.15
 
 
-def ComplexSpline(x, y, **kwargs):  # noqa: N802
+class ComplexSpline:
     """Return a complex spline object."""
-    rl = Spline(x, y.real, **kwargs)
-    im = Spline(x, y.imag, **kwargs)
-    return lambda x: rl(x) + 1j * im(x)
+
+    def __init__(self, x, y, **kwargs):
+        self.real = Spline(x, y.real, **kwargs)
+        self.imag = Spline(x, y.imag, **kwargs)
+
+    def __call__(self, x):
+        """Compute the interpolation at x."""
+        return self.real(x) + 1j * self.imag(x)

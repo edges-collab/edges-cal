@@ -156,8 +156,8 @@ def test_composite_model():
     four = mdl.Fourier(n_terms=10, parameters=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     m = mdl.CompositeModel(models={"poly": poly, "fourier": four})
     x = np.linspace(-1, 1, 10)
-    assert np.allclose(m.poly.parameters, poly.parameters)
-    assert np.allclose(m.fourier.parameters, four.parameters)
+    assert np.allclose(m["poly"].parameters, poly.parameters)
+    assert np.allclose(m["fourier"].parameters, four.parameters)
     assert m.n_terms == 15
     assert m._index_map[0] == ("poly", 0)
     assert m._index_map[5] == ("fourier", 0)

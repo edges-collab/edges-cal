@@ -6,6 +6,7 @@ a one-stop interface for everything related to calibration.
 """
 from __future__ import annotations
 
+import copy
 import warnings
 from collections import deque
 from collections.abc import Sequence
@@ -1410,6 +1411,7 @@ class CalibrationObservation:
 
         if source_s11s is not None:
             new._injected_source_s11s = source_s11s
+            new.loads = copy.deepcopy(self.loads)  # make a copy
             for name, s in source_s11s.items():
                 new.loads[name].reflections = SimpleNamespace(
                     s11_model=ComplexSpline(f, s)
@@ -1493,7 +1495,8 @@ class Calibrator:
 
     def clone(self, **kwargs):
         """Clone the instance with new parameters."""
-        return attr.evolve(self, **kwargs)
+        new = copy.deepcopy(self)
+        return attr.evolve(new, **kwargs)
 
     @internal_switch.validator
     def _isw_vld(self, att, val):
