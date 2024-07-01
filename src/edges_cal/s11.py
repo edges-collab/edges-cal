@@ -28,7 +28,7 @@ from edges_io import io, io3
 from hickleable import hickleable
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 
-from . import receiver_calibration_func as rcf
+from . import noise_waves as rcf
 from . import reflection_coefficient as rc
 from . import types as tp
 from .modelling import (
@@ -37,9 +37,9 @@ from .modelling import (
     Fourier,
     Model,
     Modelable,
-    ModelTransform,
     Polynomial,
     UnitTransform,
+    XTransform,
     get_mdl,
 )
 from .tools import FrequencyRange, vld_unit
@@ -211,7 +211,7 @@ class S11Model:
         ComplexRealImagModel
     ] = attr.ib()
     model_delay: tp.Time = attr.ib(0 * un.s)
-    model_transform: ModelTransform = attr.ib(default=UnitTransform(range=(0, 1)))
+    model_transform: XTransform = attr.ib(default=UnitTransform(range=(0, 1)))
     set_transform_range: bool = attr.ib(True, converter=bool)
     model_kwargs: dict[str, Any] = attr.ib(default=attr.Factory(dict))
     use_spline: bool = attr.ib(False)
@@ -308,10 +308,7 @@ class S11Model:
                     / 2,
                 )
 
-        model = model_type(
-            n_terms=n_terms,
-            transform=transform,
-        )
+        model = model_type(n_terms=n_terms, transform=transform, **self.model_kwargs)
         emodel = model.at(x=freq.to_value("MHz"))
 
         cmodel = self.complex_model_type(emodel, emodel)

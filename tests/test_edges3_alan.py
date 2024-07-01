@@ -14,7 +14,7 @@ from edges_cal.cli import alancal
 
 def test_edges3_2022_316_against_alan(data_path, tmp_path_factory):
     # Skip this test if we are not on enterprise where the actual data is.
-    datadir = Path("/data5/edges/data/EDGES3_Data/MRO")
+    datadir = Path("/data5/edges/data/EDGES3_data/MRO")
     if not datadir.exists():
         pytest.skip("This text can only be executed on enterprise")
     out = tmp_path_factory.mktemp("day316")
@@ -107,8 +107,8 @@ def test_edges3_2022_316_against_alan(data_path, tmp_path_factory):
         ourfreq, ours11 = am.read_s11_csv(f"{out}/s11{load}.csv")
 
         np.testing.assert_allclose(s11freq, ourfreq)
-        np.testing.assert_allclose(alans11.real, ours11.real, atol=1e-6)
-        np.testing.assert_allclose(alans11.imag, ours11.imag, atol=1e-6)
+        np.testing.assert_allclose(alans11.real, ours11.real, atol=1e-10)
+        np.testing.assert_allclose(alans11.imag, ours11.imag, atol=1e-10)
 
     # Test modelled S11s
     _alans11m = np.genfromtxt(f"{alandata}/s11_modelled.txt", comments="#", names=True)
@@ -116,26 +116,18 @@ def test_edges3_2022_316_against_alan(data_path, tmp_path_factory):
 
     for k in _alans11m.dtype.names:
         print(f"Modelled S11 {k}")
-        if k.startswith(("open", "short")):
-            atol = 0.0007  # TODO: this is maybe not good enough!
-        elif k.startswith("lna"):
-            atol = 5e-7
-        else:
-            atol = 5e-6
 
         # We clip the ends here, because they are slightly extrapolated in the default
         # case.
-        np.testing.assert_allclose(
-            _alans11m[k][14:-15], _ours11m[k][14:-15], atol=atol, rtol=0
-        )
+        np.testing.assert_allclose(_alans11m[k], _ours11m[k], atol=3e-9, rtol=0)
 
     # Test final calibration
     acal = am.read_specal(f"{alandata}/specal_316test.txt")
     ourcal = am.read_specal(f"{out}/specal.txt")
 
-    np.testing.assert_allclose(acal["freq"], ourcal["freq"], atol=1e-5)
-    np.testing.assert_allclose(acal["C1"], ourcal["C1"], atol=4e-4)
-    np.testing.assert_allclose(acal["C2"], ourcal["C2"], atol=0.007)
-    np.testing.assert_allclose(acal["Tunc"], ourcal["Tunc"], atol=0.015)
-    np.testing.assert_allclose(acal["Tcos"], ourcal["Tcos"], atol=0.45)
-    np.testing.assert_allclose(acal["Tsin"], ourcal["Tsin"], atol=0.7)
+    np.testing.assert_allclose(acal["freq"], ourcal["freq"])
+    np.testing.assert_allclose(acal["C1"], ourcal["C1"], atol=1e-8)
+    np.testing.assert_allclose(acal["C2"], ourcal["C2"], atol=1e-8)
+    np.testing.assert_allclose(acal["Tunc"], ourcal["Tunc"], atol=1e-8)
+    np.testing.assert_allclose(acal["Tcos"], ourcal["Tcos"], atol=1e-8)
+    np.testing.assert_allclose(acal["Tsin"], ourcal["Tsin"], atol=1e-8)

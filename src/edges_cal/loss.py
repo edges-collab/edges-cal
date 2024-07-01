@@ -122,11 +122,11 @@ class HotLoadCorrection:
             ),
         )
 
-        if hasattr(model.transform, "range") and set_transform_range:
+        if hasattr(model.xtransform, "range") and set_transform_range:
             model = attrs.evolve(
                 model,
                 transform=attrs.evolve(
-                    model.transform,
+                    model.xtransform,
                     range=(freq.min.to_value("MHz"), freq.max.to_value("MHz")),
                 ),
             )
