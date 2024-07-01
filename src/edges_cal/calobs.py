@@ -4,6 +4,7 @@ The main user-facing module of ``edges-cal``.
 This module contains wrappers around lower-level functions in other modules, providing
 a one-stop interface for everything related to calibration.
 """
+
 from __future__ import annotations
 
 import copy
@@ -57,9 +58,9 @@ class Load:
 
     spectrum: LoadSpectrum = attr.ib()
     reflections: s11.LoadS11 = attr.ib()
-    _loss_model: Callable[
-        [np.ndarray], np.ndarray
-    ] | HotLoadCorrection | None = attr.ib(default=None)
+    _loss_model: Callable[[np.ndarray], np.ndarray] | HotLoadCorrection | None = (
+        attr.ib(default=None)
+    )
     ambient_temperature: float = attr.ib(default=298.0)
 
     @property

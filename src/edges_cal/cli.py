@@ -1,4 +1,5 @@
 """CLI functions for edges-cal."""
+
 import json
 import os
 from datetime import datetime

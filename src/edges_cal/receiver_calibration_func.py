@@ -1,4 +1,5 @@
 """Deprecated module that is an alias for noise_waves."""
+
 import warnings
 
 from .noise_waves import *  # noqa: F403

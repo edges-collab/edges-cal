@@ -1,4 +1,5 @@
 """Module defining x-variable transforms for modelling."""
+
 from __future__ import annotations
 
 from abc import ABCMeta, abstractmethod

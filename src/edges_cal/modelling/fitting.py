@@ -1,4 +1,5 @@
 """Fitting routines for models."""
+
 from __future__ import annotations
 
 from copy import copy

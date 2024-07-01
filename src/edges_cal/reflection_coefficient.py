@@ -9,6 +9,7 @@ Most of the functions in this module follow the formalism/notation of
 They represent basic relations between physical parameters of circuits, as measured
 with internal standards.
 """
+
 from __future__ import annotations
 
 import warnings
