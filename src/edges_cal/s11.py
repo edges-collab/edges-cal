@@ -12,6 +12,7 @@ We attempt to keep the interface to each of the devices relatively consistent. E
 provides a `s11_model` method which is a function of frequency, outputting the
 calibrated and smoothed S11, according to some smooth model.
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -207,9 +208,9 @@ class S11Model:
     freq: FrequencyRange = attr.ib()
     n_terms: int = attr.ib(converter=int)
     model_type: Modelable = attr.ib()
-    complex_model_type: type[ComplexMagPhaseModel] | type[
-        ComplexRealImagModel
-    ] = attr.ib()
+    complex_model_type: type[ComplexMagPhaseModel] | type[ComplexRealImagModel] = (
+        attr.ib()
+    )
     model_delay: tp.Time = attr.ib(0 * un.s)
     model_transform: XTransform = attr.ib(default=UnitTransform(range=(0, 1)))
     set_transform_range: bool = attr.ib(True, converter=bool)

@@ -1,4 +1,5 @@
 """Calibration of EDGES data."""
+
 from importlib.metadata import PackageNotFoundError, version
 
 try:

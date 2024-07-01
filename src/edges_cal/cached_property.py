@@ -1,4 +1,5 @@
 """A wrapper of cached_property that also saves which things are cached."""
+
 from functools import cached_property as cp
 
 

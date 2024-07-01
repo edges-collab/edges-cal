@@ -1,4 +1,5 @@
 """Functions that run the calibration in a style similar to the C-code."""
+
 from __future__ import annotations
 
 import warnings

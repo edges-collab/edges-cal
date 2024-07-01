@@ -1,4 +1,5 @@
 """Module defining transforms of data that occur pre-fitting."""
+
 from __future__ import annotations
 
 from abc import ABCMeta, abstractmethod

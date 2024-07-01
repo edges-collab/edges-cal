@@ -1,4 +1,5 @@
 """Various useful type-hint definitions."""
+
 from astropy import units
 from edges_io.types import *  # noqa: F403
 
