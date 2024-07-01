@@ -58,7 +58,8 @@ docs = [
     "numpydoc",
     "sphinx>=4.0",
     "furo",
-    "myst-parser"
+    "myst-parser",
+    "sphinx-click",
 ]
 report = [
     "papermill",
