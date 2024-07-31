@@ -1,4 +1,5 @@
 """Tools to use in other modules."""
+
 from __future__ import annotations
 
 import warnings

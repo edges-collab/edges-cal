@@ -1,4 +1,5 @@
 """Deprecated module that is an alias for calobs."""
+
 import warnings
 
 from .calobs import *  # noqa: F403

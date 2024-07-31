@@ -1,4 +1,5 @@
 """Module with routines for simulating calibration datasets."""
+
 from __future__ import annotations
 
 import numpy as np

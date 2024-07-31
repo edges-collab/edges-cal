@@ -1,4 +1,5 @@
 """Tests of the xrfi module."""
+
 import itertools
 from pathlib import Path
 
