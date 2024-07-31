@@ -1,4 +1,5 @@
 """Calibration of EDGES data."""
+
 from importlib.metadata import PackageNotFoundError, version
 
 try:
@@ -14,7 +15,7 @@ from pathlib import Path
 DATA_PATH = Path(__file__).parent / "data"
 
 from . import modelling, plot
-from .cal_coefficients import CalibrationObservation, Calibrator, LoadSpectrum
+from .calobs import CalibrationObservation, Calibrator, LoadSpectrum
 from .s11 import InternalSwitch, LoadS11, Receiver
 from .tools import FrequencyRange
 

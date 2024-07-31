@@ -1,4 +1,5 @@
 """Models for loss through cables."""
+
 from __future__ import annotations
 
 from functools import cached_property
@@ -70,9 +71,9 @@ class HotLoadCorrection:
     raw_s22: np.ndarray = attrs.field(eq=attrs.cmp_using(eq=np.array_equal))
 
     model: mdl.Model = attrs.field(default=mdl.Polynomial(n_terms=21))
-    complex_model: type[mdl.ComplexRealImagModel] | type[
-        mdl.ComplexMagPhaseModel
-    ] = attrs.field(default=mdl.ComplexMagPhaseModel)
+    complex_model: type[mdl.ComplexRealImagModel] | type[mdl.ComplexMagPhaseModel] = (
+        attrs.field(default=mdl.ComplexMagPhaseModel)
+    )
     use_spline: bool = attrs.field(default=False)
     model_method: str = attrs.field(default="lstsq")
 
@@ -122,11 +123,11 @@ class HotLoadCorrection:
             ),
         )
 
-        if hasattr(model.transform, "range") and set_transform_range:
+        if hasattr(model.xtransform, "range") and set_transform_range:
             model = attrs.evolve(
                 model,
                 transform=attrs.evolve(
-                    model.transform,
+                    model.xtransform,
                     range=(freq.min.to_value("MHz"), freq.max.to_value("MHz")),
                 ),
             )

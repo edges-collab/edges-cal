@@ -1,12 +1,13 @@
 """Various plotting functions."""
+
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import numpy as np
 from edges_io.io import Resistance
 
-from . import cal_coefficients as cc
-from . import receiver_calibration_func as rcf
+from . import calobs as cc
+from .tools import temperature_thermistor
 
 
 def plot_raw_spectrum(
@@ -85,7 +86,7 @@ def plot_resistance_measurements(
         out = resistance[quantity]
     except (KeyError, ValueError):
         if quantity == "thermistor_temp":
-            out = rcf.temperature_thermistor(resistance["load_resistance"])
+            out = temperature_thermistor(resistance["load_resistance"])
         else:
             raise
 

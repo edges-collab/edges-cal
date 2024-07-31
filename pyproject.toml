@@ -58,7 +58,8 @@ docs = [
     "numpydoc",
     "sphinx>=4.0",
     "furo",
-    "myst-parser"
+    "myst-parser",
+    "sphinx-click",
 ]
 report = [
     "papermill",
@@ -165,7 +166,7 @@ ignore-init-module-imports = true
 "src/edges_cal/spectra.py" = [
     "N802",
 ]
-"src/edges_cal/cal_coefficients.py" = [
+"src/edges_cal/calobs.py" = [
     "N802",
 ]
 "src/edges_cal/reflection_coefficient.py" = [

@@ -1,9 +1,10 @@
 """Module with routines for simulating calibration datasets."""
+
 from __future__ import annotations
 
 import numpy as np
 
-from . import receiver_calibration_func as rcf
+from . import noise_waves as rcf
 
 
 def simulate_q(

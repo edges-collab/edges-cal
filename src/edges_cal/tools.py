@@ -1,4 +1,5 @@
 """Tools to use in other modules."""
+
 from __future__ import annotations
 
 import warnings
@@ -19,6 +20,7 @@ from astropy import units as u
 from edges_io import types as tp
 from hickleable import hickleable
 from pygsdata import GSData
+from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 from scipy.ndimage import convolve1d
 
 from . import DATA_PATH
@@ -457,3 +459,61 @@ def dicke_calibration(data: GSData) -> GSData:
         residuals=None,
         effective_integration_time=data.effective_integration_time[[iant]],
     )
+
+
+def temperature_thermistor(
+    resistance: float | np.ndarray,
+    coeffs: str | Sequence = "oven_industries_TR136_170",
+    kelvin: bool = True,
+):
+    """
+    Convert resistance of a thermistor to temperature.
+
+    Uses a pre-defined set of standard coefficients.
+
+    Parameters
+    ----------
+    resistance : float or array_like
+        The measured resistance (Ohms).
+    coeffs : str or len-3 iterable of floats, optional
+        If str, should be an identifier of a standard set of coefficients, otherwise,
+        should specify the coefficients.
+    kelvin : bool, optional
+        Whether to return the temperature in K or C.
+
+    Returns
+    -------
+    float or array_like
+        The temperature for each `resistance` given.
+    """
+    # Steinhart-Hart coefficients
+    _coeffs = {"oven_industries_TR136_170": [1.03514e-3, 2.33825e-4, 7.92467e-8]}
+
+    if isinstance(coeffs, str):
+        coeffs = _coeffs[coeffs]
+
+    assert len(coeffs) == 3
+
+    # TK in Kelvin
+    temp = 1 / (
+        coeffs[0]
+        + coeffs[1] * np.log(resistance)
+        + coeffs[2] * (np.log(resistance)) ** 3
+    )
+
+    # Kelvin or Celsius
+    if kelvin:
+        return temp
+    return temp - 273.15
+
+
+class ComplexSpline:
+    """Return a complex spline object."""
+
+    def __init__(self, x, y, **kwargs):
+        self.real = Spline(x, y.real, **kwargs)
+        self.imag = Spline(x, y.imag, **kwargs)
+
+    def __call__(self, x):
+        """Compute the interpolation at x."""
+        return self.real(x) + 1j * self.imag(x)

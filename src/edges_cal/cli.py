@@ -1,4 +1,5 @@
 """CLI functions for edges-cal."""
+
 import json
 import os
 from datetime import datetime
@@ -7,6 +8,7 @@ from importlib.util import find_spec
 from pathlib import Path
 
 import click
+import numpy as np
 import papermill as pm
 import yaml
 from astropy import units as un
@@ -14,7 +16,7 @@ from nbconvert import PDFExporter
 from rich.console import Console
 from traitlets.config import Config
 
-from edges_cal import cal_coefficients as cc
+from edges_cal import calobs as cc
 from edges_cal.alanmode import (
     acqplot7amoon,
     corrcsv,
@@ -531,6 +533,36 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     type=int,
     default=27,
 )
+@click.option(
+    "--plot/--no-plot",
+    default=True,
+)
+@click.option(
+    "--avg-spectra-path",
+    type=click.Path(dir_okay=False, file_okay=True, exists=True),
+    help=(
+        "Path to a file containing averaged spectra in the format output by this "
+        "script (or the C code)"
+    ),
+)
+@click.option(
+    "--modelled-s11-path",
+    type=click.Path(dir_okay=False, file_okay=True, exists=True),
+    help=(
+        "path to a file containing modelled S11s in the format output by this "
+        "script (or the C code)"
+    ),
+)
+@click.option(
+    "--inject-lna-s11/--no-inject-lna-s11",
+    default=True,
+    help="inject LNA s11 form modelled_s11_path (if given)",
+)
+@click.option(
+    "--inject-source-s11s/--no-inject-source-s11s",
+    default=True,
+    help="inject source s11s from modelled_s11_path (if given)",
+)
 def alancal(
     s11date,
     specyear,
@@ -563,6 +595,11 @@ def alancal(
     wfit,
     nfit3,
     nfit2,
+    plot,
+    avg_spectra_path,
+    modelled_s11_path,
+    inject_lna_s11,
+    inject_source_s11s,
 ):
     """Run a calibration in as close a manner to Alan's code as possible.
 
@@ -622,7 +659,9 @@ def alancal(
             with open(out / f"s11{load}.csv", "w") as fl:
                 fl.write("BEGIN\n")
                 for freq, s11 in zip(s11freq, raws11s[load]):
-                    fl.write(f"{freq.to_value('MHz')},{s11.real},{s11.imag}\n")
+                    fl.write(
+                        f"{freq.to_value('MHz'):1.16e},{s11.real:1.16e},{s11.imag:1.16e}\n"
+                    )
                 fl.write("END")
         else:
             console.print(f"Reading calibrated {load} S11")
@@ -636,7 +675,7 @@ def alancal(
     spectra = {}
     for load in loads:
         outfile = out / f"sp{load}.txt"
-        if redo_spectra or not outfile.exists():
+        if (redo_spectra or not outfile.exists()) and not avg_spectra_path:
             console.print(f"Averaging {load} spectra")
 
             specdate = f"{specyear:04}_{specday:03}"
@@ -662,7 +701,11 @@ def alancal(
         else:
             console.print(f"Reading averaged {load} spectra")
 
-            spec = read_spec_txt(outfile)
+            if outfile.exists():
+                spec = read_spec_txt(outfile)
+            elif avg_spectra_path:
+                spec = read_spec_txt(avg_spectra_path)
+
             spfreq = spec["freq"] * un.MHz
             spectra[load] = spec["spectra"]
 
@@ -698,6 +741,32 @@ def alancal(
         tcal=tcal,
     )
 
+    if modelled_s11_path:
+        _alans11m = np.genfromtxt(
+            modelled_s11_path,
+            comments="#",
+            names=True,
+        )  # np.genfromtxt("alans-code/s11_modelled.txt", comments="#", names=True)
+
+        alans11m = {}
+        for load in [*loads, "lna"]:
+            alans11m[load] = _alans11m[f"{load}_real"] + 1j * _alans11m[f"{load}_imag"]
+
+        calobs = calobs.inject(
+            lna_s11=alans11m["lna"] if inject_lna_s11 else None,
+            source_s11s={
+                "ambient": alans11m["amb"],
+                "hot_load": alans11m["hot"],
+                "short": alans11m["short"],
+                "open": alans11m["open"],
+            }
+            if inject_source_s11s
+            else None,
+        )
+    else:
+        for name, load in calobs.loads.items():
+            console.print(f"Using delay={load.reflections.model_delay} for load {name}")
+
     with open(outfile, "w") as fl:
         for i in range(calobs.freq.n):
             sca = calobs.C1()
@@ -712,6 +781,8 @@ def alancal(
                 f"sca {sca[i]:10.6f} ofs {ofs[i]:10.6f} tlnau {tlnau[i]:10.6f} "
                 f"tlnac {tlnac[i]:10.6f} tlnas {tlnas[i]:10.6f} wtcal 1 cal_data\n"
             )
+
+    console.print("BEST DELAY: ", calobs.cal_coefficient_models["NW"].delay)
 
     # Also save the modelled S11s
     console.print("Saving modelled S11s")
@@ -740,15 +811,16 @@ def alancal(
                 f"{lna[i].real} {lna[i].imag}\n"
             )
 
-    # Make plots...
-    console.print("Plotting S11 models...")
-    ax = calobs.plot_s11_models()
-    ax.flatten()[0].figure.savefig(out / "s11_models.png")
+    if plot:
+        # Make plots...
+        console.print("Plotting S11 models...")
+        ax = calobs.plot_s11_models()
+        ax.flatten()[0].figure.savefig(out / "s11_models.png")
 
-    console.print("Plotting raw spectra...")
-    fig = calobs.plot_raw_spectra()
-    fig.savefig(out / "raw_spectra.png")
+        console.print("Plotting raw spectra...")
+        fig = calobs.plot_raw_spectra()
+        fig.savefig(out / "raw_spectra.png")
 
-    console.print("Plotting calibration coefficients...")
-    fig = calobs.plot_coefficients()
-    fig.savefig(out / "calibration_coefficients.png")
+        console.print("Plotting calibration coefficients...")
+        fig = calobs.plot_coefficients()
+        fig.savefig(out / "calibration_coefficients.png")
