@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 from astropy import units as un
 from astropy.constants import c as speed_of_light
+from pygsdata.select import select_times
 from read_acq.gsdata import read_acq_to_gsdata
 
 from . import modelling as mdl
@@ -107,6 +108,10 @@ def acqplot7amoon(
     pkpwrm: float | None = None,
     maxrmsf: float | None = None,
     maxfm: float | None = None,
+    nrfi: int = 0,
+    tstart: int = 0,
+    tstop: int = 23,
+    delaystart: int = 0,
 ):
     """A function that does what the acqplot7amoon C-code does."""
     # We raise/warn when non-implemented parameters are passed. Serves as a reminder
@@ -120,6 +125,16 @@ def acqplot7amoon(
         )
 
     data = read_acq_to_gsdata(acqfile, telescope="edges-low")
+
+    if tstart > 0 or tstop < 23:
+        # Note that tstop=23 includes all possible hours since we have <=
+        hours = data.times[:, 0].datetime.hour
+        data = select_times(data, indx=(hours >= tstart) & (hours <= tstop))
+
+    if delaystart > 0:
+        secs = (data.times - data.times.min()).seconds
+        idx = np.all(secs > delaystart, axis=1)
+        data = select_times(data, indx=idx)
 
     freq = FrequencyRange.from_edges(f_low=fstart * un.MHz, f_high=fstop * un.MHz)
     q = dicke_calibration(data).data[0, 0, :, freq.mask]
