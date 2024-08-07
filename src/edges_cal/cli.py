@@ -24,6 +24,9 @@ from edges_cal.alanmode import (
     read_s11_csv,
     read_spec_txt,
     reads1p1,
+    read_raul_s11_format,
+    write_specal,
+    write_modelled_s11s
 )
 from edges_cal.config import config
 
@@ -563,6 +566,8 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     default=True,
     help="inject source s11s from modelled_s11_path (if given)",
 )
+@click.option("--s11s-in-raul-format/--s11s-in-s1p", default=False, help="set to true if the S11's have been pre-calibrated and are in a file formatted by Raul.")
+@click.option("--lna-poly", default=-1, help="Set to zero to force the LNA to be smoothed by a polynomial, not Fourier series, even if it has <16 terms")
 def alancal(
     s11date,
     specyear,
@@ -600,6 +605,8 @@ def alancal(
     modelled_s11_path,
     inject_lna_s11,
     inject_source_s11s,
+    s11s_in_raul_format,
+    lna_poly,
 ):
     """Run a calibration in as close a manner to Alan's code as possible.
 
@@ -627,47 +634,53 @@ def alancal(
     if short_delay is None:
         short_delay = calkit_delays
 
-    raws11s = {}
-    for load in (*loads, "lna"):
-        outfile = out / f"s11{load}.csv"
-        if redo_s11 or not outfile.exists():
-            console.print(f"Calibrating {load} S11")
+    if s11s_in_raul_format:
+        s11s = read_raul_s11_format(s11date)
+        s11freq = s11s.pop("freq") << un.MHz
+        raws11s = s11s
+    else:
 
-            fstem = f"{s11date}_lna" if load == "lna" else s11date
-            s11freq, raws11s[load] = reads1p1(
-                Tfopen=Path(datadir) / f"{fstem}_O.s1p",
-                Tfshort=Path(datadir) / f"{fstem}_S.s1p",
-                Tfload=Path(datadir) / f"{fstem}_L.s1p",
-                Tfant=Path(datadir) / f"{s11date}_{load}.s1p",
-                res=match_resistance,
-                loadps=load_delay,
-                openps=open_delay,
-                shortps=short_delay,
-            )
+        raws11s = {}
+        for load in (*loads, "lna"):
+            outfile = out / f"s11{load}.csv"
+            if not s11s_in_raul_format and (redo_s11 or not outfile.exists()):
+                console.print(f"Calibrating {load} S11")
 
-            if load == "lna":
-                # Correction for path length
-                raws11s[load] = corrcsv(
-                    s11freq,
-                    raws11s[load],
-                    lna_cable_length,
-                    lna_cable_dielectric,
-                    lna_cable_loss,
+                fstem = f"{s11date}_lna" if load == "lna" else s11date
+                s11freq, raws11s[load] = reads1p1(
+                    Tfopen=Path(datadir) / f"{fstem}_O.s1p",
+                    Tfshort=Path(datadir) / f"{fstem}_S.s1p",
+                    Tfload=Path(datadir) / f"{fstem}_L.s1p",
+                    Tfant=Path(datadir) / f"{s11date}_{load}.s1p",
+                    res=match_resistance,
+                    loadps=load_delay,
+                    openps=open_delay,
+                    shortps=short_delay,
                 )
 
-            # write out the CSV file
-            with open(out / f"s11{load}.csv", "w") as fl:
-                fl.write("BEGIN\n")
-                for freq, s11 in zip(s11freq, raws11s[load]):
-                    fl.write(
-                        f"{freq.to_value('MHz'):1.16e},{s11.real:1.16e},{s11.imag:1.16e}\n"
+                if load == "lna":
+                    # Correction for path length
+                    raws11s[load] = corrcsv(
+                        s11freq,
+                        raws11s[load],
+                        lna_cable_length,
+                        lna_cable_dielectric,
+                        lna_cable_loss,
                     )
-                fl.write("END")
-        else:
-            console.print(f"Reading calibrated {load} S11")
 
-            s11freq, raws11s[load] = read_s11_csv(outfile)
-            s11freq <<= un.MHz
+                # write out the CSV file
+                with open(out / f"s11{load}.csv", "w") as fl:
+                    fl.write("BEGIN\n")
+                    for freq, s11 in zip(s11freq, raws11s[load]):
+                        fl.write(
+                            f"{freq.to_value('MHz'):1.16e},{s11.real:1.16e},{s11.imag:1.16e}\n"
+                        )
+                    fl.write("END")
+            else:
+                console.print(f"Reading calibrated {load} S11")
+
+                s11freq, raws11s[load] = read_s11_csv(outfile)
+                s11freq <<= un.MHz
 
     lna = raws11s.pop("lna")
 
@@ -739,6 +752,7 @@ def alancal(
         nfit2=nfit2,
         tload=tload,
         tcal=tcal,
+        lna_poly=lna_poly,
     )
 
     if modelled_s11_path:
@@ -746,7 +760,7 @@ def alancal(
             modelled_s11_path,
             comments="#",
             names=True,
-        )  # np.genfromtxt("alans-code/s11_modelled.txt", comments="#", names=True)
+        )
 
         alans11m = {}
         for load in [*loads, "lna"]:
@@ -767,49 +781,12 @@ def alancal(
         for name, load in calobs.loads.items():
             console.print(f"Using delay={load.reflections.model_delay} for load {name}")
 
-    with open(outfile, "w") as fl:
-        for i in range(calobs.freq.n):
-            sca = calobs.C1()
-            ofs = calobs.C2()
-            tlnau = calobs.Tunc()
-            tlnac = calobs.Tcos()
-            tlnas = calobs.Tsin()
-            lna = calobs.receiver_s11
-            fl.write(
-                f"freq {calobs.freq.freq[i].to_value('MHz'):10.6f} "
-                f"s11lna {lna[i].real:10.6f} {lna[i].imag:10.6f} "
-                f"sca {sca[i]:10.6f} ofs {ofs[i]:10.6f} tlnau {tlnau[i]:10.6f} "
-                f"tlnac {tlnac[i]:10.6f} tlnas {tlnas[i]:10.6f} wtcal 1 cal_data\n"
-            )
-
+    write_specal(calobs, outfile)
     console.print("BEST DELAY: ", calobs.cal_coefficient_models["NW"].delay)
 
     # Also save the modelled S11s
     console.print("Saving modelled S11s")
-    s11m = {
-        name: load.s11_model(calobs.freq.freq) for name, load in calobs.loads.items()
-    }
-    with open(out / "s11_modelled.txt", "w") as fl:
-        fl.write(
-            "# freq, amb_real amb_imag hot_real hot_imag open_real open_imag short_real"
-            " short_imag lna_real lna_imag\n"
-        )
-        for i, (f, amb, hot, op, sh) in enumerate(
-            zip(
-                calobs.freq.freq.to_value("MHz"),
-                s11m["ambient"],
-                s11m["hot_load"],
-                s11m["open"],
-                s11m["short"],
-            )
-        ):
-            fl.write(
-                f"{f} {amb.real} {amb.imag} "
-                f"{hot.real} {hot.imag} "
-                f"{op.real} {op.imag} "
-                f"{sh.real} {sh.imag} "
-                f"{lna[i].real} {lna[i].imag}\n"
-            )
+    write_modelled_s11s(calobs, out / "s11_modelled.txt")
 
     if plot:
         # Make plots...

@@ -14,7 +14,7 @@ from read_acq.gsdata import read_acq_to_gsdata
 from . import modelling as mdl
 from . import reflection_coefficient as rc
 from .calobs import CalibrationObservation, Load
-from .loss import get_cable_loss_model
+from .loss import get_cable_loss_model, HotLoadCorrection
 from .s11 import LoadS11, Receiver, StandardsReadings, VNAReading
 from .spectra import LoadSpectrum
 from .tools import FrequencyRange, dicke_calibration, gauss_smooth
@@ -132,7 +132,7 @@ def acqplot7amoon(
         data = select_times(data, indx=(hours >= tstart) & (hours <= tstop))
 
     if delaystart > 0:
-        secs = (data.times - data.times.min()).seconds
+        secs = (data.times - data.times.min()).sec
         idx = np.all(secs > delaystart, axis=1)
         data = select_times(data, indx=idx)
 
@@ -168,7 +168,7 @@ def edges3cal(
     wfstop: float = 190,
     tcold: float = 306.5,
     thot: float = 393.22,
-    tcab: float = 306.5,
+    tcab: float | None= None,
     cfit: int = 7,
     wfit: int = 7,
     nfit3: int = 10,
@@ -184,11 +184,19 @@ def edges3cal(
     adb: float | None = None,
     delaylna: float | None = None,
     nfit4: int | None = None,
+    s11rig: np.ndarray | None = None,
+    s12rig: np.ndarray | None = None,
+    s22rig: np.ndarray | None = None,
+    lna_poly=-1,
+    edges2kmode=False,
 ):
     """A function that does what the edges3 C-code does."""
     # Some of the parameters are defined, but not yet implemented,
     # so we warn/error here. We do this explicitly because it serves as a
     # reminder to implement them in the future as necessary
+    if tcab is None:
+        tcab = tcold
+
     if mfit is not None or smooth is not None or tant is not None:
         warnings.warn(
             "mfit, smooth and tant are not used in this function, because "
@@ -233,7 +241,7 @@ def edges3cal(
         raw_s11=s11lna[s11freq.mask],
         freq=s11freq,
         n_terms=nfit3,
-        model_type=mdl.Fourier if nfit3 > 16 else mdl.Polynomial,
+        model_type=mdl.Fourier if (nfit3 > 16 or lna_poly==0) else mdl.Polynomial,
         complex_model_type=mdl.ComplexRealImagModel,
         model_transform=mdl.ZerotooneTransform(range=(1, 2))
         if nfit3 > 16
@@ -249,6 +257,7 @@ def edges3cal(
         [spcold, sphot, spopen, spshort],
         [tcold, thot, tcab, tcab],
     ):
+        
         specs[name] = LoadSpectrum(
             freq=spfreq,
             q=(spec - tload) / tcal,
@@ -257,12 +266,36 @@ def edges3cal(
             temp_ave=temp,
             t_load_ns=tcal,
             t_load=tload,
-        ).between_freqs(wfstart * un.MHz, wfstop * un.MHz)
+        )
+        if not edges2kmode:
+            specs[name] = specs[name].between_freqs(wfstart * un.MHz, wfstop * un.MHz)
 
     if Lh == -1:
         hot_loss_model = get_cable_loss_model(
             "UT-141C-SP", cable_length=4 * un.imperial.inch
         )
+    elif Lh == -2:
+        if s11rig is None or s12rig is None or s22rig is None:
+            raise ValueError("must provide rigid cable s11/s12/s22 if Lh=-2")
+        mdlopts = {
+            "transform": (
+                mdl.ZerotooneTransform(range=(s11freq.min.to_value("MHz"), s11freq.max.to_value("MHz")))
+                if nfit2 > 16
+                else mdl.Log10Transform(scale=1)
+            ),
+            "n_terms": nfit2,
+        }
+        if nfit2 > 16:
+            mdlopts['period'] = 1.5
+
+        hot_loss_model = HotLoadCorrection(
+            freq=s11freq,
+            raw_s11=s11rig,
+            raw_s12s21=s12rig,
+            raw_s22=s22rig,
+            model=mdl.Fourier(**mdlopts) if nfit2 > 16 else mdl.Polynomial(**mdlopts),
+            complex_model=mdl.ComplexRealImagModel,
+        ).power_gain
     else:
         hot_loss_model = None
 
@@ -288,6 +321,21 @@ def edges3cal(
         scale_offset_poly_spacing=0.5,
     )
 
+def read_raul_s11_format(fname):
+    s11 = np.genfromtxt(fname, names=['freq', 'lna_rl', 'lna_im', 'amb_rl', 'amb_im', 'hot_rl', 'hot_im', 'open_rl', 'open_im', 'short_rl', 'short_im', 's11rig_rl', 's11rig_im', 's12rig_rl', 's12rig_im', 's22rig_rl', 's22rig_im'])
+    
+    out = {
+        'freq': s11['freq'],
+    }
+    for name in s11.dtype.names:
+        if "_" not in name:
+            continue
+            
+        if "_rl" in name:
+            out[name.split("_")[0]] = s11[name] + 0j
+        else:
+            out[name.split("_")[0]] += 1j*s11[name]
+    return out
 
 def read_s11_csv(fname) -> tuple[np.ndarray, np.ndarray]:
     """Read a CSV file containing S11 data in Alan's output format."""
@@ -325,3 +373,46 @@ def read_specal(fname):
         ],
         usecols=(1, 3, 4, 6, 8, 10, 12, 14, 16),
     )
+
+def write_specal(calobs, outfile):
+    with open(outfile, "w") as fl:
+        for i in range(calobs.freq.n):
+            sca = calobs.C1()
+            ofs = calobs.C2()
+            tlnau = calobs.Tunc()
+            tlnac = calobs.Tcos()
+            tlnas = calobs.Tsin()
+            lna = calobs.receiver_s11
+            fl.write(
+                f"freq {calobs.freq.freq[i].to_value('MHz'):10.6f} "
+                f"s11lna {lna[i].real:10.6f} {lna[i].imag:10.6f} "
+                f"sca {sca[i]:10.6f} ofs {ofs[i]:10.6f} tlnau {tlnau[i]:10.6f} "
+                f"tlnac {tlnac[i]:10.6f} tlnas {tlnas[i]:10.6f} wtcal 1 cal_data\n"
+            )
+
+def write_modelled_s11s(calobs, fname):
+    s11m = {
+        name: load.s11_model(calobs.freq.freq) for name, load in calobs.loads.items()
+    }
+    lna = calobs.receiver_s11
+    with open(fname, "w") as fl:
+        fl.write(
+            "# freq, amb_real amb_imag hot_real hot_imag open_real open_imag short_real"
+            " short_imag lna_real lna_imag\n"
+        )
+        for i, (f, amb, hot, op, sh) in enumerate(
+            zip(
+                calobs.freq.freq.to_value("MHz"),
+                s11m["ambient"],
+                s11m["hot_load"],
+                s11m["open"],
+                s11m["short"],
+            )
+        ):
+            fl.write(
+                f"{f} {amb.real} {amb.imag} "
+                f"{hot.real} {hot.imag} "
+                f"{op.real} {op.imag} "
+                f"{sh.real} {sh.imag} "
+                f"{lna[i].real} {lna[i].imag}\n"
+            )
