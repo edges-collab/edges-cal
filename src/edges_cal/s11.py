@@ -422,7 +422,7 @@ class S11Model:
     def with_model_delay(self, delay: tp.Time | None = None) -> S11Model:
         """Get a new S11Model with a different model delay."""
         if delay is None:
-            delay = rc.get_delay(self.freq.freq, self._raw_s11)
+            delay = rc.get_delay(self.freq.freq, self._raw_s11[self.freq.mask])
         return attr.evolve(self, model_delay=delay)
 
 
