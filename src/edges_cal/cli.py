@@ -21,12 +21,12 @@ from edges_cal.alanmode import (
     acqplot7amoon,
     corrcsv,
     edges3cal,
+    read_raul_s11_format,
     read_s11_csv,
     read_spec_txt,
     reads1p1,
-    read_raul_s11_format,
+    write_modelled_s11s,
     write_specal,
-    write_modelled_s11s
 )
 from edges_cal.config import config
 
@@ -566,8 +566,16 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     default=True,
     help="inject source s11s from modelled_s11_path (if given)",
 )
-@click.option("--s11s-in-raul-format/--s11s-in-s1p", default=False, help="set to true if the S11's have been pre-calibrated and are in a file formatted by Raul.")
-@click.option("--lna-poly", default=-1, help="Set to zero to force the LNA to be smoothed by a polynomial, not Fourier series, even if it has <16 terms")
+@click.option(
+    "--s11s-in-raul-format/--s11s-in-s1p",
+    default=False,
+    help="set to true if the S11's have been pre-calibrated and are in a file formatted by Raul.",
+)
+@click.option(
+    "--lna-poly",
+    default=-1,
+    help="Set to zero to force the LNA to be smoothed by a polynomial, not Fourier series, even if it has <16 terms",
+)
 def alancal(
     s11date,
     specyear,
@@ -639,7 +647,6 @@ def alancal(
         s11freq = s11s.pop("freq") << un.MHz
         raws11s = s11s
     else:
-
         raws11s = {}
         for load in (*loads, "lna"):
             outfile = out / f"s11{load}.csv"

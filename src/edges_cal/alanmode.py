@@ -14,7 +14,7 @@ from read_acq.gsdata import read_acq_to_gsdata
 from . import modelling as mdl
 from . import reflection_coefficient as rc
 from .calobs import CalibrationObservation, Load
-from .loss import get_cable_loss_model, HotLoadCorrection
+from .loss import HotLoadCorrection, get_cable_loss_model
 from .s11 import LoadS11, Receiver, StandardsReadings, VNAReading
 from .spectra import LoadSpectrum
 from .tools import FrequencyRange, dicke_calibration, gauss_smooth
@@ -168,7 +168,7 @@ def edges3cal(
     wfstop: float = 190,
     tcold: float = 306.5,
     thot: float = 393.22,
-    tcab: float | None= None,
+    tcab: float | None = None,
     cfit: int = 7,
     wfit: int = 7,
     nfit3: int = 10,
@@ -241,7 +241,7 @@ def edges3cal(
         raw_s11=s11lna[s11freq.mask],
         freq=s11freq,
         n_terms=nfit3,
-        model_type=mdl.Fourier if (nfit3 > 16 or lna_poly==0) else mdl.Polynomial,
+        model_type=mdl.Fourier if (nfit3 > 16 or lna_poly == 0) else mdl.Polynomial,
         complex_model_type=mdl.ComplexRealImagModel,
         model_transform=mdl.ZerotooneTransform(range=(1, 2))
         if nfit3 > 16
@@ -257,7 +257,6 @@ def edges3cal(
         [spcold, sphot, spopen, spshort],
         [tcold, thot, tcab, tcab],
     ):
-        
         specs[name] = LoadSpectrum(
             freq=spfreq,
             q=(spec - tload) / tcal,
@@ -279,14 +278,16 @@ def edges3cal(
             raise ValueError("must provide rigid cable s11/s12/s22 if Lh=-2")
         mdlopts = {
             "transform": (
-                mdl.ZerotooneTransform(range=(s11freq.min.to_value("MHz"), s11freq.max.to_value("MHz")))
+                mdl.ZerotooneTransform(
+                    range=(s11freq.min.to_value("MHz"), s11freq.max.to_value("MHz"))
+                )
                 if nfit2 > 16
                 else mdl.Log10Transform(scale=1)
             ),
             "n_terms": nfit2,
         }
         if nfit2 > 16:
-            mdlopts['period'] = 1.5
+            mdlopts["period"] = 1.5
 
         hot_loss_model = HotLoadCorrection(
             freq=s11freq,
@@ -321,21 +322,44 @@ def edges3cal(
         scale_offset_poly_spacing=0.5,
     )
 
+
 def read_raul_s11_format(fname):
-    s11 = np.genfromtxt(fname, names=['freq', 'lna_rl', 'lna_im', 'amb_rl', 'amb_im', 'hot_rl', 'hot_im', 'open_rl', 'open_im', 'short_rl', 'short_im', 's11rig_rl', 's11rig_im', 's12rig_rl', 's12rig_im', 's22rig_rl', 's22rig_im'])
-    
+    s11 = np.genfromtxt(
+        fname,
+        names=[
+            "freq",
+            "lna_rl",
+            "lna_im",
+            "amb_rl",
+            "amb_im",
+            "hot_rl",
+            "hot_im",
+            "open_rl",
+            "open_im",
+            "short_rl",
+            "short_im",
+            "s11rig_rl",
+            "s11rig_im",
+            "s12rig_rl",
+            "s12rig_im",
+            "s22rig_rl",
+            "s22rig_im",
+        ],
+    )
+
     out = {
-        'freq': s11['freq'],
+        "freq": s11["freq"],
     }
     for name in s11.dtype.names:
         if "_" not in name:
             continue
-            
+
         if "_rl" in name:
             out[name.split("_")[0]] = s11[name] + 0j
         else:
-            out[name.split("_")[0]] += 1j*s11[name]
+            out[name.split("_")[0]] += 1j * s11[name]
     return out
+
 
 def read_s11_csv(fname) -> tuple[np.ndarray, np.ndarray]:
     """Read a CSV file containing S11 data in Alan's output format."""
@@ -374,6 +398,7 @@ def read_specal(fname):
         usecols=(1, 3, 4, 6, 8, 10, 12, 14, 16),
     )
 
+
 def write_specal(calobs, outfile):
     with open(outfile, "w") as fl:
         for i in range(calobs.freq.n):
@@ -389,6 +414,7 @@ def write_specal(calobs, outfile):
                 f"sca {sca[i]:10.6f} ofs {ofs[i]:10.6f} tlnau {tlnau[i]:10.6f} "
                 f"tlnac {tlnac[i]:10.6f} tlnas {tlnas[i]:10.6f} wtcal 1 cal_data\n"
             )
+
 
 def write_modelled_s11s(calobs, fname):
     s11m = {
