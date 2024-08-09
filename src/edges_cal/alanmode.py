@@ -14,7 +14,7 @@ from read_acq.gsdata import read_acq_to_gsdata
 from . import modelling as mdl
 from . import reflection_coefficient as rc
 from .calobs import CalibrationObservation, Load
-from .loss import HotLoadCorrection, get_cable_loss_model
+from .loss import HotLoadCorrection, get_cable_loss_model, get_loss_model_from_file
 from .s11 import LoadS11, Receiver, StandardsReadings, VNAReading
 from .spectra import LoadSpectrum
 from .tools import FrequencyRange, dicke_calibration, gauss_smooth
@@ -187,8 +187,8 @@ def edges3cal(
     s11rig: np.ndarray | None = None,
     s12rig: np.ndarray | None = None,
     s22rig: np.ndarray | None = None,
-    lna_poly=-1,
-    edges2kmode=False,
+    lna_poly: int = -1,
+    edges2kmode: bool = False,
 ):
     """A function that does what the edges3 C-code does."""
     # Some of the parameters are defined, but not yet implemented,
@@ -237,17 +237,19 @@ def edges3cal(
             model_kwargs={"period": 1.5},
         ).with_model_delay()
 
+    mt = mdl.Fourier if (nfit3 > 16 or lna_poly == 0) else mdl.Polynomial
     receiver = Receiver(
         raw_s11=s11lna[s11freq.mask],
         freq=s11freq,
         n_terms=nfit3,
-        model_type=mdl.Fourier if (nfit3 > 16 or lna_poly == 0) else mdl.Polynomial,
+        model_type=mt,
         complex_model_type=mdl.ComplexRealImagModel,
         model_transform=mdl.ZerotooneTransform(range=(1, 2))
-        if nfit3 > 16
+        if mt == mdl.Fourier
         else mdl.Log10Transform(scale=120),
         set_transform_range=True,
         fit_kwargs={"method": "alan-qrd"},
+        model_kwargs={"period": 1.5} if mt == mdl.Fourier else {},
     ).with_model_delay()
 
     specs = {}
@@ -266,8 +268,8 @@ def edges3cal(
             t_load_ns=tcal,
             t_load=tload,
         )
-        if not edges2kmode:
-            specs[name] = specs[name].between_freqs(wfstart * un.MHz, wfstop * un.MHz)
+        # if not edges2kmode:
+        specs[name] = specs[name].between_freqs(wfstart * un.MHz, wfstop * un.MHz)
 
     if Lh == -1:
         hot_loss_model = get_cable_loss_model(
@@ -297,6 +299,8 @@ def edges3cal(
             model=mdl.Fourier(**mdlopts) if nfit2 > 16 else mdl.Polynomial(**mdlopts),
             complex_model=mdl.ComplexRealImagModel,
         ).power_gain
+    elif isinstance(Lh, Path):
+        hot_loss_model = get_loss_model_from_file(Lh)
     else:
         hot_loss_model = None
 
@@ -324,6 +328,12 @@ def edges3cal(
 
 
 def read_raul_s11_format(fname):
+    """
+    Read files containing S11's for all loads, LNA, and rigid cable, for EDGES-2.
+
+    These files are outputs from Raul's pipeline, and were used as inputs for the C-code
+    in EDGES-2 in some cases.
+    """
     s11 = np.genfromtxt(
         fname,
         names=[
@@ -400,6 +410,7 @@ def read_specal(fname):
 
 
 def write_specal(calobs, outfile):
+    """Write a specal file in the same format as those output by the C-code edges3.c."""
     with open(outfile, "w") as fl:
         for i in range(calobs.freq.n):
             sca = calobs.C1()
@@ -409,36 +420,78 @@ def write_specal(calobs, outfile):
             tlnas = calobs.Tsin()
             lna = calobs.receiver_s11
             fl.write(
-                f"freq {calobs.freq.freq[i].to_value('MHz'):10.6f} "
-                f"s11lna {lna[i].real:10.6f} {lna[i].imag:10.6f} "
-                f"sca {sca[i]:10.6f} ofs {ofs[i]:10.6f} tlnau {tlnau[i]:10.6f} "
-                f"tlnac {tlnac[i]:10.6f} tlnas {tlnas[i]:10.6f} wtcal 1 cal_data\n"
+                f"freq {calobs.freq.freq[i].to_value('MHz'):1.12e} "
+                f"s11lna {lna[i].real:1.12e} {lna[i].imag:1.12e} "
+                f"sca {sca[i]:1.12e} ofs {ofs[i]:10.6f} tlnau {tlnau[i]:1.12e} "
+                f"tlnac {tlnac[i]:1.12e} tlnas {tlnas[i]:1.12e} wtcal 1 cal_data\n"
             )
 
 
 def write_modelled_s11s(calobs, fname):
+    """Write all modelled S11's in a calobs object to file, in the same format as C.
+
+    If a HotLoadCorrection exists, also write the rigid cable S-parameters, as
+    edges2k.c does, otherwise assume the edges3.c format.
+    """
     s11m = {
         name: load.s11_model(calobs.freq.freq) for name, load in calobs.loads.items()
     }
     lna = calobs.receiver_s11
+    if isinstance(calobs.hot_load._loss_model, HotLoadCorrection):
+        s11m |= {
+            "rig_s11": calobs.hot_load._loss_model.s11_model(calobs.freq.freq),
+            "rig_s12": calobs.hot_load._loss_model.s12s21_model(calobs.freq.freq),
+            "rig_s22": calobs.hot_load._loss_model.s22_model(calobs.freq.freq),
+        }
+
     with open(fname, "w") as fl:
-        fl.write(
-            "# freq, amb_real amb_imag hot_real hot_imag open_real open_imag short_real"
-            " short_imag lna_real lna_imag\n"
-        )
-        for i, (f, amb, hot, op, sh) in enumerate(
-            zip(
-                calobs.freq.freq.to_value("MHz"),
-                s11m["ambient"],
-                s11m["hot_load"],
-                s11m["open"],
-                s11m["short"],
-            )
-        ):
+        if "rig_s11" in s11m:
             fl.write(
-                f"{f} {amb.real} {amb.imag} "
-                f"{hot.real} {hot.imag} "
-                f"{op.real} {op.imag} "
-                f"{sh.real} {sh.imag} "
-                f"{lna[i].real} {lna[i].imag}\n"
+                "# freq, amb_real amb_imag hot_real hot_imag open_real open_imag "
+                "short_real short_imag lna_real lna_imag rig_s11_real rig_s11_imag "
+                "rig_s12_real rig_s12_imag rig_s22_real rig_s22_imag\n"
             )
+            for i, (f, amb, hot, op, sh, rigs11, rigs12, rigs22) in enumerate(
+                zip(
+                    calobs.freq.freq.to_value("MHz"),
+                    s11m["ambient"],
+                    s11m["hot_load"],
+                    s11m["open"],
+                    s11m["short"],
+                    s11m["rig_s11"],
+                    s11m["rig_s12"],
+                    s11m["rig_s22"],
+                )
+            ):
+                fl.write(
+                    f"{f} {amb.real} {amb.imag} "
+                    f"{hot.real} {hot.imag} "
+                    f"{op.real} {op.imag} "
+                    f"{sh.real} {sh.imag} "
+                    f"{rigs11.real} {rigs11.imag} "
+                    f"{rigs12.real} {rigs12.imag} "
+                    f"{rigs22.real} {rigs22.imag} "
+                    f"{lna[i].real} {lna[i].imag}\n"
+                )
+
+        else:
+            fl.write(
+                "# freq, amb_real amb_imag hot_real hot_imag open_real open_imag "
+                "short_real short_imag lna_real lna_imag\n"
+            )
+            for i, (f, amb, hot, op, sh) in enumerate(
+                zip(
+                    calobs.freq.freq.to_value("MHz"),
+                    s11m["ambient"],
+                    s11m["hot_load"],
+                    s11m["open"],
+                    s11m["short"],
+                )
+            ):
+                fl.write(
+                    f"{f} {amb.real} {amb.imag} "
+                    f"{hot.real} {hot.imag} "
+                    f"{op.real} {op.imag} "
+                    f"{sh.real} {sh.imag} "
+                    f"{lna[i].real} {lna[i].imag}\n"
+                )

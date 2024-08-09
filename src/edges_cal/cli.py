@@ -569,12 +569,15 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
 @click.option(
     "--s11s-in-raul-format/--s11s-in-s1p",
     default=False,
-    help="set to true if the S11's have been pre-calibrated and are in a file formatted by Raul.",
+    help="set to true if the S11's have been pre-calibrated and are Rauls format.",
 )
 @click.option(
     "--lna-poly",
     default=-1,
-    help="Set to zero to force the LNA to be smoothed by a polynomial, not Fourier series, even if it has <16 terms",
+    help=(
+        "Set to zero to force the LNA to be smoothed by a polynomial, not Fourier "
+        "series, even if it has <16 terms"
+    ),
 )
 def alancal(
     s11date,
@@ -683,11 +686,11 @@ def alancal(
                             f"{freq.to_value('MHz'):1.16e},{s11.real:1.16e},{s11.imag:1.16e}\n"
                         )
                     fl.write("END")
-            else:
-                console.print(f"Reading calibrated {load} S11")
 
-                s11freq, raws11s[load] = read_s11_csv(outfile)
-                s11freq <<= un.MHz
+            # Always re-read the S11's to match the precision of the C-code.
+            console.print(f"Reading calibrated {load} S11")
+            s11freq, raws11s[load] = read_s11_csv(outfile)
+            s11freq <<= un.MHz
 
     lna = raws11s.pop("lna")
 
@@ -718,16 +721,17 @@ def alancal(
                     else:
                         fl.write(f"{f:12.6f} {spec:12.6f} {1:4.0f}\n")
 
-        else:
-            console.print(f"Reading averaged {load} spectra")
+        # Always read the spectra back in, because that's what Alan's C-code does.
+        # This has the small effect of reducing the precision of the spectra.
+        console.print(f"Reading averaged {load} spectra")
 
-            if outfile.exists():
-                spec = read_spec_txt(outfile)
-            elif avg_spectra_path:
-                spec = read_spec_txt(avg_spectra_path)
+        if outfile.exists():
+            spec = read_spec_txt(outfile)
+        elif avg_spectra_path:
+            spec = read_spec_txt(avg_spectra_path)
 
-            spfreq = spec["freq"] * un.MHz
-            spectra[load] = spec["spectra"]
+        spfreq = spec["freq"] * un.MHz
+        spectra[load] = spec["spectra"]
 
     # Now do the calibration
     outfile = out / "specal.txt"

@@ -43,6 +43,19 @@ def get_cable_loss_model(
     return loss_model
 
 
+def get_loss_model_from_file(fname):
+    """Simply read a loss model directly from a file.
+
+    The file must have two columns separated by whitespace. The first is frequency
+    in MHz and the second should be the loss.
+    """
+    with fname.open("r") as fl:
+        data = np.genfromtxt(fl)
+
+    spl = Spline(data[:, 0], data[:, 1])
+    return lambda freq, s11a: spl(freq)
+
+
 @hickleable()
 @attrs.define(slots=False, frozen=True, kw_only=True)
 class HotLoadCorrection:
@@ -241,7 +254,7 @@ class HotLoadCorrection:
             np.abs(semi_rigid_sparams["s12s21"])
             * (1 - np.abs(rht) ** 2)
             / (
-                (np.abs(1 - semi_rigid_sparams["s11"] * rht)) ** 2
+                (np.abs(1 - semi_rigid_sparams["s22"] * rht)) ** 2
                 * (1 - np.abs(hot_load_s11) ** 2)
             )
         )
