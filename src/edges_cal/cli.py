@@ -467,7 +467,7 @@ class AlanModeOpts:
     wfstop = click.option("-wfstop", type=float, default=190.0)
     tcold = click.option("-tcold", type=float, default=306.5)
     thot = click.option("-thot", type=float, default=393.22)
-    tcab = click.option("-tcab", type=float, default=306.5)
+    tcab = click.option("-tcab", type=float, default=None)
     cfit = click.option("-cfit", type=int, default=7)
     tstart = click.option("-tstart", type=int, default=0)
     tstop = click.option("-tstop", type=int, default=24)
@@ -572,6 +572,20 @@ def _make_plots(out: Path, calobs: CalibrationObservation, plot):
     console.print("Saving modelled S11s")
     write_modelled_s11s(calobs, out / "s11_modelled.txt")
 
+    console.print("Saving hot-load loss model")
+    np.savetxt(
+        "hot_load_loss.txt",
+        np.array(
+            [
+                calobs.freq.freq.to_value("MHz"),
+                calobs.hot_load.loss_model(
+                    calobs.freq.freq,
+                    calobs.hot_load.reflections.s11_model(calobs.freq.freq),
+                ),
+            ]
+        ).T,
+        header="# freq, hot_load_loss",
+    )
     if plot:
         # Make plots...
         console.print("Plotting S11 models...")
@@ -988,6 +1002,7 @@ def alancal2(
     else:
         for name, load in calobs.loads.items():
             console.print(f"Using delay={load.reflections.model_delay} for load {name}")
+        console.print(f"Using delay={calobs.receiver.model_delay} for Receiver")
 
     _make_plots(out, calobs, plot)
 

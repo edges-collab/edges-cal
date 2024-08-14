@@ -241,6 +241,7 @@ def edges(
         ).with_model_delay()
 
     mt = mdl.Fourier if (nfit3 > 16 or lna_poly == 0) else mdl.Polynomial
+
     receiver = Receiver(
         raw_s11=s11lna[s11freq.mask],
         freq=s11freq,
@@ -316,6 +317,7 @@ def edges(
         )
         for name in specs
     }
+
     return CalibrationObservation(
         loads=loads,
         receiver=receiver,
@@ -483,10 +485,10 @@ def write_modelled_s11s(calobs, fname):
                     f"{hot.real} {hot.imag} "
                     f"{op.real} {op.imag} "
                     f"{sh.real} {sh.imag} "
+                    f"{lna[i].real} {lna[i].imag} "
                     f"{rigs11.real} {rigs11.imag} "
                     f"{rigs12.real} {rigs12.imag} "
-                    f"{rigs22.real} {rigs22.imag} "
-                    f"{lna[i].real} {lna[i].imag}\n"
+                    f"{rigs22.real} {rigs22.imag}\n"
                 )
 
         else:
