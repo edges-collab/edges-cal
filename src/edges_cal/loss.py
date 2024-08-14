@@ -156,7 +156,11 @@ class HotLoadCorrection:
 
     def _get_model(self, raw_data: np.ndarray, **kwargs):
         model = self.complex_model(self.model, self.model)
-        return model.fit(xdata=self.freq.freq, ydata=raw_data, method=self.model_method)
+        return model.fit(
+            xdata=self.freq.freq.to_value("MHz"),
+            ydata=raw_data,
+            method=self.model_method,
+        )
 
     def _get_splines(self, data):
         if self.complex_model == mdl.ComplexRealImagModel:

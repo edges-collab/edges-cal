@@ -151,7 +151,7 @@ def acqplot7amoon(
     return freq.freq, len(q), tcal * np.mean(q, axis=0) + tload
 
 
-def edges3cal(
+def edges(
     spfreq: np.ndarray,
     spcold: np.ndarray,
     sphot: np.ndarray,
@@ -188,9 +188,12 @@ def edges3cal(
     s12rig: np.ndarray | None = None,
     s22rig: np.ndarray | None = None,
     lna_poly: int = -1,
-    edges2kmode: bool = False,
 ):
-    """A function that does what the edges3 C-code does."""
+    """A function that does what the edges3.c and edges2k.c C-code do.
+
+    The primary purpose of this function is to model the input S11's, and then
+    determine the noise-wave parameters.
+    """
     # Some of the parameters are defined, but not yet implemented,
     # so we warn/error here. We do this explicitly because it serves as a
     # reminder to implement them in the future as necessary
@@ -298,7 +301,7 @@ def edges3cal(
             raw_s22=s22rig,
             model=mdl.Fourier(**mdlopts) if nfit2 > 16 else mdl.Polynomial(**mdlopts),
             complex_model=mdl.ComplexRealImagModel,
-        ).power_gain
+        )
     elif isinstance(Lh, Path):
         hot_loss_model = get_loss_model_from_file(Lh)
     else:
@@ -390,6 +393,16 @@ def read_spec_txt(fname):
     )
 
 
+def write_spec_txt(freq, n, spec, fname):
+    """Write an averaged-spectrum file, like spe_<load>r.txt files from edges2k.c."""
+    with open(fname, "w") as fl:
+        for i, (f, sp) in enumerate(zip(freq.to_value("MHz"), spec)):
+            if i == 0:
+                fl.write(f"{f:12.6f} {sp:12.6f} {1:4.0f} {n} // temp.acq\n")
+            else:
+                fl.write(f"{f:12.6f} {sp:12.6f} {1:4.0f}\n")
+
+
 def read_specal(fname):
     """Read a specal file, like the ones output by edges3(k)."""
     return np.genfromtxt(
@@ -409,7 +422,7 @@ def read_specal(fname):
     )
 
 
-def write_specal(calobs, outfile):
+def write_specal(calobs, outfile, precision="10.6f"):
     """Write a specal file in the same format as those output by the C-code edges3.c."""
     with open(outfile, "w") as fl:
         for i in range(calobs.freq.n):
@@ -420,10 +433,11 @@ def write_specal(calobs, outfile):
             tlnas = calobs.Tsin()
             lna = calobs.receiver_s11
             fl.write(
-                f"freq {calobs.freq.freq[i].to_value('MHz'):1.12e} "
-                f"s11lna {lna[i].real:1.12e} {lna[i].imag:1.12e} "
-                f"sca {sca[i]:1.12e} ofs {ofs[i]:10.6f} tlnau {tlnau[i]:1.12e} "
-                f"tlnac {tlnac[i]:1.12e} tlnas {tlnas[i]:1.12e} wtcal 1 cal_data\n"
+                f"freq {calobs.freq.freq[i].to_value('MHz'):{precision}} "
+                f"s11lna {lna[i].real:{precision}} {lna[i].imag:{precision}} "
+                f"sca {sca[i]:{precision}} ofs {ofs[i]:{precision}} "
+                f"tlnau {tlnau[i]:{precision}} tlnac {tlnac[i]:{precision}} "
+                f"tlnas {tlnas[i]:{precision}} wtcal 1 cal_data\n"
             )
 
 
@@ -438,10 +452,11 @@ def write_modelled_s11s(calobs, fname):
     }
     lna = calobs.receiver_s11
     if isinstance(calobs.hot_load._loss_model, HotLoadCorrection):
+        f = calobs.freq.freq.to_value("MHz")
         s11m |= {
-            "rig_s11": calobs.hot_load._loss_model.s11_model(calobs.freq.freq),
-            "rig_s12": calobs.hot_load._loss_model.s12s21_model(calobs.freq.freq),
-            "rig_s22": calobs.hot_load._loss_model.s22_model(calobs.freq.freq),
+            "rig_s11": calobs.hot_load._loss_model.s11_model(f),
+            "rig_s12": calobs.hot_load._loss_model.s12s21_model(f),
+            "rig_s22": calobs.hot_load._loss_model.s22_model(f),
         }
 
     with open(fname, "w") as fl:

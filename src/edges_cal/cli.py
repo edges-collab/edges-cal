@@ -20,14 +20,16 @@ from edges_cal import calobs as cc
 from edges_cal.alanmode import (
     acqplot7amoon,
     corrcsv,
-    edges3cal,
+    edges,
     read_raul_s11_format,
     read_s11_csv,
     read_spec_txt,
     reads1p1,
     write_modelled_s11s,
+    write_spec_txt,
     write_specal,
 )
+from edges_cal.calobs import CalibrationObservation
 from edges_cal.config import config
 
 console = Console()
@@ -421,26 +423,175 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     run(opts)
 
 
+class AlanModeOpts:
+    out = click.option(
+        "-o",
+        "--out",
+        type=click.Path(dir_okay=True, file_okay=False, exists=True),
+        default=".",
+        help="output directory",
+    )
+    redo_spectra = click.option("--redo-spectra/--no-spectra", default=None)
+    redo_cal = click.option("--redo-cal/--no-cal", default=True)
+    fstart = click.option(
+        "-fstart",
+        type=float,
+        default=48.0,
+        help="in mhz",
+    )
+    fstop = click.option(
+        "-fstop",
+        type=float,
+        default=198.0,
+        help="in mhz",
+    )
+    smooth = click.option(
+        "-smooth",
+        type=int,
+        default=8,
+    )
+    tload = click.option(
+        "-tload",
+        type=float,
+        default=300.0,
+        help="guess at the load temp",
+    )
+    tcal = click.option(
+        "-tcal",
+        type=float,
+        default=1000.0,
+        help="guess at the load+noise source temp",
+    )
+    Lh = click.option("-Lh", "Lh", type=int, default=-1)
+    wfstart = click.option("-wfstart", type=float, default=50.0)
+    wfstop = click.option("-wfstop", type=float, default=190.0)
+    tcold = click.option("-tcold", type=float, default=306.5)
+    thot = click.option("-thot", type=float, default=393.22)
+    tcab = click.option("-tcab", type=float, default=306.5)
+    cfit = click.option("-cfit", type=int, default=7)
+    tstart = click.option("-tstart", type=int, default=0)
+    tstop = click.option("-tstop", type=int, default=24)
+    delaystart = click.option("-delaystart", type=int, default=0)
+    wfit = click.option(
+        "-wfit",
+        type=int,
+        default=7,
+    )
+    nfit3 = click.option(
+        "-nfit3",
+        type=int,
+        default=10,
+    )
+    nfit2 = click.option(
+        "-nfit2",
+        type=int,
+        default=27,
+    )
+    plot = click.option(
+        "--plot/--no-plot",
+        default=True,
+    )
+    avg_spectra_path = click.option(
+        "--avg-spectra-path",
+        type=click.Path(dir_okay=False, file_okay=True, exists=True),
+        help=(
+            "Path to a file containing averaged spectra in the format output by this "
+            "script (or the C code)"
+        ),
+    )
+    modelled_s11_path = click.option(
+        "--modelled-s11-path",
+        type=click.Path(dir_okay=False, file_okay=True, exists=True),
+        help=(
+            "path to a file containing modelled S11s in the format output by this "
+            "script (or the C code)"
+        ),
+    )
+    inject_lna_s11 = click.option(
+        "--inject-lna-s11/--no-inject-lna-s11",
+        default=True,
+        help="inject LNA s11 form modelled_s11_path (if given)",
+    )
+    inject_source_s11s = click.option(
+        "--inject-source-s11s/--no-inject-source-s11s",
+        default=True,
+        help="inject source s11s from modelled_s11_path (if given)",
+    )
+
+    @classmethod
+    def add_opts(cls, fnc, ignore=None):
+        """Add all opts to a given function."""
+        ignore = ignore or []
+        for name, opt in reversed(cls.__dict__.items()):
+            if name not in ignore and callable(opt):
+                fnc = opt(fnc)
+        return fnc
+
+
+def _average_spectra(
+    specfiles: dict[str, list[Path]],
+    out: Path,
+    redo_spectra: bool,
+    avg_spectra_path,
+    **kwargs,
+):
+    spectra = {}
+    for load, files in specfiles.items():
+        if len(files) == 0:
+            raise ValueError(f"{load} has no spectrum files!")
+
+        outfile = out / f"sp{load}.txt"
+        if (redo_spectra or not outfile.exists()) and not avg_spectra_path:
+            console.print(f"Averaging {load} spectra")
+            flstr = " ".join([str(fl.absolute()) for fl in files])
+            os.system(f"cat {flstr} > {out}/temp.acq")
+
+            spfreq, n, spectra[load] = acqplot7amoon(acqfile=out / "temp.acq", **kwargs)
+
+            write_spec_txt(spfreq, n, spectra[load], outfile)
+
+        # Always read the spectra back in, because that's what Alan's C-code does.
+        # This has the small effect of reducing the precision of the spectra.
+        console.print(f"Reading averaged {load} spectra")
+
+        if outfile.exists():
+            spec = read_spec_txt(outfile)
+        elif avg_spectra_path:
+            spec = read_spec_txt(avg_spectra_path)
+
+        spfreq = spec["freq"] * un.MHz
+        spectra[load] = spec["spectra"]
+    return spfreq, spectra
+
+
+def _make_plots(out: Path, calobs: CalibrationObservation, plot):
+    write_specal(calobs, out / "specal.txt")
+    console.print("BEST DELAY: ", calobs.cal_coefficient_models["NW"].delay)
+
+    # Also save the modelled S11s
+    console.print("Saving modelled S11s")
+    write_modelled_s11s(calobs, out / "s11_modelled.txt")
+
+    if plot:
+        # Make plots...
+        console.print("Plotting S11 models...")
+        ax = calobs.plot_s11_models()
+        ax.flatten()[0].figure.savefig(out / "s11_models.png")
+
+        console.print("Plotting raw spectra...")
+        fig = calobs.plot_raw_spectra()
+        fig.savefig(out / "raw_spectra.png")
+
+        console.print("Plotting calibration coefficients...")
+        fig = calobs.plot_coefficients()
+        fig.savefig(out / "calibration_coefficients.png")
+
+
 @main.command()
 @click.argument("s11date", type=str)
 @click.argument("specyear", type=int)
 @click.argument("specday", type=int)
-@click.option(
-    "-d",
-    "--datadir",
-    type=click.Path(dir_okay=True, file_okay=False, exists=True),
-    default="/data5/edges/data/EDGES3_data/MRO/",
-)
-@click.option(
-    "-o",
-    "--out",
-    type=click.Path(dir_okay=True, file_okay=False, exists=True),
-    default=".",
-    help="output directory",
-)
 @click.option("--redo-s11/--no-s11", default=None)
-@click.option("--redo-spectra/--no-spectra", default=None)
-@click.option("--redo-cal/--no-cal", default=None)
 @click.option("-res", "--match-resistance", type=float, default=50.0)
 @click.option("-ps", "--calkit-delays", type=float, default=33.0, help="in nanoseconds")
 @click.option(
@@ -486,99 +637,12 @@ def upload_memo(fname, title, memo, quiet):  # pragma: no cover
     help="as percent",
 )
 @click.option(
-    "-fstart",
-    type=float,
-    default=48.0,
-    help="in mhz",
+    "-d",
+    "--datadir",
+    type=click.Path(dir_okay=True, file_okay=False, exists=True),
+    default="/data5/edges/data/EDGES3_data/MRO/",
 )
-@click.option(
-    "-fstop",
-    type=float,
-    default=198.0,
-    help="in mhz",
-)
-@click.option(
-    "-smooth",
-    type=int,
-    default=8,
-)
-@click.option(
-    "-tload",
-    type=float,
-    default=300.0,
-    help="guess at the load temp",
-)
-@click.option(
-    "-tcal",
-    type=float,
-    default=1000.0,
-    help="guess at the load+noise source temp",
-)
-@click.option("-Lh", "Lh", type=int, default=-1)
-@click.option("-wfstart", type=float, default=50.0)
-@click.option("-wfstop", type=float, default=190.0)
-@click.option("-tcold", type=float, default=306.5)
-@click.option("-thot", type=float, default=393.22)
-@click.option("-tcab", type=float, default=306.5)
-@click.option("-cfit", type=int, default=7)
-@click.option(
-    "-wfit",
-    type=int,
-    default=7,
-)
-@click.option(
-    "-nfit3",
-    type=int,
-    default=10,
-)
-@click.option(
-    "-nfit2",
-    type=int,
-    default=27,
-)
-@click.option(
-    "--plot/--no-plot",
-    default=True,
-)
-@click.option(
-    "--avg-spectra-path",
-    type=click.Path(dir_okay=False, file_okay=True, exists=True),
-    help=(
-        "Path to a file containing averaged spectra in the format output by this "
-        "script (or the C code)"
-    ),
-)
-@click.option(
-    "--modelled-s11-path",
-    type=click.Path(dir_okay=False, file_okay=True, exists=True),
-    help=(
-        "path to a file containing modelled S11s in the format output by this "
-        "script (or the C code)"
-    ),
-)
-@click.option(
-    "--inject-lna-s11/--no-inject-lna-s11",
-    default=True,
-    help="inject LNA s11 form modelled_s11_path (if given)",
-)
-@click.option(
-    "--inject-source-s11s/--no-inject-source-s11s",
-    default=True,
-    help="inject source s11s from modelled_s11_path (if given)",
-)
-@click.option(
-    "--s11s-in-raul-format/--s11s-in-s1p",
-    default=False,
-    help="set to true if the S11's have been pre-calibrated and are Rauls format.",
-)
-@click.option(
-    "--lna-poly",
-    default=-1,
-    help=(
-        "Set to zero to force the LNA to be smoothed by a polynomial, not Fourier "
-        "series, even if it has <16 terms"
-    ),
-)
+@AlanModeOpts.add_opts
 def alancal(
     s11date,
     specyear,
@@ -616,8 +680,9 @@ def alancal(
     modelled_s11_path,
     inject_lna_s11,
     inject_source_s11s,
-    s11s_in_raul_format,
-    lna_poly,
+    tstart,
+    tstop,
+    delaystart,
 ):
     """Run a calibration in as close a manner to Alan's code as possible.
 
@@ -632,7 +697,12 @@ def alancal(
     Parameters
     ----------
     s11date
-        A date-string of the form 2022_319_04
+        A date-string of the form 2022_319_04 (if doing EDGES-3 cal) or a full path
+        to a file containing all calibrated S11s (if doing EDGES-2 cal).
+    specyear
+        The year the spectra were taken in, if doing EDGES-3 cal. Otherwise, zero.
+    specday
+        The day the spectra were taken on, if doing EDGES-3 cal. Otherwise, zero.
     """
     loads = ("amb", "hot", "open", "short")
     datadir = Path(datadir)
@@ -645,93 +715,73 @@ def alancal(
     if short_delay is None:
         short_delay = calkit_delays
 
-    if s11s_in_raul_format:
-        s11s = read_raul_s11_format(s11date)
-        s11freq = s11s.pop("freq") << un.MHz
-        raws11s = s11s
-    else:
-        raws11s = {}
-        for load in (*loads, "lna"):
-            outfile = out / f"s11{load}.csv"
-            if not s11s_in_raul_format and (redo_s11 or not outfile.exists()):
-                console.print(f"Calibrating {load} S11")
+    raws11s = {}
+    for load in (*loads, "lna"):
+        outfile = out / f"s11{load}.csv"
+        if redo_s11 or not outfile.exists():
+            console.print(f"Calibrating {load} S11")
 
-                fstem = f"{s11date}_lna" if load == "lna" else s11date
-                s11freq, raws11s[load] = reads1p1(
-                    Tfopen=Path(datadir) / f"{fstem}_O.s1p",
-                    Tfshort=Path(datadir) / f"{fstem}_S.s1p",
-                    Tfload=Path(datadir) / f"{fstem}_L.s1p",
-                    Tfant=Path(datadir) / f"{s11date}_{load}.s1p",
-                    res=match_resistance,
-                    loadps=load_delay,
-                    openps=open_delay,
-                    shortps=short_delay,
+            fstem = f"{s11date}_lna" if load == "lna" else s11date
+            s11freq, raws11s[load] = reads1p1(
+                Tfopen=Path(datadir) / f"{fstem}_O.s1p",
+                Tfshort=Path(datadir) / f"{fstem}_S.s1p",
+                Tfload=Path(datadir) / f"{fstem}_L.s1p",
+                Tfant=Path(datadir) / f"{s11date}_{load}.s1p",
+                res=match_resistance,
+                loadps=load_delay,
+                openps=open_delay,
+                shortps=short_delay,
+            )
+
+            if load == "lna":
+                # Correction for path length
+                raws11s[load] = corrcsv(
+                    s11freq,
+                    raws11s[load],
+                    lna_cable_length,
+                    lna_cable_dielectric,
+                    lna_cable_loss,
                 )
 
-                if load == "lna":
-                    # Correction for path length
-                    raws11s[load] = corrcsv(
-                        s11freq,
-                        raws11s[load],
-                        lna_cable_length,
-                        lna_cable_dielectric,
-                        lna_cable_loss,
+            # write out the CSV file
+            with open(out / f"s11{load}.csv", "w") as fl:
+                fl.write("BEGIN\n")
+                for freq, s11 in zip(s11freq, raws11s[load]):
+                    fl.write(
+                        f"{freq.to_value('MHz'):1.16e},{s11.real:1.16e},{s11.imag:1.16e}\n"
                     )
+                fl.write("END")
 
-                # write out the CSV file
-                with open(out / f"s11{load}.csv", "w") as fl:
-                    fl.write("BEGIN\n")
-                    for freq, s11 in zip(s11freq, raws11s[load]):
-                        fl.write(
-                            f"{freq.to_value('MHz'):1.16e},{s11.real:1.16e},{s11.imag:1.16e}\n"
-                        )
-                    fl.write("END")
-
-            # Always re-read the S11's to match the precision of the C-code.
-            console.print(f"Reading calibrated {load} S11")
-            s11freq, raws11s[load] = read_s11_csv(outfile)
-            s11freq <<= un.MHz
+        # Always re-read the S11's to match the precision of the C-code.
+        console.print(f"Reading calibrated {load} S11")
+        s11freq, raws11s[load] = read_s11_csv(outfile)
+        s11freq <<= un.MHz
 
     lna = raws11s.pop("lna")
 
     # Now average the spectra
     spectra = {}
-    for load in loads:
-        outfile = out / f"sp{load}.txt"
-        if (redo_spectra or not outfile.exists()) and not avg_spectra_path:
-            console.print(f"Averaging {load} spectra")
-
-            specdate = f"{specyear:04}_{specday:03}"
-            d = f"{datadir}/mro/{load}/{specyear:04}/{specdate}*{load}.acq"
-            os.system(f"cat {d} > {out}/temp.acq")
-            spfreq, n, spectra[load] = acqplot7amoon(
-                acqfile=out / "temp.acq",
-                fstart=fstart,
-                fstop=fstop,
-                smooth=smooth,
-                tload=tload,
-                tcal=tcal,
-            )
-
-            with open(outfile, "w") as fl:
-                for i, (freq, spec) in enumerate(zip(spfreq, spectra[load])):
-                    f = freq.to_value("MHz")
-                    if i == 0:
-                        fl.write(f"{f:12.6f} {spec:12.6f} {1:4.0f} {n} // temp.acq\n")
-                    else:
-                        fl.write(f"{f:12.6f} {spec:12.6f} {1:4.0f}\n")
-
-        # Always read the spectra back in, because that's what Alan's C-code does.
-        # This has the small effect of reducing the precision of the spectra.
-        console.print(f"Reading averaged {load} spectra")
-
-        if outfile.exists():
-            spec = read_spec_txt(outfile)
-        elif avg_spectra_path:
-            spec = read_spec_txt(avg_spectra_path)
-
-        spfreq = spec["freq"] * un.MHz
-        spectra[load] = spec["spectra"]
+    specdate = f"{specyear:04}_{specday:03}"
+    specfiles = {
+        load: sorted(
+            Path(f"{datadir}/mro/{load}/{specyear:04}").glob(f"{specdate}*{load}.acq")
+        )
+        for load in loads
+    }
+    spfreq, spectra = _average_spectra(
+        specfiles,
+        out,
+        redo_spectra,
+        avg_spectra_path,
+        fstart=fstart,
+        fstop=fstop,
+        smooth=smooth,
+        tload=tload,
+        tcal=tcal,
+        tstart=tstart,
+        tstop=tstop,
+        delaystart=delaystart,
+    )
 
     # Now do the calibration
     outfile = out / "specal.txt"
@@ -739,7 +789,169 @@ def alancal(
         return
 
     console.print("Performing calibration")
-    calobs = edges3cal(
+    calobs = edges(
+        spfreq=spfreq,
+        spcold=spectra["amb"],
+        sphot=spectra["hot"],
+        spopen=spectra["open"],
+        spshort=spectra["short"],
+        s11freq=s11freq,
+        s11cold=raws11s["amb"],
+        s11hot=raws11s["hot"],
+        s11open=raws11s["open"],
+        s11short=raws11s["short"],
+        s11lna=lna,
+        Lh=Lh,
+        wfstart=wfstart,
+        wfstop=wfstop,
+        tcold=tcold,
+        thot=thot,
+        tcab=tcab,
+        cfit=cfit,
+        wfit=wfit,
+        nfit3=nfit3,
+        nfit2=nfit2,
+        tload=tload,
+        tcal=tcal,
+    )
+
+    if modelled_s11_path:
+        calobs = _inject_s11s(
+            calobs, modelled_s11_path, loads, inject_lna_s11, inject_source_s11s
+        )
+    else:
+        for name, load in calobs.loads.items():
+            console.print(f"Using delay={load.reflections.model_delay} for load {name}")
+
+    _make_plots(out, calobs, plot)
+
+
+@main.command()
+@click.option("--s11-path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--ambient-acqs", type=click.Path(exists=True, dir_okay=True), multiple=True
+)
+@click.option(
+    "--hotload-acqs", type=click.Path(exists=True, dir_okay=True), multiple=True
+)
+@click.option("--open-acqs", type=click.Path(exists=True, dir_okay=True), multiple=True)
+@click.option(
+    "--short-acqs", type=click.Path(exists=True, dir_okay=True), multiple=True
+)
+@click.option(
+    "--s11s-in-raul-format/--s11s-in-s1p",
+    default=True,
+    help="set to true if the S11's have been pre-calibrated and are Rauls format.",
+)
+@click.option(
+    "--lna-poly",
+    default=-1,
+    help=(
+        "Set to zero to force the LNA to be smoothed by a polynomial, not Fourier "
+        "series, even if it has <16 terms"
+    ),
+)
+@AlanModeOpts.add_opts
+def alancal2(
+    s11_path,
+    ambient_acqs,
+    hotload_acqs,
+    open_acqs,
+    short_acqs,
+    out,
+    redo_spectra,
+    redo_cal,
+    fstart,
+    fstop,
+    smooth,
+    tload,
+    tcal,
+    Lh,  # noqa: N803
+    wfstart,
+    wfstop,
+    tcold,
+    thot,
+    tcab,
+    cfit,
+    wfit,
+    nfit3,
+    nfit2,
+    plot,
+    avg_spectra_path,
+    modelled_s11_path,
+    inject_lna_s11,
+    inject_source_s11s,
+    s11s_in_raul_format,
+    lna_poly,
+    tstart,
+    tstop,
+    delaystart,
+):
+    """Run a calibration in as close a manner to Alan's code as possible.
+
+    This exists mostly for being able to compare to Alan's memos etc in an easy way. It
+    is much less flexible than using the library directly, and is not recommended for
+    general use.
+
+    This is supposed to emulate one of Alan's C-shell scripts, usually called "docal",
+    and thus it runs a complete calibration, not just a single part. However, you can
+    turn off parts of the calibration by setting the appropriate flags to False.
+
+    Parameters
+    ----------
+    s11date
+        A date-string of the form 2022_319_04 (if doing EDGES-3 cal) or a full path
+        to a file containing all calibrated S11s (if doing EDGES-2 cal).
+    specyear
+        The year the spectra were taken in, if doing EDGES-3 cal. Otherwise, zero.
+    specday
+        The day the spectra were taken on, if doing EDGES-3 cal. Otherwise, zero.
+    """
+    if s11_path is None or not Path(s11_path).exists():
+        raise ValueError("s11_path does not exist")
+    loads = ("amb", "hot", "open", "short")
+    out = Path(out)
+
+    if s11s_in_raul_format:
+        s11s = read_raul_s11_format(s11_path)
+        s11freq = s11s.pop("freq") << un.MHz
+        raws11s = s11s
+    else:
+        raise NotImplementedError(
+            "We have not yet implemented S11 calibration in alanmode."
+        )
+
+    lna = raws11s.pop("lna")
+
+    # Now average the spectra
+    specfiles = {
+        "amb": [Path(fl) for fl in ambient_acqs],
+        "hot": [Path(fl) for fl in hotload_acqs],
+        "short": [Path(fl) for fl in short_acqs],
+        "open": [Path(fl) for fl in open_acqs],
+    }
+    spfreq, spectra = _average_spectra(
+        specfiles,
+        out,
+        redo_spectra,
+        avg_spectra_path,
+        fstart=fstart,
+        fstop=fstop,
+        smooth=smooth,
+        tload=tload,
+        tcal=tcal,
+        tstart=tstart,
+        tstop=tstop,
+        delaystart=delaystart,
+    )
+
+    # Now do the calibration
+    outfile = out / "specal.txt"
+    if not redo_cal and outfile.exists():
+        return
+
+    console.print("Performing calibration")
+    calobs = edges(
         spfreq=spfreq,
         spcold=spectra["amb"],
         sphot=spectra["hot"],
@@ -764,51 +976,43 @@ def alancal(
         tload=tload,
         tcal=tcal,
         lna_poly=lna_poly,
+        s11rig=raws11s["s11rig"],
+        s12rig=raws11s["s12rig"],
+        s22rig=raws11s["s22rig"],
     )
 
     if modelled_s11_path:
-        _alans11m = np.genfromtxt(
-            modelled_s11_path,
-            comments="#",
-            names=True,
-        )
-
-        alans11m = {}
-        for load in [*loads, "lna"]:
-            alans11m[load] = _alans11m[f"{load}_real"] + 1j * _alans11m[f"{load}_imag"]
-
-        calobs = calobs.inject(
-            lna_s11=alans11m["lna"] if inject_lna_s11 else None,
-            source_s11s={
-                "ambient": alans11m["amb"],
-                "hot_load": alans11m["hot"],
-                "short": alans11m["short"],
-                "open": alans11m["open"],
-            }
-            if inject_source_s11s
-            else None,
+        calobs = _inject_s11s(
+            calobs, modelled_s11_path, loads, inject_lna_s11, inject_source_s11s
         )
     else:
         for name, load in calobs.loads.items():
             console.print(f"Using delay={load.reflections.model_delay} for load {name}")
 
-    write_specal(calobs, outfile)
-    console.print("BEST DELAY: ", calobs.cal_coefficient_models["NW"].delay)
+    _make_plots(out, calobs, plot)
 
-    # Also save the modelled S11s
-    console.print("Saving modelled S11s")
-    write_modelled_s11s(calobs, out / "s11_modelled.txt")
 
-    if plot:
-        # Make plots...
-        console.print("Plotting S11 models...")
-        ax = calobs.plot_s11_models()
-        ax.flatten()[0].figure.savefig(out / "s11_models.png")
+def _inject_s11s(
+    calobs, modelled_s11_path, loads, inject_lna_s11: bool, inject_source_s11s: bool
+):
+    _alans11m = np.genfromtxt(
+        modelled_s11_path,
+        comments="#",
+        names=True,
+    )
 
-        console.print("Plotting raw spectra...")
-        fig = calobs.plot_raw_spectra()
-        fig.savefig(out / "raw_spectra.png")
+    alans11m = {}
+    for load in [*loads, "lna"]:
+        alans11m[load] = _alans11m[f"{load}_real"] + 1j * _alans11m[f"{load}_imag"]
 
-        console.print("Plotting calibration coefficients...")
-        fig = calobs.plot_coefficients()
-        fig.savefig(out / "calibration_coefficients.png")
+    return calobs.inject(
+        lna_s11=alans11m["lna"] if inject_lna_s11 else None,
+        source_s11s={
+            "ambient": alans11m["amb"],
+            "hot_load": alans11m["hot"],
+            "short": alans11m["short"],
+            "open": alans11m["open"],
+        }
+        if inject_source_s11s
+        else None,
+    )
