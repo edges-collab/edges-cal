@@ -1459,9 +1459,6 @@ class CalFileReadError(Exception):
 class Calibrator:
     freq: FrequencyRange = attr.ib()
 
-    cterms: int = attr.ib()
-    wterms: int = attr.ib()
-
     _C1: Callable[[np.ndarray], np.ndarray] = attr.ib()
     _C2: Callable[[np.ndarray], np.ndarray] = attr.ib()
     _Tunc: Callable[[np.ndarray], np.ndarray] = attr.ib()
@@ -1472,7 +1469,7 @@ class Calibrator:
     coefficient_freq_units: un.Unit = attr.ib(default="MHz")
     receiver_s11_freq_units: un.Unit = attr.ib(default="MHz")
 
-    internal_switch = attr.ib()
+    internal_switch = attr.ib(default=None)
     t_load: float = attr.ib(300)
     t_load_ns: float = attr.ib(350)
     metadata: dict = attr.ib(default=attr.Factory(dict))
@@ -1532,6 +1529,14 @@ class Calibrator:
     @classmethod
     def from_calfile(cls, path: tp.PathLike) -> Calibrator:
         """Generate from calfile."""
+        if not path.exists():
+            raise FileNotFoundError(f"calfile {path} not found!")
+
+        if not h5py.is_hdf5(path):
+            raise ValueError(
+                "This file is not in HDF5 format. "
+                "Perhaps you mean to read it as a specal object?"
+            )
         with h5py.File(path, "r") as fl:
             version = fl.attrs.get("format.version", "1.0")
             if "lna_s11_real" in fl:

@@ -13,7 +13,7 @@ from read_acq.gsdata import read_acq_to_gsdata
 
 from . import modelling as mdl
 from . import reflection_coefficient as rc
-from .calobs import CalibrationObservation, Load
+from .calobs import CalibrationObservation, Calibrator, Load
 from .loss import HotLoadCorrection, get_cable_loss_model, get_loss_model_from_file
 from .s11 import LoadS11, Receiver, StandardsReadings, VNAReading
 from .spectra import LoadSpectrum
@@ -421,6 +421,55 @@ def read_specal(fname):
             "weight",
         ],
         usecols=(1, 3, 4, 6, 8, 10, 12, 14, 16),
+    )
+
+
+def read_specal_as_calibrator(
+    fname: str | Path, nfit1: int = 27, t_load: float = 300, t_load_ns: float = 1000
+):
+    """Read a specal.txt file format as a Calibrator object.
+
+    Parameters
+    ----------
+    fname
+        The path to the specal file.
+    nfit1
+        The number of terms in the model to fit through the points.
+    t_load
+        The load temperature assumed in the calibration.
+    t_load_ns
+        The load+noise-source temperature assumed in the calibration.
+    """
+    data = read_specal(fname)
+
+    model_type = mdl.Fourier if nfit1 > 16 else mdl.Polynomial
+    complex_model_type = mdl.ComplexRealImagModel
+
+    model_transform = (
+        mdl.ZerotooneTransform(range=(data["freq"].min(), data["freq"].max()))
+        if nfit1 > 16
+        else mdl.Log10Transform(scale=data["freq"][len(data["freq"]) // 2])
+    )
+    fit_kwargs = {"method": "alan-qrd"}
+    model_kwargs = {"period": 1.5} if nfit1 > 16 else {}
+
+    model = model_type(transform=model_transform, n_terms=nfit1, **model_kwargs).at(
+        x=data["freq"]
+    )
+
+    return Calibrator(
+        freq=FrequencyRange(data["freq"] * un.MHz),
+        C1=model.fit(ydata=data["C1"], **fit_kwargs).fit,
+        C2=model.fit(ydata=data["C2"], **fit_kwargs).fit,
+        Tunc=model.fit(ydata=data["Tunc"], **fit_kwargs).fit,
+        Tcos=model.fit(ydata=data["Tcos"], **fit_kwargs).fit,
+        Tsin=model.fit(ydata=data["Tsin"], **fit_kwargs).fit,
+        receiver_s11=complex_model_type(
+            real=model.fit(ydata=data["s11lna_real"], **fit_kwargs).fit,
+            imag=model.fit(ydata=data["s11lna_imag"], **fit_kwargs).fit,
+        ),
+        t_load=t_load,
+        t_load_ns=t_load_ns,
     )
 
 

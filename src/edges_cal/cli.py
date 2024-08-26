@@ -574,7 +574,7 @@ def _make_plots(out: Path, calobs: CalibrationObservation, plot):
 
     console.print("Saving hot-load loss model")
     np.savetxt(
-        "hot_load_loss.txt",
+        out / "hot_load_loss.txt",
         np.array(
             [
                 calobs.freq.freq.to_value("MHz"),
