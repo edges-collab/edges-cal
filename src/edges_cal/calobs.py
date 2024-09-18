@@ -1351,8 +1351,6 @@ class CalibrationObservation:
     def to_calibrator(self):
         """Directly create a :class:`Calibrator` object without writing to file."""
         return Calibrator(
-            cterms=self.cterms,
-            wterms=self.wterms,
             t_load=self.t_load,
             t_load_ns=self.t_load_ns,
             C1=self.cal_coefficient_models["C1"],
@@ -1638,8 +1636,6 @@ class Calibrator:
     @classmethod
     def _read_calfile_v2(cls, fl: h5py.File):
         """Read calfile v2."""
-        cterms = fl.attrs["cterms"]
-        wterms = fl.attrs["wterms"]
         t_load = fl.attrs["t_load"]
         t_load_ns = fl.attrs["t_load_ns"]
         fixed_freq = fl.attrs["fixed_freqs"]
@@ -1669,8 +1665,6 @@ class Calibrator:
             raise NotImplementedError("model-based calibration files not yet supported")
 
         return cls(
-            cterms=cterms,
-            wterms=wterms,
             t_load=t_load,
             t_load_ns=t_load_ns,
             freq=freq,

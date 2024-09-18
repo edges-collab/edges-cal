@@ -493,7 +493,7 @@ class AlanModeOpts:
     )
     avg_spectra_path = click.option(
         "--avg-spectra-path",
-        type=click.Path(dir_okay=False, file_okay=True, exists=True),
+        type=click.Path(dir_okay=True, file_okay=False, exists=True),
         help=(
             "Path to a file containing averaged spectra in the format output by this "
             "script (or the C code)"
@@ -537,11 +537,11 @@ def _average_spectra(
 ):
     spectra = {}
     for load, files in specfiles.items():
-        if len(files) == 0:
-            raise ValueError(f"{load} has no spectrum files!")
-
         outfile = out / f"sp{load}.txt"
         if (redo_spectra or not outfile.exists()) and not avg_spectra_path:
+            if len(files) == 0:
+                raise ValueError(f"{load} has no spectrum files!")
+
             console.print(f"Averaging {load} spectra")
             flstr = " ".join([str(fl.absolute()) for fl in files])
             os.system(f"cat {flstr} > {out}/temp.acq")
