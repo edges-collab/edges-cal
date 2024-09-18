@@ -1527,6 +1527,8 @@ class Calibrator:
     @classmethod
     def from_calfile(cls, path: tp.PathLike) -> Calibrator:
         """Generate from calfile."""
+        path = Path(path)
+
         if not path.exists():
             raise FileNotFoundError(f"calfile {path} not found!")
 
