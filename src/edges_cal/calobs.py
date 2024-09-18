@@ -1539,7 +1539,7 @@ class Calibrator:
             )
         with h5py.File(path, "r") as fl:
             version = fl.attrs.get("format.version", "1.0")
-            if "lna_s11_real" in fl:
+            if "C1" in fl:
                 version = "0.0"
 
             try:
@@ -1602,8 +1602,21 @@ class Calibrator:
             # For backwards compat
             metadata = {}
 
-        _lna_s11_rl = Spline(freq.freq.to_value("MHz"), fl["lna_s11_real"][...])
-        _lna_s11_im = Spline(freq.freq.to_value("MHz"), fl["lna_s11_imag"][...])
+        rcv = fl["receiver_s11"]["data"]
+
+        receiver_s11 = s11.S11Model(
+            raw_s11=rcv["_raw_s11"][()],
+            freq=FrequencyRange(**{k: v[()] for k, v in rcv["freq"].items()}),
+            n_terms=rcv["n_terms"][()],
+            model_type=rcv["model_type"][()],
+            complex_model_type=rcv["complex_model_type"][()],
+            model_delay=rcv["model_delay"][()],
+            model_transform=rcv["model_transform"][()],
+            set_transform_range=rcv["set_transform_range"][()],
+            model_kwargs={k: v[()] for k, v in rcv["model_kwargs"].items()},
+            use_spline=bool(rcv["use_spline"][()]),
+            metadata={k: v[()] for k, v in rcv["metadata"].items()},
+        )
 
         _intsw_s11_rl = Spline(freq.freq, fl["internal_switch_s11_real"][...])
         _intsw_s11_im = Spline(freq.freq, fl["internal_switch_s11_imag"][...])
@@ -1625,7 +1638,7 @@ class Calibrator:
             Tcos=Tcos_poly,
             Tsin=Tsin_poly,
             freq=freq,
-            receiver_s11=lambda x: _lna_s11_rl(x) + 1j * _lna_s11_im(x),
+            receiver_s11=receiver_s11,
             internal_switch=internal_switch,
             t_load=t_load,
             t_load_ns=t_load_ns,
