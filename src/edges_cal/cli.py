@@ -517,6 +517,11 @@ class AlanModeOpts:
         default=True,
         help="inject source s11s from modelled_s11_path (if given)",
     )
+    write_h5 = click.option(
+        "--write-h5/--no-h5",
+        default=False,
+        help="write the final calibrator object to h5 file as well as the specal.txt",
+    )
 
     @classmethod
     def add_opts(cls, fnc, ignore=None):
@@ -697,6 +702,7 @@ def alancal(
     tstart,
     tstop,
     delaystart,
+    write_h5,
 ):
     """Run a calibration in as close a manner to Alan's code as possible.
 
@@ -839,6 +845,11 @@ def alancal(
 
     _make_plots(out, calobs, plot)
 
+    if write_h5:
+        h5file = out / "specal.h5"
+        console.print(f"Writing calibration results to {h5file}")
+        calobs.write(h5file)
+
 
 @main.command()
 @click.option("--s11-path", type=click.Path(exists=True, dir_okay=False))
@@ -900,6 +911,7 @@ def alancal2(
     tstart,
     tstop,
     delaystart,
+    write_h5,
 ):
     """Run a calibration in as close a manner to Alan's code as possible.
 
@@ -1005,6 +1017,11 @@ def alancal2(
         console.print(f"Using delay={calobs.receiver.model_delay} for Receiver")
 
     _make_plots(out, calobs, plot)
+
+    if write_h5:
+        h5file = out / "specal.h5"
+        console.print(f"Writing calibration results to {h5file}")
+        calobs.write(h5file)
 
 
 def _inject_s11s(
