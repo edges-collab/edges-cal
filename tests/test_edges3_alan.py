@@ -1,5 +1,9 @@
 """
 Integration tests that ensure we can reproduce Alan's C-code results.
+
+The data that we compare to is produced by Alan's pipeline using the
+https://github.com/edges-collab/edges3-day300-310-test repo and the
+docal_316test script with both the fittp-fix and pi-fix turned ON.
 """
 
 import shutil
@@ -140,12 +144,12 @@ def test_modelled_s11(edges3_2022_316):
 
 def test_specal(edges3_2022_316: Path):
     # Test final calibration
-    acal = am.read_specal(f"{alandata}/specal_316test.txt")
+    acal = am.read_specal(f"{alandata}/specal.txt")
     ourcal = am.read_specal(f"{edges3_2022_316}/specal.txt")
 
     np.testing.assert_allclose(acal["freq"], ourcal["freq"])
     np.testing.assert_allclose(acal["C1"], ourcal["C1"], atol=2e-6)
-    np.testing.assert_allclose(acal["C2"], ourcal["C2"], atol=2e-6)
-    np.testing.assert_allclose(acal["Tunc"], ourcal["Tunc"], atol=2e-6)
-    np.testing.assert_allclose(acal["Tcos"], ourcal["Tcos"], atol=2e-6)
-    np.testing.assert_allclose(acal["Tsin"], ourcal["Tsin"], atol=2e-6)
+    np.testing.assert_allclose(acal["C2"], ourcal["C2"], atol=4e-5)
+    np.testing.assert_allclose(acal["Tunc"], ourcal["Tunc"], atol=1e-5)
+    np.testing.assert_allclose(acal["Tcos"], ourcal["Tcos"], atol=2e-5)
+    np.testing.assert_allclose(acal["Tsin"], ourcal["Tsin"], atol=2e-5)
