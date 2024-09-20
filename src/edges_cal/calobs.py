@@ -1519,12 +1519,6 @@ class Calibrator:
         return getattr(self, f"_{key}")(freq)
 
     @classmethod
-    def from_calobs_file(cls, path: tp.PathLike) -> Calibrator:
-        """Generate from calobs file."""
-        calobs = hickle.load(path)
-        return calobs.to_calibrator()
-
-    @classmethod
     def from_calfile(cls, path: tp.PathLike) -> Calibrator:
         """Generate from calfile."""
         path = Path(path)
@@ -1551,104 +1545,6 @@ class Calibrator:
                 ) from e
 
     @classmethod
-    def _read_calfile_v1(cls, fl: h5py.File):
-        cterms = fl.attrs["cterms"]
-        wterms = fl.attrs["wterms"]
-        t_load = fl.attrs["t_load"]
-        t_load_ns = fl.attrs["t_load_ns"]
-
-        cal = hickle.load(fl["cal_coefficients"])
-
-        freq = hickle.load(fl["frequencies"])
-        receiver_s11 = hickle.load(fl["receiver_s11"])
-        internal_switch = hickle.load(fl["internal_switch"])
-        metadata = hickle.load(fl["metadata"])
-
-        return cls(
-            cterms=cterms,
-            wterms=wterms,
-            t_load=t_load,
-            t_load_ns=t_load_ns,
-            C1=cal["C1"],
-            C2=cal["C2"],
-            Tunc=cal["Tunc"],
-            Tcos=cal["Tcos"],
-            Tsin=cal["Tsin"],
-            freq=freq,
-            receiver_s11=receiver_s11.s11_model,
-            internal_switch=internal_switch,
-            metadata=metadata,
-            coefficient_freq_units="norm",
-        )
-
-    @classmethod
-    def _read_calfile_v0(cls, fl: h5py.File):
-        cterms = int(fl.attrs["cterms"])
-        wterms = int(fl.attrs["wterms"])
-        t_load = fl.attrs.get("t_load", 300)
-        t_load_ns = fl.attrs.get("t_load_ns", 400)
-
-        C1_poly = np.poly1d(fl["C1"][...])
-        C2_poly = np.poly1d(fl["C2"][...])
-        Tcos_poly = np.poly1d(fl["Tcos"][...])
-        Tsin_poly = np.poly1d(fl["Tsin"][...])
-        Tunc_poly = np.poly1d(fl["Tunc"][...])
-
-        freq = FrequencyRange(fl["frequencies"][...] * un.MHz)
-
-        try:
-            metadata = dict(fl["metadata"].attrs)
-        except KeyError:
-            # For backwards compat
-            metadata = {}
-
-        rcv = fl["receiver_s11"]["data"]
-
-        receiver_s11 = s11.S11Model(
-            raw_s11=rcv["_raw_s11"][()],
-            freq=FrequencyRange(**{k: v[()] for k, v in rcv["freq"].items()}),
-            n_terms=rcv["n_terms"][()],
-            model_type=rcv["model_type"][()],
-            complex_model_type=rcv["complex_model_type"][()],
-            model_delay=rcv["model_delay"][()],
-            model_transform=rcv["model_transform"][()],
-            set_transform_range=rcv["set_transform_range"][()],
-            model_kwargs={k: v[()] for k, v in rcv["model_kwargs"].items()},
-            use_spline=bool(rcv["use_spline"][()]),
-            metadata={k: v[()] for k, v in rcv["metadata"].items()},
-        )
-
-        _intsw_s11_rl = Spline(freq.freq, fl["internal_switch_s11_real"][...])
-        _intsw_s11_im = Spline(freq.freq, fl["internal_switch_s11_imag"][...])
-        _intsw_s12_rl = Spline(freq.freq, fl["internal_switch_s12_real"][...])
-        _intsw_s12_im = Spline(freq.freq, fl["internal_switch_s12_imag"][...])
-        _intsw_s22_rl = Spline(freq.freq, fl["internal_switch_s22_real"][...])
-        _intsw_s22_im = Spline(freq.freq, fl["internal_switch_s22_imag"][...])
-
-        internal_switch = SimpleNamespace(
-            s11_model=lambda freq: _intsw_s11_rl(freq) + _intsw_s11_im(freq) * 1j,
-            s12_model=lambda freq: _intsw_s12_rl(freq) + _intsw_s12_im(freq) * 1j,
-            s22_model=lambda freq: _intsw_s22_rl(freq) + _intsw_s22_im(freq) * 1j,
-        )
-
-        return cls(
-            C1=C1_poly,
-            C2=C2_poly,
-            Tunc=Tunc_poly,
-            Tcos=Tcos_poly,
-            Tsin=Tsin_poly,
-            freq=freq,
-            receiver_s11=receiver_s11,
-            internal_switch=internal_switch,
-            t_load=t_load,
-            t_load_ns=t_load_ns,
-            cterms=cterms,
-            wterms=wterms,
-            metadata=metadata,
-            coefficient_freq_units="norm",
-        )
-
-    @classmethod
     def _read_calfile_v2(cls, fl: h5py.File):
         """Read calfile v2."""
         t_load = fl.attrs["t_load"]
@@ -1659,26 +1555,25 @@ class Calibrator:
         freq = hickle.load(fl["frequencies"])
         f = freq.freq.to_value("MHz")
 
-        if fixed_freq:
-            cc = fl["cal_coefficients"]
-            cc = {k: cc[k][...] for k in cc}
-
-            rcv = fl["receiver_s11"]["s11"][()]
-            rcv = ComplexSpline(f, rcv)
-
-            swg = fl["internal_switch"]
-            if "s11" in swg:
-                sws11 = ComplexSpline(f, swg["s11"][()])
-                sws12 = ComplexSpline(f, swg["s12"][()])
-                sws22 = ComplexSpline(f, swg["s22"][()])
-                sw = SimpleNamespace(s11_model=sws11, s12_model=sws12, s22_model=sws22)
-            else:
-                sw = None
-
-            cc = {k: Spline(f, v) for k, v in cc.items()}
-        else:
+        if not fixed_freq:
             raise NotImplementedError("model-based calibration files not yet supported")
 
+        cc = fl["cal_coefficients"]
+        cc = {k: cc[k][...] for k in cc}
+
+        rcv = fl["receiver_s11"]["s11"][()]
+        rcv = ComplexSpline(f, rcv)
+
+        swg = fl["internal_switch"]
+        if "s11" in swg:
+            sws11 = ComplexSpline(f, swg["s11"][()])
+            sws12 = ComplexSpline(f, swg["s12"][()])
+            sws22 = ComplexSpline(f, swg["s22"][()])
+            sw = SimpleNamespace(s11_model=sws11, s12_model=sws12, s22_model=sws22)
+        else:
+            sw = None
+
+        cc = {k: Spline(f, v) for k, v in cc.items()}
         return cls(
             t_load=t_load,
             t_load_ns=t_load_ns,
@@ -1688,12 +1583,6 @@ class Calibrator:
             metadata=meta,
             **cc,
         )
-
-    @classmethod
-    def from_old_calfile(cls, path: tp.PathLike) -> Calibrator:
-        """Read from older calfiles."""
-        with h5py.File(path, "r") as fl:
-            return cls._read_calfile_v0(fl)
 
     @classmethod
     def from_calobs(cls, calobs: CalibrationObservation) -> Calibrator:

@@ -128,7 +128,7 @@ def acqplot7amoon(
 
     if tstart > 0 or tstop < 23:
         # Note that tstop=23 includes all possible hours since we have <=
-        hours = data.times[:, 0].datetime.hour
+        hours = np.array([x.hour for x in data.times[:, 0].datetime])
         data = select_times(data, indx=(hours >= tstart) & (hours <= tstop))
 
     if delaystart > 0:
@@ -139,13 +139,13 @@ def acqplot7amoon(
     freq = FrequencyRange.from_edges(f_low=fstart * un.MHz, f_high=fstop * un.MHz)
     q = dicke_calibration(data).data[0, 0, :, freq.mask]
 
-    freq = freq.decimate(
-        bin_size=smooth,
-        decimate_at=0,
-        embed_mask=True,
-    )
-
     if smooth > 0:
+        freq = freq.decimate(
+            bin_size=smooth,
+            decimate_at=0,
+            embed_mask=True,
+        )
+
         q = gauss_smooth(q, size=smooth, decimate_at=0)
 
     return freq.freq, len(q), tcal * np.mean(q, axis=0) + tload
@@ -387,18 +387,25 @@ def read_s11_csv(fname) -> tuple[np.ndarray, np.ndarray]:
 
 def read_spec_txt(fname):
     """Read an averaged-spectrum file, like the ones output by acqplot7amoon."""
-    return np.genfromtxt(
+    out = np.genfromtxt(
         fname,
         names=["freq", "spectra", "weight"],
         comments="/",
         usecols=[0, 1, 2],
     )
+    with open(fname) as fl:
+        n = int(fl.readline()[31:].split(" ")[0])
+
+    return out, n
 
 
 def write_spec_txt(freq, n, spec, fname):
     """Write an averaged-spectrum file, like spe_<load>r.txt files from edges2k.c."""
+    if hasattr(freq, "unit"):
+        freq = freq.to_value("MHz")
+
     with open(fname, "w") as fl:
-        for i, (f, sp) in enumerate(zip(freq.to_value("MHz"), spec)):
+        for i, (f, sp) in enumerate(zip(freq, spec)):
             if i == 0:
                 fl.write(f"{f:12.6f} {sp:12.6f} {1:4.0f} {n} // temp.acq\n")
             else:
