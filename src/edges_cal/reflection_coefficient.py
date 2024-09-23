@@ -324,7 +324,8 @@ def input_impedance_transmission_line(
         * (z_load + z0 * np.tanh(gamma * length))
         / (z_load * np.tanh(gamma * length) + z0)
     )
-    
+
+
 @hickleable()
 @attrs.define(frozen=True, slots=False, kw_only=True)
 class CalkitStandard:
