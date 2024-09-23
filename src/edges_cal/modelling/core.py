@@ -90,7 +90,7 @@ class FixedLinearModel(yaml.YAMLObject):
         self,
         x: np.ndarray | None = None,
         parameters: Sequence | None = None,
-        indices: Sequence | None = None,
+        indices: Sequence | slice = slice(None),
     ) -> np.ndarray:
         """Evaluate the model.
 
@@ -276,7 +276,7 @@ class Model(metaclass=ABCMeta):
         x: np.ndarray | None = None,
         basis: np.ndarray | None = None,
         parameters: Sequence | None = None,
-        indices: Sequence[int] | None = None,
+        indices: Sequence[int] | slice = slice(None),
         with_scaler: bool = True,
     ) -> np.ndarray:
         """Evaluate the model.
@@ -310,19 +310,20 @@ class Model(metaclass=ABCMeta):
         else:
             parameters = np.asarray(parameters)
 
-        indices = np.arange(len(parameters)) if indices is None else np.array(indices)
-
         if x is None and basis is None:
             raise ValueError("You must supply either x or basis!")
 
         if basis is None:
             basis = self.get_basis_terms(x, with_scaler=with_scaler)
 
-        if any(idx >= len(basis) for idx in indices):
-            raise ValueError("Cannot use more basis sets than available!")
+        if not isinstance(indices, slice):
+            indices = np.array(indices)
 
-        if len(parameters) != len(indices):
-            parameters = parameters[indices]
+            if any(idx >= len(basis) for idx in indices):
+                raise ValueError("Cannot use more basis sets than available!")
+
+            if len(parameters) != len(indices):
+                parameters = parameters[indices]
 
         return self.data_transform.inverse(x, np.dot(parameters, basis[indices]))
 

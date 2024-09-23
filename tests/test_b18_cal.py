@@ -81,6 +81,7 @@ def b18cal(tmpdir):
             "-nfit3=11",
             "--lna-poly=0",
             "--no-spectra",
+            "--no-plot",
             "--out",
             str(tmpdir),
         ],

@@ -79,10 +79,6 @@ dev = [
 edges-cal = "edges_cal.cli:main"
 
 [tool.pytest.ini_options]
-# Options for py.test:
-# Specify command line options as you would do when invoking py.test directly.
-# e.g. --cov-report html (or xml) for html/xml output or --junitxml junit.xml
-# in order to write a coverage file that can be read by Jenkins.
 addopts = "--verbose --durations=25"
 norecursedirs = [
     "dist",

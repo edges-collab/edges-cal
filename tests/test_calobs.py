@@ -229,3 +229,8 @@ def test_hickle_roundtrip(calobs, tmpdir):
     new = hickle.load(tmpdir / "tmp_hickle.h5")
 
     assert new == calobs
+
+
+def test_read_version_zero(data_path: Path):
+    calobs = cc.Calibrator.from_calfile(data_path / "calfiles/calfile_v0_hickled.h5")
+    assert isinstance(calobs, cc.Calibrator)

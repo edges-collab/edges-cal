@@ -1585,6 +1585,68 @@ class Calibrator:
         )
 
     @classmethod
+    def _read_calfile_v0(cls, fl: h5py.File):
+        t_load = fl.attrs.get("t_load", 300)
+        t_load_ns = fl.attrs.get("t_load_ns", 400)
+
+        C1_poly = np.poly1d(fl["C1"][...])
+        C2_poly = np.poly1d(fl["C2"][...])
+        Tcos_poly = np.poly1d(fl["Tcos"][...])
+        Tsin_poly = np.poly1d(fl["Tsin"][...])
+        Tunc_poly = np.poly1d(fl["Tunc"][...])
+
+        if "data" in fl["frequencies"]:
+            freq = hickle.load(fl["frequencies"])
+        else:
+            freq = FrequencyRange(fl["frequencies"][...] * un.MHz)
+
+        try:
+            metadata = dict(fl["metadata"].attrs)
+        except KeyError:
+            # For backwards compat
+            metadata = {}
+
+        if "receiver_s11" in fl:
+            receiver_s11 = hickle.load(fl["receiver_s11"])
+        else:
+            _lna_s11_rl = Spline(freq.freq.to_value("MHz"), fl["lna_s11_real"][...])
+            _lna_s11_im = Spline(freq.freq.to_value("MHz"), fl["lna_s11_imag"][...])
+
+            def receiver_s11(x):
+                return _lna_s11_rl(x) + 1j * _lna_s11_im(x)
+
+        if "internal_switch" in fl:
+            internal_switch = hickle.load(fl["internal_switch"])
+        else:
+            _intsw_s11_rl = Spline(freq.freq, fl["internal_switch_s11_real"][...])
+            _intsw_s11_im = Spline(freq.freq, fl["internal_switch_s11_imag"][...])
+            _intsw_s12_rl = Spline(freq.freq, fl["internal_switch_s12_real"][...])
+            _intsw_s12_im = Spline(freq.freq, fl["internal_switch_s12_imag"][...])
+            _intsw_s22_rl = Spline(freq.freq, fl["internal_switch_s22_real"][...])
+            _intsw_s22_im = Spline(freq.freq, fl["internal_switch_s22_imag"][...])
+
+            internal_switch = SimpleNamespace(
+                s11_model=lambda freq: _intsw_s11_rl(freq) + _intsw_s11_im(freq) * 1j,
+                s12_model=lambda freq: _intsw_s12_rl(freq) + _intsw_s12_im(freq) * 1j,
+                s22_model=lambda freq: _intsw_s22_rl(freq) + _intsw_s22_im(freq) * 1j,
+            )
+
+        return cls(
+            C1=C1_poly,
+            C2=C2_poly,
+            Tunc=Tunc_poly,
+            Tcos=Tcos_poly,
+            Tsin=Tsin_poly,
+            freq=freq,
+            receiver_s11=receiver_s11,
+            internal_switch=internal_switch,
+            t_load=t_load,
+            t_load_ns=t_load_ns,
+            metadata=metadata,
+            coefficient_freq_units="norm",
+        )
+
+    @classmethod
     def from_calobs(cls, calobs: CalibrationObservation) -> Calibrator:
         """Generate a :class:`Calibration` from an in-memory observation."""
         return calobs.to_calibrator()

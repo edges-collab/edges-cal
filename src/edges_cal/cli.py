@@ -560,9 +560,9 @@ def _average_spectra(
         console.print(f"Reading averaged {load} spectra")
 
         if outfile.exists():
-            spec = read_spec_txt(outfile)
+            spec, _ = read_spec_txt(outfile)
         elif avg_spectra_path:
-            spec = read_spec_txt(avg_spectra_path)
+            spec, _ = read_spec_txt(avg_spectra_path)
 
         spfreq = spec["freq"] * un.MHz
         spectra[load] = spec["spectra"]

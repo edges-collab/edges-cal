@@ -85,6 +85,7 @@ def edges3_2022_316(data_path, tmp_path_factory):
         "10",
         "-nfit2",
         "27",
+        "--no-plot",
         "--datadir",
         str(datadir),
     ]
@@ -104,10 +105,10 @@ def edges3_2022_316(data_path, tmp_path_factory):
 @pytest.mark.parametrize("load", loads)
 def test_spectra(edges3_2022_316: Path, load):
     # Test the raw spectra
-    data = am.read_spec_txt(f"{alandata}/sp{load}.txt")
+    data, _ = am.read_spec_txt(f"{alandata}/sp{load}.txt")
     spfreq = data["freq"]
     alanspec = data["spectra"]
-    data = am.read_spec_txt(f"{edges3_2022_316}/sp{load}.txt")
+    data, _ = am.read_spec_txt(f"{edges3_2022_316}/sp{load}.txt")
     ourspec = data["spectra"]
     np.testing.assert_allclose(spfreq, data["freq"])
 
