@@ -589,9 +589,7 @@ class CalibrationObservation:
         internal_switch_kwargs = internal_switch_kwargs or {}
         receiver_kwargs = receiver_kwargs or {}
         loss_models = loss_models or {
-            "hot_load": loss.get_cable_loss_model(
-                "UT-141C-SP", cable_length=4 * un.imperial.inch
-            )
+            "hot_load": loss.get_cable_loss_model("UT-141C-SP")
         }
 
         for v in [spectrum_kwargs, s11_kwargs, internal_switch_kwargs, receiver_kwargs]:

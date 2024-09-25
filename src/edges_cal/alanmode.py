@@ -46,16 +46,8 @@ def reads1p1(
         open={"offset_delay": openps * un.ps},
         match={"offset_delay": loadps * un.ps},
     )
-
-    calibrated = rc.de_embed(
-        calkit.open.reflection_coefficient(freq),
-        calkit.short.reflection_coefficient(freq),
-        calkit.match.reflection_coefficient(freq),
-        standards.open.s11,
-        standards.short.s11,
-        standards.match.s11,
-        load.s11,
-    )[0]
+    smatrix = rc.SMatrix.from_calkit_and_vna(calkit, standards)
+    calibrated = rc.gamma_de_embed(load.s11, smatrix)
     return freq, calibrated
 
 
@@ -276,9 +268,7 @@ def edges(
         specs[name] = specs[name].between_freqs(wfstart * un.MHz, wfstop * un.MHz)
 
     if Lh == -1:
-        hot_loss_model = get_cable_loss_model(
-            "UT-141C-SP", cable_length=4 * un.imperial.inch
-        )
+        hot_loss_model = get_cable_loss_model("UT-141C-SP")
     elif Lh == -2:
         if s11rig is None or s12rig is None or s22rig is None:
             raise ValueError("must provide rigid cable s11/s12/s22 if Lh=-2")

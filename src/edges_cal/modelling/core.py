@@ -324,6 +324,8 @@ class Model(metaclass=ABCMeta):
 
             if len(parameters) != len(indices):
                 parameters = parameters[indices]
+        elif len(parameters) != basis.shape[0] and indices == slice(None):
+            indices = slice(0, len(parameters))
 
         return self.data_transform.inverse(x, np.dot(parameters, basis[indices]))
 

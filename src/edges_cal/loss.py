@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import cached_property
 
 import attrs
 import numpy as np
 from astropy import units as un
 from hickleable import hickleable
+from numpy import typing as npt
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 
 from . import ee
@@ -17,28 +19,72 @@ from . import types as tp
 from .tools import FrequencyRange, get_data_path
 
 
+def compute_cable_loss_from_scattering_params(
+    s11a: npt.NDArray[complex], smatrix: rc.SMatrix
+) -> npt.NDArray[float]:
+    """Compute loss from a cable, given the S-params of the cable, and input S11.
+
+    This function operates in the context of a cable (or balun, etc.) that is attached
+    to an input (generally the antenna, or a calibration load). It computes the loss
+    due to the cable, given the scattering matrix of the cable itself, and the S11
+    of the input antenna/load.
+
+    The equations here are described in MIT EDGES Memo #132:
+    https://www.haystack.mit.edu/wp-content/uploads/2020/07/memo_EDGES_132.pdf.
+    We use two of the equations, to be specific: the equation for Gamma_a (the antenna
+    reflection coefficient at the input of the cable), and the equation for the loss,
+    L.
+
+    SGM: as far as I can tell, this function *doesn't* assume that S12 == S21, though
+    actual calls to this function generally throughout our calibration do make this
+    assumption.
+    """
+    s12 = smatrix.s12
+    s21 = smatrix.s21
+    s22 = smatrix.s22
+
+    T = rc.gamma_de_embed(s11a, smatrix)
+    return (
+        np.abs(s12 * s21)
+        * (1 - np.abs(T) ** 2)
+        / ((1 - np.abs(s11a) ** 2) * np.abs(1 - s22 * T) ** 2)
+    )
+
+
 def get_cable_loss_model(
-    cable: ee.CoaxialCable | str, cable_length: tp.LengthType
+    cable: ee.CoaxialCable | str | Sequence[ee.CoaxialCable | str],
 ) -> callable:
-    """Return a callable loss model for a particular cable.
+    """Return a callable loss model for a particular cable or series of cables.
 
     The returned function is suitable for passing to a :class:`Load`
     as the loss_model.
+
+    You can pass a single cable (i.e. a :class:`edges_cal.ee.CoaxialCable`) or a list
+    of such cables, each of which is assumed to be joined in a cascade. Each should
+    be equipped with a cable length.
+
+    Parameters
+    ----------
+    cable
+        Either a string, or a CoaxialCable instance, or a list of such. If a string,
+        it should be a name present in `ee.KNOWN_CABLES`.
     """
     if isinstance(cable, str):
         cable = ee.KNOWN_CABLES[cable]
 
-    def loss_model(freq, s11a):
-        sparams = cable.scattering_parameters(freq, line_length=cable_length)
-        s11 = s22 = sparams[0][0]
-        s12 = s21 = sparams[0][1]
+    if isinstance(cable, ee.CoaxialCable):
+        cable = [cable]
 
-        T = (s11a - s11) / (s12 * s21 - s11 * s22 + s22 * s11a)
-        return (
-            np.abs(s12 * s21)
-            * (1 - np.abs(T) ** 2)
-            / ((1 - np.abs(s11a) ** 2) * np.abs(1 - s22 * T) ** 2)
-        )
+    cable = [c if isinstance(c, ee.CoaxialCable) else ee.KNOWN_CABLES[c] for c in cable]
+
+    def loss_model(freq, s11a):
+        s0 = cable[0].scattering_parameters(freq)
+        if len(cable) > 1:
+            for cbl in cable[1:]:
+                ss = cbl.scattering_parameters(freq)
+                s0 = s0.cascade_with(ss)
+
+        return compute_cable_loss_from_scattering_params(s11a, s0)
 
     return loss_model
 
@@ -219,46 +265,10 @@ class HotLoadCorrection:
         gain : np.ndarray
             The power gain as a function of frequency.
         """
-        return self.get_power_gain(
-            {
-                "s11": self.s11_model(freq.to_value("MHz")),
-                "s12s21": self.s12s21_model(freq.to_value("MHz")),
-                "s22": self.s22_model(freq.to_value("MHz")),
-            },
-            hot_load_s11,
+        nu = freq.to_value("MHz")
+        s12 = np.sqrt(self.s12s21_model(nu))
+
+        smatrix = rc.SMatrix(
+            np.array([[self.s11_model(nu), s12], [s12, self.s22_model(nu)]])
         )
-
-    @staticmethod
-    def get_power_gain(
-        semi_rigid_sparams: dict, hot_load_s11: np.ndarray
-    ) -> np.ndarray:
-        """Define Eq. 9 from M17.
-
-        Parameters
-        ----------
-        semi_rigid_sparams : dict
-            A dictionary of reflection coefficient measurements as a function of
-            frequency for the semi-rigid cable.
-        hot_load_s11 : array-like
-            The S11 measurement of the hot_load.
-
-        Returns
-        -------
-        gain : np.ndarray
-            The power gain.
-        """
-        rht = rc.gamma_de_embed(
-            semi_rigid_sparams["s11"],
-            semi_rigid_sparams["s12s21"],
-            semi_rigid_sparams["s22"],
-            hot_load_s11,
-        )
-
-        return (
-            np.abs(semi_rigid_sparams["s12s21"])
-            * (1 - np.abs(rht) ** 2)
-            / (
-                (np.abs(1 - semi_rigid_sparams["s22"] * rht)) ** 2
-                * (1 - np.abs(hot_load_s11) ** 2)
-            )
-        )
+        return compute_cable_loss_from_scattering_params(hot_load_s11, smatrix)
