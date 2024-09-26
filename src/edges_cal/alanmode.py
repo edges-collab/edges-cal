@@ -441,6 +441,8 @@ def read_specal_as_calibrator(
 
     model_type = mdl.Fourier if nfit1 > 16 else mdl.Polynomial
     complex_model_type = mdl.ComplexRealImagModel
+    mask = data["weight"] > 0
+    data = data[mask]
 
     model_transform = (
         mdl.ZerotooneTransform(range=(data["freq"].min(), data["freq"].max()))
