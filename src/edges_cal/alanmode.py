@@ -456,14 +456,18 @@ def read_specal_as_calibrator(
 
     return Calibrator(
         freq=FrequencyRange(data["freq"] * un.MHz),
-        C1=model.fit(ydata=data["C1"], **fit_kwargs).fit,
-        C2=model.fit(ydata=data["C2"], **fit_kwargs).fit,
-        Tunc=model.fit(ydata=data["Tunc"], **fit_kwargs).fit,
-        Tcos=model.fit(ydata=data["Tcos"], **fit_kwargs).fit,
-        Tsin=model.fit(ydata=data["Tsin"], **fit_kwargs).fit,
+        C1=model.fit(ydata=data["C1"], weights=data["weight"], **fit_kwargs).fit,
+        C2=model.fit(ydata=data["C2"], weights=data["weight"], **fit_kwargs).fit,
+        Tunc=model.fit(ydata=data["Tunc"], weights=data["weight"], **fit_kwargs).fit,
+        Tcos=model.fit(ydata=data["Tcos"], weights=data["weight"], **fit_kwargs).fit,
+        Tsin=model.fit(ydata=data["Tsin"], weights=data["weight"], **fit_kwargs).fit,
         receiver_s11=complex_model_type(
-            real=model.fit(ydata=data["s11lna_real"], **fit_kwargs).fit,
-            imag=model.fit(ydata=data["s11lna_imag"], **fit_kwargs).fit,
+            real=model.fit(
+                ydata=data["s11lna_real"], weights=data["weight"], **fit_kwargs
+            ).fit,
+            imag=model.fit(
+                ydata=data["s11lna_imag"], weights=data["weight"], **fit_kwargs
+            ).fit,
         ),
         t_load=t_load,
         t_load_ns=t_load_ns,
