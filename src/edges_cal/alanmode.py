@@ -564,3 +564,12 @@ def write_modelled_s11s(calobs, fname):
                     f"{sh.real} {sh.imag} "
                     f"{lna[i].real} {lna[i].imag}\n"
                 )
+
+
+def read_spe_file(filename):
+    """Read Alan's spectrum files with formats like those of spe0.txt."""
+    return np.genfromtxt(
+        filename,
+        usecols=(1, 3, 6, 9, 12),
+        names=("freq", "tant", "model", "resid", "weight"),
+    )
