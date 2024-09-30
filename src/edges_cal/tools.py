@@ -19,12 +19,23 @@ from astropy import units
 from astropy import units as u
 from edges_io import types as tp
 from hickleable import hickleable
+from numpy import typing as npt
 from pygsdata import GSData
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 from scipy.ndimage import convolve1d
 
 from . import DATA_PATH
 from .cached_property import cached_property
+
+
+def linear_to_decibels(x: npt.NDarray) -> npt.NDArray[float]:
+    """Convert a linear number to decibels."""
+    return 20 * np.log10(np.abs(x))
+
+
+def decibels_to_linear(x: npt.NDarray) -> npt.NDArray[float]:
+    """Convert a number in decibels to linear."""
+    return 10 ** (x / 20)
 
 
 def get_data_path(pth: str | Path) -> Path:

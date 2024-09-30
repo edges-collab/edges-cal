@@ -644,12 +644,14 @@ class NoiseWaves:
     as input data, to which the noise-wave models are fitted simultaneously.
     """
 
-    freq: np.ndarray = attrs.field()
+    freq: np.ndarray = attrs.field(eq=attrs.cmp_using(eq=np.array_equal))
     gamma_src: dict[str, np.ndarray] = attrs.field()
-    gamma_rec: np.ndarray = attrs.field()
+    gamma_rec: np.ndarray = attrs.field(eq=attrs.cmp_using(eq=np.array_equal))
     c_terms: int = attrs.field(default=5)
     w_terms: int = attrs.field(default=6)
-    parameters: Sequence | None = attrs.field(default=None)
+    parameters: Sequence | None = attrs.field(
+        default=None, eq=attrs.cmp_using(eq=np.array_equal)
+    )
     with_tload: bool = attrs.field(default=True)
 
     @cached_property

@@ -1,5 +1,7 @@
 """Electrical enginerring equations."""
 
+from __future__ import annotations
+
 from functools import cached_property
 
 import attrs
@@ -26,6 +28,9 @@ class TransmissionLine:
     inductance = attrs.field(validator=unv(un.ohm * un.s / un.m))
     conductance = attrs.field(validator=unv(un.siemens / un.m))
     capacitance = attrs.field(validator=unv(un.siemens * un.s / un.m))
+    length: tp.LengthType = attrs.field(
+        validator=attrs.validators.optional(unv(un.m)), default=None
+    )
 
     @cached_property
     def angular_freq(self) -> tp.FreqType:
@@ -59,8 +64,8 @@ class TransmissionLine:
 
     def input_impedance(
         self,
-        load_impedance: tp.ImpedanceType,
-        line_length: tp.LengthType,
+        load_impedance: tp.ImpedanceType = 50 * un.Ohm,
+        line_length: tp.LengthType | None = None,
     ):
         """Calculate the "input impedance" of a transmission line.
 
@@ -71,6 +76,12 @@ class TransmissionLine:
         freq : tp.FreqType
             Frequency of the signal.
         """
+        if line_length is None:
+            line_length = self.length
+
+        if line_length is None:
+            raise ValueError("Line length must be provided or set on the instance.")
+
         return (
             self.characteristic_impedance
             * (
@@ -86,7 +97,7 @@ class TransmissionLine:
 
     def reflection_coefficient(
         self,
-        load_impedance: tp.ImpedanceType,
+        load_impedance: tp.ImpedanceType = 50 * un.Ohm,
     ):
         """Calculate the reflection coefficient of a transmission line.
 
@@ -102,9 +113,9 @@ class TransmissionLine:
 
     def scattering_parameters(
         self,
-        load_impedance: tp.ImpedanceType,
-        line_length: tp.LengthType,
-    ) -> list[list[np.ndarray]]:
+        load_impedance: tp.ImpedanceType = 50 * un.Ohm,
+        line_length: tp.LengthType | None = None,
+    ):
         """Calculate the S11 parameter of a transmission line.
 
         This is the reflection coefficient of the transmission line in the case
@@ -112,17 +123,17 @@ class TransmissionLine:
 
         https://en.wikipedia.org/wiki/Transmission_line#Scattering_parameters
         """
-        Zo = self.characteristic_impedance
-        Zp = load_impedance
+        if line_length is None:
+            line_length = self.length
 
-        γ = self.propagation_constant
-        γl = (γ * line_length).to_value("")
+        if line_length is None:
+            raise ValueError("Line length must be provided or set on the instance.")
 
-        denom = (Zo**2 + Zp**2) * np.sinh(γl) + 2 * Zo * Zp * np.cosh(γl)
+        from .reflection_coefficient import SMatrix
 
-        s11 = s22 = (Zo**2 - Zp**2) * np.sinh(γl) / denom
-        s12 = s21 = 2 * Zo * Zp / denom
-        return [[s11, s12], [s21, s22]]
+        return SMatrix.from_transmission_line(
+            self, length=line_length, load_impedance=load_impedance
+        )
 
 
 @attrs.define(kw_only=True, frozen=True, slots=False)
@@ -178,6 +189,19 @@ class CoaxialCable:
     inner_conductivity: tp.Conductivity = attrs.field(
         validator=[unv(un.siemens / un.m), attrs.validators.gt(0)]
     )
+    relative_conductance_interior: float = attrs.field(
+        validator=attrs.validators.ge(0), converter=float, default=2e-4
+    )
+    length: tp.LengthType = attrs.field(
+        validator=attrs.validators.optional([unv(un.m), attrs.validators.gt(0)]),
+        default=None,
+    )
+
+    # We add _eps0 here so that we can set it equivalently to Alan's code, i.e.
+    # to 8.854e-12 (which is an error of ~0.01%)
+    _eps0: un.Quantity[un.F / un.m] = attrs.field(
+        validator=[unv(un.F / un.m), attrs.validators.gt(0)], default=eps0
+    )
 
     @outer_conductivity.default
     def _default_outer_conductivity(self):
@@ -232,7 +256,7 @@ class CoaxialCable:
         See https://en.wikipedia.org/wiki/Coaxial_cable#Physical_parameters
         """
         return (
-            (2 * np.pi * eps0 * self.relative_dielectric)
+            (2 * np.pi * self._eps0 * self.relative_dielectric)
             / np.log(self.outer_radius / self.inner_radius)
         ).to("F/m")
 
@@ -244,7 +268,9 @@ class CoaxialCable:
 
     def resistance_per_metre(self, freq: tp.FreqType) -> un.Quantity[un.ohm / un.m]:
         """Get the resistance per metre of the cable."""
-        return 2 * np.pi * freq * self.inductance_per_metre * self.disp(freq)
+        return (2 * np.pi * freq * self.inductance_per_metre * self.disp(freq)).to(
+            un.ohm / un.m
+        )
 
     def spectral_inductance_per_metre(self, freq: tp.FreqType) -> tp.InductanceType:
         """Get the spectral inductance per metre of the cable."""
@@ -253,10 +279,16 @@ class CoaxialCable:
     def conductance_per_metre(self, freq: tp.FreqType) -> un.Quantity[un.m / un.ohm]:
         """Get the conductance per metre of the cable."""
         return (
-            2 * np.pi * self.capacitance_per_metre * freq * 2e-4
+            2
+            * np.pi
+            * self.capacitance_per_metre
+            * freq
+            * self.relative_conductance_interior
         )  # todo: why the 2e-4?
 
-    def as_transmission_line(self, freq: tp.FreqType) -> TransmissionLine:
+    def as_transmission_line(
+        self, freq: tp.FreqType, length: tp.LengthType | None = None
+    ) -> TransmissionLine:
         """Return a TransmissionLine object for the cable."""
         return TransmissionLine(
             freq=freq,
@@ -264,28 +296,31 @@ class CoaxialCable:
             inductance=self.spectral_inductance_per_metre(freq),
             conductance=self.conductance_per_metre(freq),
             capacitance=self.capacitance_per_metre,
+            length=length or self.length,
         )
 
-    def characteristic_impedance(self, freq: tp.FreqType) -> tp.OhmType:
+    def characteristic_impedance(
+        self, freq: tp.FreqType, length: tp.LengthType | None = None
+    ) -> tp.OhmType:
         """Get the characteristic impedance of the cable at a given frequency.
 
         See https://en.wikipedia.org/wiki/Coaxial_cable#Derived_electrical_parameters
         """
-        return self.as_transmission_line(freq).characteristic_impedance
+        return self.as_transmission_line(freq, length).characteristic_impedance
 
-    def propagation_constant(self, freq: tp.FreqType) -> tp.DimlessType:
+    def propagation_constant(
+        self, freq: tp.FreqType, length: tp.LengthType | None = None
+    ) -> tp.DimlessType:
         """Get the propagation constant of the cable at a given frequency."""
-        return self.as_transmission_line(freq).propagation_constant
+        return self.as_transmission_line(freq, length).propagation_constant
 
     def scattering_parameters(
         self,
         freq: tp.FreqType,
-        line_length: tp.LengthType,
-    ) -> np.ndarray:
+        length: tp.LengthType | None = None,
+    ):
         """Get the scattering matrix of the cable at a given frequency."""
-        return self.as_transmission_line(freq).scattering_parameters(
-            load_impedance=50 * un.ohm, line_length=line_length
-        )
+        return self.as_transmission_line(freq, length).scattering_parameters()
 
 
 KNOWN_CABLES = {
@@ -302,6 +337,8 @@ KNOWN_CABLES = {
         outer_material="brass",
         inner_material="copper",
         relative_dielectric=1.07,
+        relative_conductance_interior=0,
+        length=43.6 * un.imperial.inch,
     ),
     "midband-balun-tube": CoaxialCable(
         outer_radius=1.25 / 2 * un.imperial.inch,
@@ -317,6 +354,7 @@ KNOWN_CABLES = {
         inner_material="copper",
         inner_conductivity=5.96e07 * 0.24 * un.siemens / un.m,
         relative_dielectric=2.05,
+        length=3e-2 * un.m,
     ),
     "SMA Connector": CoaxialCable(
         outer_radius=0.16 / 2 * un.imperial.inch,
@@ -332,6 +370,7 @@ KNOWN_CABLES = {
         outer_material="tinned copper",
         inner_material="copper",
         relative_dielectric=2.05,
+        length=4 * un.imperial.inch,
     ),
     "UT-086C-SP": CoaxialCable(
         outer_radius=1.57e-3 * un.m / 2,

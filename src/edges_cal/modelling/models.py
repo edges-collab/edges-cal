@@ -67,6 +67,31 @@ class PhysicalLin(Foreground):
 
 
 @hickleable()
+@attr.s(frozen=True, kw_only=True, slots=False)
+class PhysicalIono(Foreground):
+    """Foreground model using a linearized physical model of the foregrounds."""
+
+    n_terms_max: int = 5
+    default_n_terms: int = 5
+    spectral_index: float = attrs.field(default=-2.5, converter=float)
+
+    def get_basis_term(self, indx: int, x: np.ndarray) -> np.ndarray:
+        """Define the basis functions of the model."""
+        if indx == 0:
+            return x**self.spectral_index
+        if indx == 1:
+            return x**self.spectral_index * np.log(x)
+        if indx == 2:
+            return x ** (self.spectral_index - 2)
+        if indx == 3:
+            return 1 / (x * x)
+        if indx == 4:
+            return x**self.spectral_index * np.log(x) ** 2
+
+        raise ValueError("too many terms supplied!")
+
+
+@hickleable()
 @attrs.define(frozen=True, kw_only=True, slots=False)
 class Polynomial(core.Model):
     r"""A polynomial foreground model.
