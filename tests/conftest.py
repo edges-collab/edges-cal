@@ -4,9 +4,10 @@ from pathlib import Path
 
 import pytest
 from astropy import units as u
+from edges_io import io
+
 from edges_cal import CalibrationObservation
 from edges_cal.config import config
-from edges_io import io
 
 
 @pytest.fixture(scope="session", autouse=True)

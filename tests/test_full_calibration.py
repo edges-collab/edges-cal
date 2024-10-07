@@ -5,9 +5,10 @@ import hickle
 import numpy as np
 import pytest
 from astropy import units as u
+from edges_io import io
+
 from edges_cal import s11
 from edges_cal.calobs import CalibrationObservation, HotLoadCorrection, Load
-from edges_io import io
 
 
 @pytest.fixture(scope="module")

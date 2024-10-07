@@ -1,12 +1,13 @@
 import numpy as np
 import pytest
 from astropy import units as u
+from edges_io import io
+
 from edges_cal import modelling as mdl
 from edges_cal import reflection_coefficient as rc
 from edges_cal import s11
 from edges_cal.calobs import HotLoadCorrection
 from edges_cal.tools import FrequencyRange
-from edges_io import io
 
 
 def test_gamma_shift_zero():

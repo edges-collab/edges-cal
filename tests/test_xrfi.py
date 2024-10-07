@@ -6,9 +6,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
-from edges_cal import xrfi
 from pytest_cases import fixture_ref as fxref
 from pytest_cases import parametrize
+
+from edges_cal import xrfi
 
 NFREQ = 1000
 
