@@ -4,6 +4,7 @@ from collections import deque
 
 import numpy as np
 import pytest
+
 from edges_cal import noise_waves as nw
 
 N = 501
