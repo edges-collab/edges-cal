@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from itertools import product
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 try:
     from typing import Self
@@ -145,7 +145,7 @@ def dct_of_list_to_list_of_dct(dct: dict[str, Sequence]) -> list[dict]:
 
     prod = product(*lists)
 
-    return [dict(zip(dct.keys(), p)) for p in prod]
+    return [dict(zip(dct.keys(), p, strict=False)) for p in prod]
 
 
 @hickleable()

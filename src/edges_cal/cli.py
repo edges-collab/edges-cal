@@ -766,7 +766,7 @@ def alancal(
             # write out the CSV file
             with open(out / f"s11{load}.csv", "w") as fl:
                 fl.write("BEGIN\n")
-                for freq, s11 in zip(s11freq, raws11s[load]):
+                for freq, s11 in zip(s11freq, raws11s[load], strict=False):
                     fl.write(
                         f"{freq.to_value('MHz'):1.16e},{s11.real:1.16e},{s11.imag:1.16e}\n"
                     )

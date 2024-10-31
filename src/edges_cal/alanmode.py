@@ -216,7 +216,7 @@ def edges(
             s11freq, f_low=wfstart * un.MHz, f_high=wfstop * un.MHz
         )
 
-    for name, s11 in zip(sources, [s11cold, s11hot, s11open, s11short]):
+    for name, s11 in zip(sources, [s11cold, s11hot, s11open, s11short], strict=False):
         s11_models[name] = LoadS11(
             raw_s11=s11[s11freq.mask],
             freq=s11freq,
@@ -254,6 +254,7 @@ def edges(
         sources,
         [spcold, sphot, spopen, spshort],
         [tcold, thot, tcab, tcab],
+        strict=False,
     ):
         specs[name] = LoadSpectrum(
             freq=spfreq,
@@ -395,7 +396,7 @@ def write_spec_txt(freq, n, spec, fname):
         freq = freq.to_value("MHz")
 
     with open(fname, "w") as fl:
-        for i, (f, sp) in enumerate(zip(freq, spec)):
+        for i, (f, sp) in enumerate(zip(freq, spec, strict=False)):
             if i == 0:
                 fl.write(f"{f:12.6f} {sp:12.6f} {1:4.0f} {n} // temp.acq\n")
             else:
@@ -529,6 +530,7 @@ def write_modelled_s11s(calobs, fname):
                     s11m["rig_s11"],
                     s11m["rig_s12"],
                     s11m["rig_s22"],
+                    strict=False,
                 )
             ):
                 fl.write(
@@ -554,6 +556,7 @@ def write_modelled_s11s(calobs, fname):
                     s11m["hot_load"],
                     s11m["open"],
                     s11m["short"],
+                    strict=False,
                 )
             ):
                 fl.write(

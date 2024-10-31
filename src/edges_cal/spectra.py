@@ -88,7 +88,7 @@ class ThermistorReadings:
             dates = self._data["date"]
             times = [
                 datetime.strptime(d + ":" + t, "%m/%d/%Y:%H:%M:%S")
-                for d, t in zip(dates.astype(str), times.astype(str))
+                for d, t in zip(dates.astype(str), times.astype(str), strict=False)
             ]
         else:
             times = [

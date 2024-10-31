@@ -144,7 +144,9 @@ def power_ratio(
     """
     K = get_K(gamma_rec, gamma_ant)
 
-    terms = [t * k for t, k in zip([temp_ant, temp_unc, temp_cos, temp_sin], K)] + [
+    terms = [
+        t * k for t, k in zip([temp_ant, temp_unc, temp_cos, temp_sin], K, strict=False)
+    ] + [
         (offset - temp_load),
         scale * temp_noise_source,
     ]

@@ -15,10 +15,10 @@ calibrated and smoothed S11, according to some smooth model.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import attr
 import matplotlib.pyplot as plt
@@ -629,7 +629,7 @@ class InternalSwitch:
                 kind: rc.gamma_de_embed(getattr(isw, f"external{kind}").s11, s)
                 for kind in ("open", "short", "match")
             }
-            for isw, s in zip(internal_switch, smatrices)
+            for isw, s in zip(internal_switch, smatrices, strict=False)
         ]
         s11, s12, s22 = cls.get_sparams_from_corrections(freq, corrections, calkit)
 

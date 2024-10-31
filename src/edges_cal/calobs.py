@@ -10,11 +10,11 @@ from __future__ import annotations
 import copy
 import warnings
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 import attr
 import h5py
@@ -1255,7 +1255,7 @@ class CalibrationObservation:
             r"$T_{\rm sin}$ [K]",
         ]
         for i, (kind, label) in enumerate(
-            zip(["C1", "C2", "Tunc", "Tcos", "Tsin"], labels)
+            zip(["C1", "C2", "Tunc", "Tcos", "Tsin"], labels, strict=False)
         ):
             ax[i].plot(self.freq.freq, getattr(self, kind)())
             ax[i].set_ylabel(label, fontsize=13)
