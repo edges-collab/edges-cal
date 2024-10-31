@@ -455,7 +455,6 @@ def read_specal_as_calibrator(
     model = model_type(transform=model_transform, n_terms=nfit1, **model_kwargs).at(
         x=data["freq"]
     )
-
     return Calibrator(
         freq=FrequencyRange(data["freq"] * un.MHz),
         C1=model.fit(ydata=data["C1"], weights=data["weight"], **fit_kwargs).fit,
