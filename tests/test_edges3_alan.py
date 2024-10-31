@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from click.testing import CliRunner
+
 from edges_cal import alanmode as am
 from edges_cal.cli import alancal
 

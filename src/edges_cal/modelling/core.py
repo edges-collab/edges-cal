@@ -5,7 +5,6 @@ from __future__ import annotations
 from abc import ABCMeta, abstractmethod
 from collections.abc import Sequence
 from functools import cached_property
-from typing import Union
 
 import attr
 import attrs
@@ -56,7 +55,7 @@ class FixedLinearModel(yaml.YAMLObject):
 
     @model.validator
     def _model_vld(self, att, val):
-        assert isinstance(val, (Model, composite.CompositeModel))
+        assert isinstance(val, Model | composite.CompositeModel)
 
     @_init_basis.validator
     def _init_basis_vld(self, att, val):
@@ -391,4 +390,4 @@ yaml.BaseLoader.add_constructor("!Model", _model_yaml_constructor)
 
 
 yaml.add_multi_representer(Model, _model_yaml_representer)
-Modelable = Union[str, type[Model]]
+Modelable = str | type[Model]

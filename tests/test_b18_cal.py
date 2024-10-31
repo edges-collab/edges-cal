@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 from astropy import units as un
 from click.testing import CliRunner
+
 from edges_cal.alanmode import read_specal, read_specal_as_calibrator
 from edges_cal.cli import alancal2
 

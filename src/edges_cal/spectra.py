@@ -335,7 +335,7 @@ class LoadSpectrum:
                 metadata=dict(grp.attrs),
             )
 
-        if isinstance(path, (str, Path)):
+        if isinstance(path, str | Path):
             with h5py.File(path, "r") as fl:
                 return read_group(fl)
         else:

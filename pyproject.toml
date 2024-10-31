@@ -173,7 +173,9 @@ ignore = [
 "src/edges_cal/alanmode.py" = [
     "N803",
 ]
-
+"**/*.ipynb" = [
+    "T201", "DTZ", "D", "PTH119", "ERA"
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = 'numpy'

@@ -6,10 +6,11 @@ import numpy as np
 import pytest
 from astropy import units as un
 from astropy.time import Time
-from edges_cal import alanmode as am
-from edges_cal.tools import FrequencyRange
 from pygsdata import KNOWN_TELESCOPES, GSData
 from read_acq.gsdata import write_gsdata_to_acq
+
+from edges_cal import alanmode as am
+from edges_cal.tools import FrequencyRange
 
 
 def test_read_write_spec_loop(data_path: Path, tmpdir: Path):
