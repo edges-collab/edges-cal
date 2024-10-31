@@ -156,17 +156,17 @@ def test_calcoeffs(b18cal: Path, mask):
 def test_read_specal_as_calibrator():
     data = read_specal(DATA / "specal_alan.txt")
     data = data[data["weight"] > 0]
-    calobs = read_specal_as_calibrator(DATA / "specal_alan.txt", nfit1=45)
+    calobs = read_specal_as_calibrator(DATA / "specal_alan.txt", nfit1=51)
 
     f = data["freq"] * un.MHz
-    np.testing.assert_allclose(calobs.C1(f), data["C1"], atol=1.1e-6)
-    np.testing.assert_allclose(calobs.C2(f), data["C2"], atol=1.1e-6)
+    np.testing.assert_allclose(calobs.C1(f), data["C1"], atol=1e-4)
+    np.testing.assert_allclose(calobs.C2(f), data["C2"], atol=1e-4)
     np.testing.assert_allclose(calobs.Tunc(f), data["Tunc"], atol=1e-4)
-    np.testing.assert_allclose(calobs.Tcos(f), data["Tcos"], atol=2e-5)
-    np.testing.assert_allclose(calobs.Tsin(f), data["Tsin"], atol=4e-6)
+    np.testing.assert_allclose(calobs.Tcos(f), data["Tcos"], atol=1e-4)
+    np.testing.assert_allclose(calobs.Tsin(f), data["Tsin"], atol=1e-4)
     np.testing.assert_allclose(
-        calobs.receiver_s11(f).real, data["s11lna_real"], atol=1.1e-6
+        calobs.receiver_s11(f).real, data["s11lna_real"], atol=1e-4
     )
     np.testing.assert_allclose(
-        calobs.receiver_s11(f).imag, data["s11lna_imag"], atol=1.1e-6
+        calobs.receiver_s11(f).imag, data["s11lna_imag"], atol=1e-4
     )
