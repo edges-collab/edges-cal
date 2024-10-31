@@ -14,7 +14,12 @@ from __future__ import annotations
 
 import warnings
 from functools import cached_property
-from typing import Self
+
+try:
+    # only available on py311+
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 import attrs
 import numpy as np
