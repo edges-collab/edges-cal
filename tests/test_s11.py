@@ -1,17 +1,19 @@
 import numpy as np
 import pytest
 from astropy import units as u
+from edges_io import io
+
 from edges_cal import modelling as mdl
 from edges_cal import reflection_coefficient as rc
 from edges_cal import s11
 from edges_cal.calobs import HotLoadCorrection
 from edges_cal.tools import FrequencyRange
-from edges_io import io
 
 
 def test_gamma_shift_zero():
     s11 = np.random.normal(size=100)
-    assert np.all(s11 == rc.gamma_embed(s11, 0, 0, 0))
+    smatrix = rc.SMatrix([[0, 1], [1, 0]])
+    np.testing.assert_allclose(s11, rc.gamma_embed(smatrix, s11))
 
 
 def test_gamma_impedance_roundtrip():
@@ -22,14 +24,15 @@ def test_gamma_impedance_roundtrip():
 
 
 def test_gamma_embed_rountrip():
-    s11 = np.random.uniform(0, 1, size=10)
-    s12s21 = np.random.uniform(0, 1, size=10)
-    s22 = np.random.uniform(0, 1, size=10)
+    s11 = np.random.uniform(0, 1, size=10) + np.random.uniform(0, 1, size=10) * 1j
+    s12 = np.random.uniform(0, 1, size=10) + np.random.uniform(0, 1, size=10) * 1j
+    s22 = np.random.uniform(0, 1, size=10) + np.random.uniform(0, 1, size=10) * 1j
 
-    gamma = np.random.uniform(0, 1, size=10)
+    gamma = np.random.uniform(0, 1, size=10) + np.random.uniform(0, 1, size=10) * 1j
+    smat = rc.SMatrix([[s11, s12], [s12, s22]])
 
     np.testing.assert_allclose(
-        rc.gamma_de_embed(s11, s12s21, s22, rc.gamma_embed(s11, s12s21, s22, gamma)),
+        rc.gamma_de_embed(rc.gamma_embed(smat, gamma), smat),
         gamma,
     )
 

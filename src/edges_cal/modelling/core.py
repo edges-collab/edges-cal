@@ -5,7 +5,6 @@ from __future__ import annotations
 from abc import ABCMeta, abstractmethod
 from collections.abc import Sequence
 from functools import cached_property
-from typing import Union
 
 import attr
 import attrs
@@ -56,7 +55,7 @@ class FixedLinearModel(yaml.YAMLObject):
 
     @model.validator
     def _model_vld(self, att, val):
-        assert isinstance(val, (Model, composite.CompositeModel))
+        assert isinstance(val, Model | composite.CompositeModel)
 
     @_init_basis.validator
     def _init_basis_vld(self, att, val):
@@ -90,7 +89,7 @@ class FixedLinearModel(yaml.YAMLObject):
         self,
         x: np.ndarray | None = None,
         parameters: Sequence | None = None,
-        indices: Sequence | None = None,
+        indices: Sequence | slice = slice(None),
     ) -> np.ndarray:
         """Evaluate the model.
 
@@ -276,7 +275,7 @@ class Model(metaclass=ABCMeta):
         x: np.ndarray | None = None,
         basis: np.ndarray | None = None,
         parameters: Sequence | None = None,
-        indices: Sequence[int] | None = None,
+        indices: Sequence[int] | slice = slice(None),
         with_scaler: bool = True,
     ) -> np.ndarray:
         """Evaluate the model.
@@ -310,19 +309,22 @@ class Model(metaclass=ABCMeta):
         else:
             parameters = np.asarray(parameters)
 
-        indices = np.arange(len(parameters)) if indices is None else np.array(indices)
-
         if x is None and basis is None:
             raise ValueError("You must supply either x or basis!")
 
         if basis is None:
             basis = self.get_basis_terms(x, with_scaler=with_scaler)
 
-        if any(idx >= len(basis) for idx in indices):
-            raise ValueError("Cannot use more basis sets than available!")
+        if not isinstance(indices, slice):
+            indices = np.array(indices)
 
-        if len(parameters) != len(indices):
-            parameters = parameters[indices]
+            if any(idx >= len(basis) for idx in indices):
+                raise ValueError("Cannot use more basis sets than available!")
+
+            if len(parameters) != len(indices):
+                parameters = parameters[indices]
+        elif len(parameters) != basis.shape[0] and indices == slice(None):
+            indices = slice(0, len(parameters))
 
         return self.data_transform.inverse(x, np.dot(parameters, basis[indices]))
 
@@ -388,4 +390,4 @@ yaml.BaseLoader.add_constructor("!Model", _model_yaml_constructor)
 
 
 yaml.add_multi_representer(Model, _model_yaml_representer)
-Modelable = Union[str, type[Model]]
+Modelable = str | type[Model]

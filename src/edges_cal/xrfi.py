@@ -63,7 +63,7 @@ def _check_convolve_dims(data, half_size: tuple[int] | None = None):
         )
 
     out = []
-    for data_shape, hsize in zip(data.shape, half_size):
+    for data_shape, hsize in zip(data.shape, half_size, strict=False):
         if hsize is None or hsize > data_shape:
             out.append(data_shape)
         elif hsize < 0:
@@ -173,7 +173,8 @@ def flagged_filter(
     """
     if mode is None:
         if (isinstance(size, int) and size >= min(data.shape)) or (
-            isinstance(size, tuple) and any(s > d for s, d in zip(size, data.shape))
+            isinstance(size, tuple)
+            and any(s > d for s, d in zip(size, data.shape, strict=False))
         ):
             warnings.warn(
                 "Setting default mode to reflect because a large size was set.",
@@ -1135,7 +1136,9 @@ class ModelFilterInfo:
 
             grp.attrs["n_iters"] = self.n_iters
 
-            for i, (model, res_model) in enumerate(zip(self.models, self.res_models)):
+            for i, (model, res_model) in enumerate(
+                zip(self.models, self.res_models, strict=False)
+            ):
                 grp.attrs[f"model_{i}"] = yaml.dump(model)
                 grp.attrs[f"res_model_{i}"] = yaml.dump(res_model)
 
@@ -1645,6 +1648,7 @@ def visualise_model_info(info: ModelFilterInfo | ModelFilterInfoContainer, n: in
             info.total_flags,
             info.thresholds,
             info.flags,
+            strict=False,
         )
     ):
         if (n < 0 and i < info.n_iters + n) or (n > 0 and i >= n):

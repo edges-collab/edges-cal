@@ -3,6 +3,7 @@ import traceback
 from pathlib import Path
 
 from click.testing import CliRunner
+
 from edges_cal.cli import compare, report, run
 
 

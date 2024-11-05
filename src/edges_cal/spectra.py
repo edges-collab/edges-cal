@@ -88,7 +88,7 @@ class ThermistorReadings:
             dates = self._data["date"]
             times = [
                 datetime.strptime(d + ":" + t, "%m/%d/%Y:%H:%M:%S")
-                for d, t in zip(dates.astype(str), times.astype(str))
+                for d, t in zip(dates.astype(str), times.astype(str), strict=False)
             ]
         else:
             times = [
@@ -335,7 +335,7 @@ class LoadSpectrum:
                 metadata=dict(grp.attrs),
             )
 
-        if isinstance(path, (str, Path)):
+        if isinstance(path, str | Path):
             with h5py.File(path, "r") as fl:
                 return read_group(fl)
         else:

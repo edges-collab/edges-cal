@@ -162,7 +162,7 @@ class CompositeModel:
         x: np.ndarray | None = None,
         basis: np.ndarray | None = None,
         parameters: Sequence | None = None,
-        indices: Sequence | None = None,
+        indices: Sequence | slice = slice(None),
         with_scaler: bool = True,
     ) -> np.ndarray:
         """Evaluate the model.

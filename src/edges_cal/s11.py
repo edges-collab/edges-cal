@@ -15,10 +15,10 @@ calibrated and smoothed S11, according to some smooth model.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import attr
 import matplotlib.pyplot as plt
@@ -486,16 +486,8 @@ class Receiver(S11Model):
             )
             freq = standards.freq
 
-            calibrated_s11_raw = rc.de_embed(
-                calkit.open.reflection_coefficient(freq.freq),
-                calkit.short.reflection_coefficient(freq.freq),
-                calkit.match.reflection_coefficient(freq.freq),
-                standards.open.s11,
-                standards.short.s11,
-                standards.match.s11,
-                receiver_reading.s11,
-            )[0]
-            s11s.append(calibrated_s11_raw)
+            smatrix = rc.SMatrix.from_calkit_and_vna(calkit, standards)
+            s11s.append(rc.gamma_de_embed(receiver_reading.s11, smatrix))
 
         metadata = {"devices": device, "calkit": calkit}
 
@@ -533,16 +525,8 @@ class Receiver(S11Model):
         )
 
         freq = standards.freq
-
-        calibrated_s11_raw = rc.de_embed(
-            calkit.open.reflection_coefficient(freq.freq),
-            calkit.short.reflection_coefficient(freq.freq),
-            calkit.match.reflection_coefficient(freq.freq),
-            standards.open.s11,
-            standards.short.s11,
-            standards.match.s11,
-            receiver_reading.s11,
-        )[0]
+        smatrix = rc.SMatrix.from_calkit_and_vna(calkit, standards)
+        calibrated_s11_raw = rc.gamma_de_embed(receiver_reading.s11, smatrix)
 
         _T, s11, s12 = rc.path_length_correction_edges3(
             freq=freq.freq,
@@ -551,14 +535,13 @@ class Receiver(S11Model):
             lossf=1 + cable_loss_percent * 0.01,
             dielf=1 + cable_dielectric_percent * 0.01,
         )
-
-        s22 = s11
+        smatrix = rc.SMatrix([[s11, s12], [s12, s11]])
         Ta = calibrated_s11_raw
 
         if cable_length > 0.0:
-            Ta = s11 + (s12 * s12 * Ta) / (1 - s22 * Ta)
+            Ta = rc.gamma_embed(Ta, smatrix)
         elif cable_length < 0.0:
-            Ta = (Ta - s11) / (s12 * s12 - s11 * s22 + s22 * Ta)
+            Ta = rc.gamma_de_embed(Ta, smatrix)
 
         metadata = {"calkit": calkit}
 
@@ -634,20 +617,19 @@ class InternalSwitch:
 
         # TODO: not clear why we use the ideal values of 1,-1,0 instead of the physical
         # expected values of calkit.match.intrinsic_gamma etc.
+        smatrices = [
+            rc.get_sparams_from_osl(
+                1, -1, 0, isw.open.s11, isw.short.s11, isw.match.s11
+            )
+            for isw in internal_switch
+        ]
+
         corrections = [
             {
-                kind: rc.de_embed(
-                    1,
-                    -1,
-                    0,
-                    isw.open.s11,
-                    isw.short.s11,
-                    isw.match.s11,
-                    getattr(isw, f"external{kind}").s11,
-                )[0]
+                kind: rc.gamma_de_embed(getattr(isw, f"external{kind}").s11, s)
                 for kind in ("open", "short", "match")
             }
-            for isw in internal_switch
+            for isw, s in zip(internal_switch, smatrices, strict=False)
         ]
         s11, s12, s22 = cls.get_sparams_from_corrections(freq, corrections, calkit)
 
@@ -672,7 +654,7 @@ class InternalSwitch:
         s11s, s12s, s22s = [], [], []
 
         for cc in corrections:
-            s11, s12s21, s22 = rc.get_sparams(
+            smatrix = rc.get_sparams_from_osl(
                 calkit.open.reflection_coefficient(freq.freq),
                 calkit.short.reflection_coefficient(freq.freq),
                 calkit.match.reflection_coefficient(freq.freq),
@@ -680,9 +662,9 @@ class InternalSwitch:
                 cc["short"][freq.mask],
                 cc["match"][freq.mask],
             )
-            s11s.append(s11)
-            s12s.append(s12s21)
-            s22s.append(s22)
+            s11s.append(smatrix.s11)
+            s12s.append(smatrix.s12 * smatrix.s21)
+            s22s.append(smatrix.s22)
 
         return np.mean(s11s, axis=0), np.mean(s12s, axis=0), np.mean(s22s, axis=0)
 
@@ -821,15 +803,15 @@ class LoadPlusSwitchS11:
         # TODO: It's not clear exactly why we use the completely ideal values for the
         # OSL standards here, instead of their predicted values from physical parameters
         # eg. calkit.match.intrinsic_gamma.
-        return rc.de_embed(
+        smatrix = rc.get_sparams_from_osl(
             1,
             -1,
             0.0,
             self.standards.open.s11,
             self.standards.short.s11,
             self.standards.match.s11,
-            self.external_match.s11,
-        )[0]
+        )
+        return rc.gamma_de_embed(self.external_match.s11, smatrix)
 
     @property
     def freq(self):
@@ -872,13 +854,13 @@ class LoadS11(S11Model):
             )
 
         s11s = []
+        nu = freq.freq.to_value("MHz")
+        s12 = np.sqrt(internal_switch.s12_model(nu))
+        smatrix = rc.SMatrix(
+            [[internal_switch.s11_model(nu), s12], [s12, internal_switch.s22_model(nu)]]
+        )
         for load in load_s11:
-            gamma = rc.gamma_de_embed(
-                internal_switch.s11_model(freq.freq.to_value("MHz")),
-                internal_switch.s12_model(freq.freq.to_value("MHz")),
-                internal_switch.s22_model(freq.freq.to_value("MHz")),
-                load.get_calibrated_s11(),
-            )
+            gamma = rc.gamma_de_embed(load.get_calibrated_s11(), smatrix)
             s11s.append(gamma)
 
         metadata = {"load_s11s": load_s11}
@@ -956,15 +938,8 @@ class LoadS11(S11Model):
 
         freq = standards.freq
 
-        calibrated_s11_raw = rc.de_embed(
-            calkit.open.reflection_coefficient(freq.freq),
-            calkit.short.reflection_coefficient(freq.freq),
-            calkit.match.reflection_coefficient(freq.freq),
-            standards.open.s11,
-            standards.short.s11,
-            standards.match.s11,
-            load.s11,
-        )[0]
+        smatrix = rc.SMatrix.from_calkit_and_vna(calkit, standards)
+        calibrated_s11_raw = rc.gamma_de_embed(load.s11, smatrix)
 
         metadata = {"calkit": calkit}
         return cls(

@@ -1,4 +1,5 @@
 import pytest
+
 from edges_cal import cached_property as cp
 
 

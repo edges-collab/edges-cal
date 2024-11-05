@@ -2,8 +2,9 @@
 
 import pytest
 from astropy import units as un
-from edges_cal import CalibrationObservation
 from edges_io import TEST_DATA_PATH, io3
+
+from edges_cal import CalibrationObservation
 
 
 @pytest.fixture(scope="module")
