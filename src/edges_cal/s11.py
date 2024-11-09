@@ -539,9 +539,9 @@ class Receiver(S11Model):
         Ta = calibrated_s11_raw
 
         if cable_length > 0.0:
-            Ta = rc.gamma_embed(Ta, smatrix)
+            Ta = rc.gamma_embed(smatrix, Ta)
         elif cable_length < 0.0:
-            Ta = rc.gamma_de_embed(Ta, smatrix)
+            Ta = rc.gamma_de_embed(smatrix, Ta)
 
         metadata = {"calkit": calkit}
 
