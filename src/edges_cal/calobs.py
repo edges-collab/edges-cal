@@ -31,6 +31,7 @@ from matplotlib import pyplot as plt
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 
 from . import loss, s11
+from . import modelling as mdl
 from . import noise_waves as rcf
 from . import reflection_coefficient as rc
 from .cached_property import cached_property, safe_property
@@ -1614,7 +1615,25 @@ class Calibrator:
                 return _lna_s11_rl(x) + 1j * _lna_s11_im(x)
 
         if "internal_switch" in fl:
-            internal_switch = hickle.load(fl["internal_switch"])
+            # This was written by hickle, but is no longer auto-readable because
+            # class definitions have moved. So we need to read it manually.
+            grp = fl["internal_switch"]["data"]
+
+            # TODO: this _assumes_ a Polynomial model with UnitTransform, because
+            # I can't figure out how to read this info from the hickle file.
+            internal_switch = s11.InternalSwitch(
+                freq=grp["_freq"][()] * un.Hz,
+                s11_data=grp["s11_data"][()],
+                s12_data=grp["s12_data"][()],
+                s22_data=grp["s22_data"][()],
+                model=mdl.Polynomial(
+                    n_terms=grp["model"]["n_terms"][()],
+                    offset=grp["model"]["offset"][()],
+                    transform=mdl.UnitTransform(
+                        range=grp["model"]["transform"]["range"][()]
+                    ),
+                ),
+            )
         else:
             _intsw_s11_rl = Spline(freq.freq, fl["internal_switch_s11_real"][...])
             _intsw_s11_im = Spline(freq.freq, fl["internal_switch_s11_imag"][...])

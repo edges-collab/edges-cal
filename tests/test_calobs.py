@@ -235,3 +235,4 @@ def test_hickle_roundtrip(calobs, tmpdir):
 def test_read_version_zero(data_path: Path):
     calobs = cc.Calibrator.from_calfile(data_path / "calfiles/calfile_v0_hickled.h5")
     assert isinstance(calobs, cc.Calibrator)
+    calobs.internal_switch.s11_model(np.array([75.0]))
