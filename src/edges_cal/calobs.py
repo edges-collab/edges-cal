@@ -1606,7 +1606,26 @@ class Calibrator:
             metadata = {}
 
         if "receiver_s11" in fl:
-            receiver_s11 = hickle.load(fl["receiver_s11"])
+            # Receiver S11 needs to be read in manually because several
+            # component classes have moved.
+            badread = hickle.load(fl["receiver_s11"])  # A badly-read ReceiverS11
+            grp = fl["receiver_s11"]["data"]
+            # TODO: can't read model type or transform properly :/
+            receiver_s11 = s11.Receiver(
+                freq=badread.freq,  # still works for now?
+                n_terms=grp["n_terms"][()],
+                model_type=bytearray(grp["model_type"][()]).decode(),
+                complex_model_type=mdl.ComplexMagPhaseModel,
+                model_delay=float(grp["model_delay"][()]) * un.s,
+                model_transform=mdl.UnitTransform(
+                    range=grp["model_transform"]["range"][()],
+                ),
+                set_transform_range=False,
+                model_kwargs=badread.model_kwargs,
+                use_spline=bool(grp["use_spline"][()]),
+                fit_kwargs=badread.fit_kwargs,
+                raw_s11=grp["_raw_s11"][()],
+            ).s11_model
         else:
             _lna_s11_rl = Spline(freq.freq.to_value("MHz"), fl["lna_s11_real"][...])
             _lna_s11_im = Spline(freq.freq.to_value("MHz"), fl["lna_s11_imag"][...])
