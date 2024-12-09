@@ -311,7 +311,7 @@ class TwoPortNetwork:
         )
 
 
-@attrs.define(frozen=True, kw_only=False)
+@attrs.define(frozen=True, kw_only=False, slots=False)
 class SMatrix:
     """A scattering matrix for a two-port network.
 
