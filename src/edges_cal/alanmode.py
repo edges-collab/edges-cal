@@ -358,18 +358,6 @@ def _average_spectra(
         elif avg_spectra_path:
             spec, _ = read_spec_txt(avg_spectra_path)
 
-        if spec["freq"].min() > fstart or spec["freq"].max() < fstop:
-            # cached spectra had different parameters. redo.
-            return _average_spectra(
-                specfiles=specfiles,
-                out=out,
-                redo_spectra=True,
-                avg_spectra_path=avg_spectra_path,
-                fstart=fstart,
-                fstop=fstop,
-                **kwargs,
-            )
-
         spfreq = spec["freq"] * un.MHz
         spectra[load] = spec["spectra"]
     return spfreq, spectra
