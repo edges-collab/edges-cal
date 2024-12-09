@@ -344,7 +344,7 @@ def _average_spectra(
 
             logger.info(f"Averaging {load} spectra")
             spfreq, n, spectra[load] = acqplot7amoon(
-                acqfile=files, wfstart=fstart, wfstop=fstop, **kwargs
+                acqfile=files, fstart=fstart, fstop=fstop, **kwargs
             )
 
             write_spec_txt(spfreq, n, spectra[load], outfile)
