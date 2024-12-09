@@ -331,6 +331,8 @@ def _average_spectra(
     out: Path,
     redo_spectra: bool,
     avg_spectra_path,
+    fstart,
+    fstop,
     **kwargs,
 ):
     spectra = {}
@@ -341,7 +343,9 @@ def _average_spectra(
                 raise ValueError(f"{load} has no spectrum files!")
 
             logger.info(f"Averaging {load} spectra")
-            spfreq, n, spectra[load] = acqplot7amoon(acqfile=files, **kwargs)
+            spfreq, n, spectra[load] = acqplot7amoon(
+                acqfile=files, wfstart=fstart, wfstop=fstop, **kwargs
+            )
 
             write_spec_txt(spfreq, n, spectra[load], outfile)
 
@@ -353,6 +357,18 @@ def _average_spectra(
             spec, _ = read_spec_txt(outfile)
         elif avg_spectra_path:
             spec, _ = read_spec_txt(avg_spectra_path)
+
+        if spec["freq"].min() < fstart or spec["freq"].max() < fstop:
+            # cached spectra had different parameters. redo.
+            return _average_spectra(
+                specfiles=specfiles,
+                out=out,
+                redo_spectra=True,
+                avg_spectra_path=avg_spectra_path,
+                fstart=fstart,
+                fstop=fstop,
+                **kwargs,
+            )
 
         spfreq = spec["freq"] * un.MHz
         spectra[load] = spec["spectra"]
