@@ -457,6 +457,11 @@ def get_calibration_quantities_iterative(
 
     temp_cal_iter = dict(temp_raw)  # copy
 
+    # Initial values for breaking early.
+    sca_off_chisq = np.inf
+    cable_chisq = np.inf
+    best = None
+
     # Calibration loop
     for _ in range(niter):
         # Step 1: approximate physical temperature
@@ -493,6 +498,17 @@ def get_calibration_quantities_iterative(
             for k, v in temp_raw.items()
         }
 
+        new_sca_off_chisq = (
+            (temp_cal_iter["hot_load"] - temp_ant_hot) ** 2
+            + (temp_cal_iter["ambient"] - temp_ant["ambient"]) ** 2
+        ).sum()
+
+        # Return early if the chi^2 is not improving.
+        if new_sca_off_chisq >= sca_off_chisq:
+            return p_sca, p_off, best
+
+        sca_off_chisq = new_sca_off_chisq
+
         # Step 4: computing NWP
         best = None
         for delay in delays_to_fit:
@@ -516,6 +532,12 @@ def get_calibration_quantities_iterative(
         tunc = best.get_tunc(fmask)
         tcos = best.get_tcos(fmask)
         tsin = best.get_tsin(fmask)
+
+        # Return early if the chi^2 is not improving.
+        if best.rms >= cable_chisq:
+            return p_sca, p_off, best
+
+        cable_chisq = best.rms
 
         yield (p_sca, p_off, best)
 
