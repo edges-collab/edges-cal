@@ -421,6 +421,7 @@ def read_specal(fname):
         usecols=(1, 3, 4, 6, 8, 10, 12, 14, 16),
     )
 
+
 def read_specal_iter(fname):
     """Read a specal file, like the ones output by edges3(k)."""
     return np.genfromtxt(
