@@ -421,6 +421,22 @@ def read_specal(fname):
         usecols=(1, 3, 4, 6, 8, 10, 12, 14, 16),
     )
 
+def read_specal_iter(fname):
+    """Read a specal file, like the ones output by edges3(k)."""
+    return np.genfromtxt(
+        fname,
+        names=[
+            "iter",
+            "freq",
+            "C1",
+            "C2",
+            "Tunc",
+            "Tcos",
+            "Tsin",
+        ],
+        usecols=(1, 3, 5, 7, 9, 11, 13),
+    )
+
 
 def read_specal_as_calibrator(
     fname: str | Path, nfit1: int = 27, t_load: float = 300, t_load_ns: float = 1000
