@@ -591,6 +591,35 @@ def _make_plots(out: Path, calobs: CalibrationObservation, plot):
         ).T,
         header="# freq, hot_load_loss",
     )
+
+    console.print("Saving calibrated temperatures")
+    np.savetxt(
+        out / "calibrated_temps.txt",
+        np.array(
+            [
+                calobs.freq.freq.to_value("MHz"),
+            ]
+            + [calobs.calibrate(load) for load in calobs.loads.values()]
+        ).T,
+        header="# freq, " + ", ".join(calobs.loads),
+    )
+
+    console.print("Saving known load temperatures")
+    np.savetxt(
+        out / "known_load_temps.txt",
+        np.array(
+            [
+                calobs.freq.freq.to_value("MHz"),
+            ]
+            + [
+                calobs.source_thermistor_temps.get(load.load_name, load.temp_ave)
+                * np.ones(calobs.freq.n)
+                for load in calobs.loads.values()
+            ]
+        ).T,
+        header="# freq, " + ", ".join(calobs.loads),
+    )
+
     if plot:
         # Make plots...
         console.print("Plotting S11 models...")
@@ -604,6 +633,13 @@ def _make_plots(out: Path, calobs: CalibrationObservation, plot):
         console.print("Plotting calibration coefficients...")
         fig = calobs.plot_coefficients()
         fig.savefig(out / "calibration_coefficients.png")
+
+        console.print("Plotting calibrated temperatures...")
+        fig = calobs.plot_calibrated_temps(bins=1)
+        fig.savefig(out / "calibrated_temps_rawres.png")
+
+        fig = calobs.plot_calibrated_temps(bins=64)
+        fig.savefig(out / "calibrated_temps_smoothed.png")
 
 
 @main.command()
