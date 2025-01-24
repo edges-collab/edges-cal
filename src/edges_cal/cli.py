@@ -32,6 +32,8 @@ from edges_cal.alanmode import (
 from edges_cal.calobs import CalibrationObservation
 from edges_cal.config import config
 
+
+
 console = Console()
 
 main = click.Group()
@@ -704,6 +706,15 @@ def alancal(
     delaystart,
     write_h5,
 ):
+
+    parameters = locals()
+
+    # Save parameters to a text file
+    output_file = "alancal_parameters.txt"
+    with open(output_file, "w") as file:
+        for key, value in parameters.items():
+            file.write(f"{key}: {value}\n")
+                       
     """Run a calibration in as close a manner to Alan's code as possible.
 
     This exists mostly for being able to compare to Alan's memos etc in an easy way. It
@@ -724,6 +735,7 @@ def alancal(
     specday
         The day the spectra were taken on, if doing EDGES-3 cal. Otherwise, zero.
     """
+
     loads = ("amb", "hot", "open", "short")
     datadir = Path(datadir)
     out = Path(out)
@@ -849,6 +861,7 @@ def alancal(
         h5file = out / "specal.h5"
         console.print(f"Writing calibration results to {h5file}")
         calobs.write(h5file)
+
 
 
 @main.command()
