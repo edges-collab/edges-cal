@@ -818,6 +818,7 @@ def alancal(
         for name, load in calobs.loads.items():
             console.print(f"Using delay={load.reflections.model_delay} for load {name}")
 
+    out = Path(out)
     _make_plots(out, calobs, plot)
 
     if write_h5:
@@ -908,6 +909,8 @@ def alancal2(
     specday
         The day the spectra were taken on, if doing EDGES-3 cal. Otherwise, zero.
     """
+    out = Path(out)
+
     if s11_path is None or not Path(s11_path).exists():
         raise ValueError("s11_path does not exist")
     loads = ("amb", "hot", "open", "short")
