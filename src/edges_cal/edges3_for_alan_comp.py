@@ -26,7 +26,7 @@ def get_calobs_edges3(cterms =6, wterms =5, fstart = 48, fstop =198, wfstart =50
         datadir='/data5/edges/data/EDGES3_data/MRO/',
         out=out,
         redo_s11=True,
-        redo_spectra=False,
+        redo_spectra=True,
         redo_cal=True,
         match_resistance=49.8,
         calkit_delays=33,
@@ -60,7 +60,7 @@ def get_calobs_edges3(cterms =6, wterms =5, fstart = 48, fstop =198, wfstart =50
         tstart=0,
         tstop=24,
         delaystart=0,
-        write_h5=False,
+        write_h5=True,
     )
 
     return calobs

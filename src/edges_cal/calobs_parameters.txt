@@ -38,4 +38,4 @@ inject_source_s11s: True
 tstart: 0
 tstop: 24
 delaystart: 0
-write_h5: False
+write_h5: True
