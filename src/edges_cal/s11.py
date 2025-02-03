@@ -249,8 +249,7 @@ class S11Model:
     def _nt_vld(self, att, val):
         if get_mdl(self.model_type) == Fourier and not val % 2:
             raise ValueError(
-                f"n_terms must be odd for Fourier models. For {self} got "
-                f"n_terms={val}."
+                f"n_terms must be odd for Fourier models. For {self} got n_terms={val}."
             )
 
     def clone(self, **kwargs):
