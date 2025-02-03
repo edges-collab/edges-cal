@@ -127,8 +127,9 @@ jobs:
           coverage combine
           coverage xml
 
-      - uses: codecov/codecov-action@v3
+      - uses: codecov/codecov-action@v5
         with:
           fail_ci_if_error: true
           verbose: true
-          file: ./coverage.xml
+          files: ./coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
