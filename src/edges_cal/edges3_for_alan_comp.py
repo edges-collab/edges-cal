@@ -1,29 +1,27 @@
-'''
+"""
 Scripts for comparing alan's output with EDGES-3 from edges-cal
-'''
+"""
 
-from edges_cal.cli import alancal, _average_spectra, _make_plots, _inject_s11s
-from edges_cal.alanmode import read_specal_as_calibrator, corrcsv
 from pathlib import Path
+
+import astropy.units as un
 import numpy as np
 import pandas as pd
-from edges_cal.alanmode import read_spec_txt, read_specal, edges, read_raul_s11_format, reads1p1, read_s11_csv
-import astropy.units as un
-from edges_cal import CalibrationObservation
+
+from edges_cal.alanmode import corrcsv, edges, read_s11_csv, reads1p1
+from edges_cal.cli import _average_spectra, _inject_s11s, _make_plots
 
 
-
-def get_calobs_edges3(cterms =6, wterms =5, fstart = 48, fstop =198, wfstart =50, wfstop =190, nter =4, out = '.'):
-    
-
-    
+def get_calobs_edges3(
+    cterms=6, wterms=5, fstart=48, fstop=198, wfstart=50, wfstop=190, nter=4, out="."
+):
     print(f"Starting calibration for cterms = {cterms} and wterms ={wterms}")
 
     calobs = get_calobs_from_alancal(
         s11date="2022_319_14",
         specyear=2022,
         specday=316,
-        datadir='/data5/edges/data/EDGES3_data/MRO/',
+        datadir="/data5/edges/data/EDGES3_data/MRO/",
         out=out,
         redo_s11=True,
         redo_spectra=True,
@@ -34,7 +32,7 @@ def get_calobs_edges3(cterms =6, wterms =5, fstart = 48, fstop =198, wfstart =50
         open_delay=None,
         short_delay=None,
         lna_cable_length=4.26,
-        lna_cable_loss= -91.5,
+        lna_cable_loss=-91.5,
         lna_cable_dielectric=-1.24,
         fstart=fstart,
         fstop=fstop,
@@ -42,7 +40,7 @@ def get_calobs_edges3(cterms =6, wterms =5, fstart = 48, fstop =198, wfstart =50
         tload=300,
         tcal=1000,
         nter=nter,
-        Lh=-1,  # noqa: N803
+        Lh=-1,
         wfstart=wfstart,
         wfstop=wfstop,
         tcold=306.5,
@@ -217,7 +215,7 @@ def get_calobs_from_alancal(
     # Now do the calibration
     outfile = out / "specal.txt"
     if not redo_cal and outfile.exists():
-        return
+        return None
 
     print("Performing calibration")
     calobs = edges(
@@ -233,7 +231,7 @@ def get_calobs_from_alancal(
         s11short=raws11s["short"],
         s11lna=lna,
         Lh=Lh,
-        nter = nter,
+        nter=nter,
         wfstart=wfstart,
         wfstop=wfstop,
         tcold=tcold,
@@ -261,8 +259,7 @@ def get_calobs_from_alancal(
         h5file = out / "specal.h5"
         print(f"Writing calibration results to {h5file}")
         calobs.write(h5file)
-    
-        
+
     return calobs
 
 
@@ -288,50 +285,51 @@ def read_s11m(pth):
     return freq, pd.DataFrame(s11m)
 
 
-
-def calculate_rms(array, digits =3):
-    '''
+def calculate_rms(array, digits=3):
+    """
     returns RMS of the array
-    '''
-
+    """
     rms = np.sqrt(np.mean(array**2))
     return round(rms, digits)
 
 
 def get_log_liklihood(residuals, sigma):
-    
-    '''
+    """
     Returns log-liklihood given the residuals data and model; and noise distribution
-    '''
-    
+    """
     Nchan = len(residuals)
-    
+
     term1 = -0.5 * Nchan * np.log(2 * np.pi)
     term2 = -Nchan * np.log(np.sum(sigma))
     term3 = -np.sum(residuals**2 / (2 * sigma**2))
-    
-    
+
     log_likelihood = term1 + term2 + term3
 
     return log_likelihood
 
 
 def get_BIC(n, k, log_L):
-    
-    '''
+    """
     computes BIC
-    
+
     BIC = ln(n)*k -2*ln(L)
-    
+
     n: No. of data points (Freq channels)
     k: Free parameters (C and W terms)
     L: Liklihood
-    '''
-    
-    #return np.log(n)*k - 2*np.log(np.abs(L))
-    return np.log(n)*k - 2*(log_L)
+    """
+    # return np.log(n)*k - 2*np.log(np.abs(L))
+    return np.log(n) * k - 2 * (log_L)
+
 
 if __name__ == "__main__":
-     get_calobs_edges3(cterms=7, wterms=7, fstart=48,
-                       fstop=198, nter=8, wfstart=50, wfstop=190, out = '/data4/vydula/edges/edges3-data-analysis/scripts/frequency_tests/cw77/')
-
+    get_calobs_edges3(
+        cterms=7,
+        wterms=7,
+        fstart=48,
+        fstop=198,
+        nter=8,
+        wfstart=50,
+        wfstop=190,
+        out="/data4/vydula/edges/edges3-data-analysis/scripts/frequency_tests/cw77/",
+    )
