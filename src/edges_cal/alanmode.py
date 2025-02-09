@@ -757,6 +757,7 @@ def read_specal(fname):
         usecols=(1, 3, 4, 6, 8, 10, 12, 14, 16),
     )
 
+
 def read_specal_iter(fname):
     """Read a specal file, like the ones output by edges3(k)."""
     return np.genfromtxt(
@@ -781,13 +782,13 @@ def read_alan_calibrated_temp(fname):
     """
     return np.genfromtxt(
         fname,
-        names =[
+        names=[
             "freq",
             "uncal",
             "cal",
         ],
-        delimiter=' ', skip_header=1
-
+        delimiter=" ",
+        skip_header=1,
     )
 
 
