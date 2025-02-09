@@ -422,8 +422,6 @@ def read_specal(fname):
     )
 
 
-
-
 def read_specal_as_calibrator(
     fname: str | Path, nfit1: int = 27, t_load: float = 300, t_load_ns: float = 1000
 ):
