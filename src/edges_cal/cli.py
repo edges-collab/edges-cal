@@ -19,15 +19,16 @@ from traitlets.config import Config
 from edges_cal import calobs as cc
 from edges_cal.alanmode import (
     acqplot7amoon,
-    corrcsv,
-    edges,
-    read_raul_s11_format,
-    read_s11_csv,
     read_spec_txt,
-    reads1p1,
     write_modelled_s11s,
     write_spec_txt,
     write_specal,
+)
+from edges_cal.alanmode import (
+    alancal as acal,
+)
+from edges_cal.alanmode import (
+    alancal2 as acal2,
 )
 from edges_cal.calobs import CalibrationObservation
 from edges_cal.config import config
@@ -591,6 +592,35 @@ def _make_plots(out: Path, calobs: CalibrationObservation, plot):
         ).T,
         header="# freq, hot_load_loss",
     )
+
+    console.print("Saving calibrated temperatures")
+    np.savetxt(
+        out / "calibrated_temps.txt",
+        np.array(
+            [
+                calobs.freq.freq.to_value("MHz"),
+            ]
+            + [calobs.calibrate(load) for load in calobs.loads.values()]
+        ).T,
+        header="# freq, " + ", ".join(calobs.loads),
+    )
+
+    console.print("Saving known load temperatures")
+    np.savetxt(
+        out / "known_load_temps.txt",
+        np.array(
+            [
+                calobs.freq.freq.to_value("MHz"),
+            ]
+            + [
+                calobs.source_thermistor_temps.get(load.load_name, load.temp_ave)
+                * np.ones(calobs.freq.n)
+                for load in calobs.loads.values()
+            ]
+        ).T,
+        header="# freq, " + ", ".join(calobs.loads),
+    )
+
     if plot:
         # Make plots...
         console.print("Plotting S11 models...")
@@ -604,6 +634,13 @@ def _make_plots(out: Path, calobs: CalibrationObservation, plot):
         console.print("Plotting calibration coefficients...")
         fig = calobs.plot_coefficients()
         fig.savefig(out / "calibration_coefficients.png")
+
+        console.print("Plotting calibrated temperatures...")
+        fig = calobs.plot_calibrated_temps(bins=1)
+        fig.savefig(out / "calibrated_temps_rawres.png")
+
+        fig = calobs.plot_calibrated_temps(bins=64)
+        fig.savefig(out / "calibrated_temps_smoothed.png")
 
 
 @main.command()
@@ -724,103 +761,28 @@ def alancal(
     specday
         The day the spectra were taken on, if doing EDGES-3 cal. Otherwise, zero.
     """
-    loads = ("amb", "hot", "open", "short")
-    datadir = Path(datadir)
-    out = Path(out)
-
-    if load_delay is None:
-        load_delay = calkit_delays
-    if open_delay is None:
-        open_delay = calkit_delays
-    if short_delay is None:
-        short_delay = calkit_delays
-
-    raws11s = {}
-    for load in (*loads, "lna"):
-        outfile = out / f"s11{load}.csv"
-        if redo_s11 or not outfile.exists():
-            console.print(f"Calibrating {load} S11")
-
-            fstem = f"{s11date}_lna" if load == "lna" else s11date
-            s11freq, raws11s[load] = reads1p1(
-                Tfopen=Path(datadir) / f"{fstem}_O.s1p",
-                Tfshort=Path(datadir) / f"{fstem}_S.s1p",
-                Tfload=Path(datadir) / f"{fstem}_L.s1p",
-                Tfant=Path(datadir) / f"{s11date}_{load}.s1p",
-                res=match_resistance,
-                loadps=load_delay,
-                openps=open_delay,
-                shortps=short_delay,
-            )
-
-            if load == "lna":
-                # Correction for path length
-                raws11s[load] = corrcsv(
-                    s11freq,
-                    raws11s[load],
-                    lna_cable_length,
-                    lna_cable_dielectric,
-                    lna_cable_loss,
-                )
-
-            # write out the CSV file
-            with open(out / f"s11{load}.csv", "w") as fl:
-                fl.write("BEGIN\n")
-                for freq, s11 in zip(s11freq, raws11s[load], strict=False):
-                    fl.write(
-                        f"{freq.to_value('MHz'):1.16e},{s11.real:1.16e},{s11.imag:1.16e}\n"
-                    )
-                fl.write("END")
-
-        # Always re-read the S11's to match the precision of the C-code.
-        console.print(f"Reading calibrated {load} S11")
-        s11freq, raws11s[load] = read_s11_csv(outfile)
-        s11freq <<= un.MHz
-
-    lna = raws11s.pop("lna")
-
-    # Now average the spectra
-    spectra = {}
-    specdate = f"{specyear:04}_{specday:03}"
-    specfiles = {
-        load: sorted(
-            Path(f"{datadir}/mro/{load}/{specyear:04}").glob(f"{specdate}*{load}.acq")
-        )
-        for load in loads
-    }
-    spfreq, spectra = _average_spectra(
-        specfiles,
-        out,
-        redo_spectra,
-        avg_spectra_path,
+    calobs = acal(
+        s11date=s11date,
+        specyear=specyear,
+        specday=specday,
+        datadir=datadir,
+        out=out,
+        redo_s11=redo_s11,
+        redo_spectra=redo_spectra,
+        redo_cal=redo_cal,
+        match_resistance=match_resistance,
+        calkit_delays=calkit_delays,
+        load_delay=load_delay,
+        open_delay=open_delay,
+        short_delay=short_delay,
+        lna_cable_length=lna_cable_length,
+        lna_cable_loss=lna_cable_loss,
+        lna_cable_dielectric=lna_cable_dielectric,
         fstart=fstart,
         fstop=fstop,
         smooth=smooth,
         tload=tload,
         tcal=tcal,
-        tstart=tstart,
-        tstop=tstop,
-        delaystart=delaystart,
-    )
-
-    # Now do the calibration
-    outfile = out / "specal.txt"
-    if not redo_cal and outfile.exists():
-        return
-
-    console.print("Performing calibration")
-    calobs = edges(
-        spfreq=spfreq,
-        spcold=spectra["amb"],
-        sphot=spectra["hot"],
-        spopen=spectra["open"],
-        spshort=spectra["short"],
-        s11freq=s11freq,
-        s11cold=raws11s["amb"],
-        s11hot=raws11s["hot"],
-        s11open=raws11s["open"],
-        s11short=raws11s["short"],
-        s11lna=lna,
         Lh=Lh,
         wfstart=wfstart,
         wfstop=wfstop,
@@ -831,10 +793,14 @@ def alancal(
         wfit=wfit,
         nfit3=nfit3,
         nfit2=nfit2,
-        tload=tload,
-        tcal=tcal,
+        plot=plot,
+        avg_spectra_path=avg_spectra_path,
+        tstart=tstart,
+        tstop=tstop,
+        delaystart=delaystart,
     )
 
+    loads = ("amb", "hot", "open", "short")
     if modelled_s11_path:
         calobs = _inject_s11s(
             calobs, modelled_s11_path, loads, inject_lna_s11, inject_source_s11s
@@ -843,6 +809,7 @@ def alancal(
         for name, load in calobs.loads.items():
             console.print(f"Using delay={load.reflections.model_delay} for load {name}")
 
+    out = Path(out)
     _make_plots(out, calobs, plot)
 
     if write_h5:
@@ -933,62 +900,26 @@ def alancal2(
     specday
         The day the spectra were taken on, if doing EDGES-3 cal. Otherwise, zero.
     """
+    out = Path(out)
+
     if s11_path is None or not Path(s11_path).exists():
         raise ValueError("s11_path does not exist")
     loads = ("amb", "hot", "open", "short")
-    out = Path(out)
 
-    if s11s_in_raul_format:
-        s11s = read_raul_s11_format(s11_path)
-        s11freq = s11s.pop("freq") << un.MHz
-        raws11s = s11s
-    else:
-        raise NotImplementedError(
-            "We have not yet implemented S11 calibration in alanmode."
-        )
-
-    lna = raws11s.pop("lna")
-
-    # Now average the spectra
-    specfiles = {
-        "amb": [Path(fl) for fl in ambient_acqs],
-        "hot": [Path(fl) for fl in hotload_acqs],
-        "short": [Path(fl) for fl in short_acqs],
-        "open": [Path(fl) for fl in open_acqs],
-    }
-    spfreq, spectra = _average_spectra(
-        specfiles,
-        out,
-        redo_spectra,
-        avg_spectra_path,
+    calobs = acal2(
+        s11_path=s11_path,
+        ambient_acqs=ambient_acqs,
+        hotload_acqs=hotload_acqs,
+        open_acqs=open_acqs,
+        short_acqs=short_acqs,
+        out=out,
+        redo_spectra=redo_spectra,
+        redo_cal=redo_cal,
         fstart=fstart,
         fstop=fstop,
         smooth=smooth,
         tload=tload,
         tcal=tcal,
-        tstart=tstart,
-        tstop=tstop,
-        delaystart=delaystart,
-    )
-
-    # Now do the calibration
-    outfile = out / "specal.txt"
-    if not redo_cal and outfile.exists():
-        return
-
-    console.print("Performing calibration")
-    calobs = edges(
-        spfreq=spfreq,
-        spcold=spectra["amb"],
-        sphot=spectra["hot"],
-        spopen=spectra["open"],
-        spshort=spectra["short"],
-        s11freq=s11freq,
-        s11cold=raws11s["amb"],
-        s11hot=raws11s["hot"],
-        s11open=raws11s["open"],
-        s11short=raws11s["short"],
-        s11lna=lna,
         Lh=Lh,
         wfstart=wfstart,
         wfstop=wfstop,
@@ -999,12 +930,12 @@ def alancal2(
         wfit=wfit,
         nfit3=nfit3,
         nfit2=nfit2,
-        tload=tload,
-        tcal=tcal,
+        avg_spectra_path=avg_spectra_path,
+        s11s_in_raul_format=s11s_in_raul_format,
         lna_poly=lna_poly,
-        s11rig=raws11s["s11rig"],
-        s12rig=raws11s["s12rig"],
-        s22rig=raws11s["s22rig"],
+        tstart=tstart,
+        tstop=tstop,
+        delaystart=delaystart,
     )
 
     if modelled_s11_path:

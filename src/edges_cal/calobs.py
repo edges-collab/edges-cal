@@ -1196,7 +1196,7 @@ class CalibrationObservation:
             out[name] = np.sqrt(np.nanmean(res**2))
         return out
 
-    def plot_calibrated_temps(self, bins=64, fig=None, ax=None, **kwargs):
+    def plot_calibrated_temps(self, bins: int = 64, fig=None, ax=None, **kwargs):
         """
         Plot all calibrated temperatures in a single figure.
 
