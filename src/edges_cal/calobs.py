@@ -1278,11 +1278,9 @@ class CalibrationObservation:
         """
         return attr.evolve(self, **kwargs)
 
-    def write(
-        self,
-    ):
+    def write(self, filename: Path):
         """Write the calibration observation to a file."""
-        self.to_calibrator().write()
+        self.to_calibrator().write(filename=filename)
 
     def to_calibrator(self):
         """Directly create a :class:`Calibrator` object without writing to file."""
@@ -1596,8 +1594,6 @@ class Calibrator:
         with h5py.File(filename, "w") as fl:
             # Write attributes
 
-            fl.attrs["cterms"] = self.cterms
-            fl.attrs["wterms"] = self.wterms
             fl.attrs["t_load"] = self.t_load
             fl.attrs["t_load_ns"] = self.t_load_ns
             fl.attrs["format.version"] = "2.0"
@@ -1620,20 +1616,15 @@ class Calibrator:
         ccgroup["Tcos"] = self.Tcos()
         ccgroup["Tsin"] = self.Tsin()
 
-        rcv_group = fl.create_group("receiver_s11")
-        rcv_group["s11"] = self.receiver_s11
+        fq = self.freq.freq.to_value("MHz")
+        grp = fl.create_group("receiver_s11")
+        grp["s11"] = self.receiver_s11(self.freq.freq)
 
         sw_group = fl.create_group("internal_switch")
         if hasattr(self.internal_switch, "s11_model"):
-            sw_group["s11"] = self.internal_switch.s11_model(
-                self.freq.freq.to_value("MHz")
-            )
-            sw_group["s12"] = self.internal_switch.s12_model(
-                self.freq.freq.to_value("MHz")
-            )
-            sw_group["s22"] = self.internal_switch.s22_model(
-                self.freq.freq.to_value("MHz")
-            )
+            sw_group["s11"] = self.internal_switch.s11_model(fq)
+            sw_group["s12"] = self.internal_switch.s12_model(fq)
+            sw_group["s22"] = self.internal_switch.s22_model(fq)
 
     def _write_model_based_h5(self, fl: h5py.File):
         hickle.dump(
