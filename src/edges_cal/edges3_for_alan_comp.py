@@ -24,7 +24,7 @@ def get_calobs_edges3(
         datadir="/data5/edges/data/EDGES3_data/MRO/",
         out=out,
         redo_s11=True,
-        redo_spectra=True,
+        redo_spectra=False,
         redo_cal=True,
         match_resistance=49.8,
         calkit_delays=33,
