@@ -136,6 +136,7 @@ ignore = [
     "PTH123",
     "PT011",
     "NPY002",
+    "A005",  # module name shadows builtin
     #"E203",
     #"E266",
     #"E501",

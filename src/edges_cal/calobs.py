@@ -1028,9 +1028,9 @@ class CalibrationObservation:
                     f"load must be a Load object or a string (one of {self.load_names})"
                 ) from e
         else:
-            assert isinstance(
-                load, Load
-            ), f"load must be a Load instance, got the {load} {type(Load)}"
+            assert isinstance(load, Load), (
+                f"load must be a Load instance, got the {load} {type(Load)}"
+            )
         return load
 
     def decalibrate(self, temp: np.ndarray, load: Load | str, freq: np.ndarray = None):
