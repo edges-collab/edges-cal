@@ -359,6 +359,7 @@ def get_calibration_quantities_iterative(
     delays_to_fit: np.ndarray = np.array([0.0]),
     fit_method="lstsq",
     poly_spacing: float = 1.0,
+    return_early: bool = False,
 ) -> Generator[tuple[mdl.Polynomial, mdl.Polynomial, NoiseWaveLinearModelFit]]:
     """
     Derive calibration parameters using the scheme laid out in Monsalve (2017).
@@ -504,7 +505,7 @@ def get_calibration_quantities_iterative(
         ).sum()
 
         # Return early if the chi^2 is not improving.
-        if new_sca_off_chisq >= sca_off_chisq:
+        if new_sca_off_chisq >= sca_off_chisq and return_early:
             return p_sca, p_off, best
 
         sca_off_chisq = new_sca_off_chisq
@@ -534,7 +535,7 @@ def get_calibration_quantities_iterative(
         tsin = best.get_tsin(fmask)
 
         # Return early if the chi^2 is not improving.
-        if best.rms >= cable_chisq:
+        if best.rms >= cable_chisq and return_early:
             return p_sca, p_off, best
 
         cable_chisq = best.rms
