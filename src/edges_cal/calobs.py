@@ -31,6 +31,7 @@ from matplotlib import pyplot as plt
 from scipy.interpolate import InterpolatedUnivariateSpline as Spline
 
 from . import loss, s11
+from . import modelling as mdl
 from . import noise_waves as rcf
 from . import reflection_coefficient as rc
 from .cached_property import cached_property, safe_property
@@ -1196,7 +1197,7 @@ class CalibrationObservation:
             out[name] = np.sqrt(np.nanmean(res**2))
         return out
 
-    def plot_calibrated_temps(self, bins=64, fig=None, ax=None, **kwargs):
+    def plot_calibrated_temps(self, bins: int = 64, fig=None, ax=None, **kwargs):
         """
         Plot all calibrated temperatures in a single figure.
 
@@ -1278,73 +1279,9 @@ class CalibrationObservation:
         """
         return attr.evolve(self, **kwargs)
 
-    def write(self, filename: str | Path, fixed_freqs: bool = True):
-        """
-        Write all information required to calibrate a new spectrum to file.
-
-        Parameters
-        ----------
-        filename : path
-            The filename to write to.
-        """
-        # TODO: this is *not* all the metadata available when using edges-io. We should
-        # build a better system of maintaining metadata in subclasses to be used here.
-        with h5py.File(filename, "w") as fl:
-            # Write attributes
-
-            fl.attrs["cterms"] = self.cterms
-            fl.attrs["wterms"] = self.wterms
-            fl.attrs["t_load"] = self.open.spectrum.t_load
-            fl.attrs["t_load_ns"] = self.open.spectrum.t_load_ns
-            fl.attrs["format.version"] = "2.0"
-            fl.attrs["fixed_freqs"] = fixed_freqs
-
-            hickle.dump(self.freq, fl.create_group("frequencies"))
-            hickle.dump(self.metadata, fl.create_group("metadata"))
-
-            # Write calibration coefficients
-            if fixed_freqs:
-                self._write_fixed_freq_h5(fl)
-            else:
-                self._write_model_based_h5(fl)
-
-    def _write_fixed_freq_h5(self, fl: h5py.File):
-        ccgroup = fl.create_group("cal_coefficients")
-        ccgroup["C1"] = self.C1()
-        ccgroup["C2"] = self.C2()
-        ccgroup["Tunc"] = self.Tunc()
-        ccgroup["Tcos"] = self.Tcos()
-        ccgroup["Tsin"] = self.Tsin()
-
-        rcv_group = fl.create_group("receiver_s11")
-        rcv_group["s11"] = self.receiver_s11
-
-        sw_group = fl.create_group("internal_switch")
-        if hasattr(self.internal_switch, "s11_model"):
-            sw_group["s11"] = self.internal_switch.s11_model(
-                self.freq.freq.to_value("MHz")
-            )
-            sw_group["s12"] = self.internal_switch.s12_model(
-                self.freq.freq.to_value("MHz")
-            )
-            sw_group["s22"] = self.internal_switch.s22_model(
-                self.freq.freq.to_value("MHz")
-            )
-
-    def _write_model_based_h5(self, fl: h5py.File):
-        hickle.dump(
-            self.receiver,
-            fl.create_group("receiver_s11"),
-        )
-
-        hickle.dump(
-            self.internal_switch,
-            fl.create_group("internal_switch"),
-        )
-
-        raise NotImplementedError(
-            "writing files with callable calibration models not yet supported"
-        )
+    def write(self, filename: Path):
+        """Write the calibration observation to a file."""
+        self.to_calibrator().write(filename=filename)
 
     def to_calibrator(self):
         """Directly create a :class:`Calibrator` object without writing to file."""
@@ -1605,7 +1542,26 @@ class Calibrator:
             metadata = {}
 
         if "receiver_s11" in fl:
-            receiver_s11 = hickle.load(fl["receiver_s11"])
+            # Receiver S11 needs to be read in manually because several
+            # component classes have moved.
+            badread = hickle.load(fl["receiver_s11"])  # A badly-read ReceiverS11
+            grp = fl["receiver_s11"]["data"]
+            # TODO: can't read model type or transform properly :/
+            receiver_s11 = s11.Receiver(
+                freq=badread.freq,  # still works for now?
+                n_terms=grp["n_terms"][()],
+                model_type=bytearray(grp["model_type"][()]).decode(),
+                complex_model_type=mdl.ComplexMagPhaseModel,
+                model_delay=float(grp["model_delay"][()]) * un.s,
+                model_transform=mdl.UnitTransform(
+                    range=grp["model_transform"]["range"][()],
+                ),
+                set_transform_range=False,
+                model_kwargs=badread.model_kwargs,
+                use_spline=bool(grp["use_spline"][()]),
+                fit_kwargs=badread.fit_kwargs,
+                raw_s11=grp["_raw_s11"][()],
+            ).s11_model
         else:
             _lna_s11_rl = Spline(freq.freq.to_value("MHz"), fl["lna_s11_real"][...])
             _lna_s11_im = Spline(freq.freq.to_value("MHz"), fl["lna_s11_imag"][...])
@@ -1614,7 +1570,25 @@ class Calibrator:
                 return _lna_s11_rl(x) + 1j * _lna_s11_im(x)
 
         if "internal_switch" in fl:
-            internal_switch = hickle.load(fl["internal_switch"])
+            # This was written by hickle, but is no longer auto-readable because
+            # class definitions have moved. So we need to read it manually.
+            grp = fl["internal_switch"]["data"]
+
+            # TODO: this _assumes_ a Polynomial model with UnitTransform, because
+            # I can't figure out how to read this info from the hickle file.
+            internal_switch = s11.InternalSwitch(
+                freq=grp["_freq"][()] * un.Hz,
+                s11_data=grp["s11_data"][()],
+                s12_data=grp["s12_data"][()],
+                s22_data=grp["s22_data"][()],
+                model=mdl.Polynomial(
+                    n_terms=grp["model"]["n_terms"][()],
+                    offset=grp["model"]["offset"][()],
+                    transform=mdl.UnitTransform(
+                        range=grp["model"]["transform"]["range"][()]
+                    ),
+                ),
+            )
         else:
             _intsw_s11_rl = Spline(freq.freq, fl["internal_switch_s11_real"][...])
             _intsw_s11_im = Spline(freq.freq, fl["internal_switch_s11_imag"][...])
@@ -1642,6 +1616,67 @@ class Calibrator:
             t_load_ns=t_load_ns,
             metadata=metadata,
             coefficient_freq_units="norm",
+        )
+
+    def write(self, filename: str | Path, fixed_freqs: bool = True):
+        """
+        Write all information required to calibrate a new spectrum to file.
+
+        Parameters
+        ----------
+        filename : path
+            The filename to write to.
+        """
+        # TODO: this is *not* all the metadata available when using edges-io. We should
+        # build a better system of maintaining metadata in subclasses to be used here.
+        with h5py.File(filename, "w") as fl:
+            # Write attributes
+
+            fl.attrs["t_load"] = self.t_load
+            fl.attrs["t_load_ns"] = self.t_load_ns
+            fl.attrs["format.version"] = "2.0"
+            fl.attrs["fixed_freqs"] = fixed_freqs
+
+            hickle.dump(self.freq, fl.create_group("frequencies"))
+            hickle.dump(self.metadata, fl.create_group("metadata"))
+
+            # Write calibration coefficients
+            if fixed_freqs:
+                self._write_fixed_freq_h5(fl)
+            else:
+                self._write_model_based_h5(fl)
+
+    def _write_fixed_freq_h5(self, fl: h5py.File):
+        ccgroup = fl.create_group("cal_coefficients")
+        ccgroup["C1"] = self.C1()
+        ccgroup["C2"] = self.C2()
+        ccgroup["Tunc"] = self.Tunc()
+        ccgroup["Tcos"] = self.Tcos()
+        ccgroup["Tsin"] = self.Tsin()
+
+        fq = self.freq.freq.to_value("MHz")
+        grp = fl.create_group("receiver_s11")
+        grp["s11"] = self.receiver_s11(self.freq.freq)
+
+        sw_group = fl.create_group("internal_switch")
+        if hasattr(self.internal_switch, "s11_model"):
+            sw_group["s11"] = self.internal_switch.s11_model(fq)
+            sw_group["s12"] = self.internal_switch.s12_model(fq)
+            sw_group["s22"] = self.internal_switch.s22_model(fq)
+
+    def _write_model_based_h5(self, fl: h5py.File):
+        hickle.dump(
+            self.receiver,
+            fl.create_group("receiver_s11"),
+        )
+
+        hickle.dump(
+            self.internal_switch,
+            fl.create_group("internal_switch"),
+        )
+
+        raise NotImplementedError(
+            "writing files with callable calibration models not yet supported"
         )
 
     @classmethod
