@@ -163,7 +163,7 @@ class CoaxialCable:
     """
 
     # These conductivities are taken from Alan's code in cabl2
-    conductivities: dict[str, tp.Conductivity] = {
+    conductivities: dict[str, tp.Conductivity] = {  # noqa: RUF008
         "copper": 5.96e07 * un.siemens / un.m,
         "brass": 5.96e07 * 0.29 * un.siemens / un.m,
         "stainless steel": 5.96e07 * 0.024 * un.siemens / un.m,
