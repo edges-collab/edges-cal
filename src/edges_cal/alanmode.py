@@ -759,7 +759,8 @@ def read_specal(fname):
 
 
 def read_specal_iter(fname):
-    """Read a specal file, like the ones output by edges3(k).
+    """
+    Read a specal file, like the ones output by edges3(k).
     outputs from an intermediate iteration of NW modeling step.
     """
     return np.genfromtxt(
@@ -778,7 +779,8 @@ def read_specal_iter(fname):
 
 
 def read_alan_calibrated_temp(fname):
-    """Read calibrated_{load}.txt from edges3.c.
+    """
+    Read calibrated_{load}.txt from edges3.c.
     This gives uncalibrated and calibrated temperatures.
     """
     return np.genfromtxt(
