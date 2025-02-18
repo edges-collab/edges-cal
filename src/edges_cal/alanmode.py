@@ -9,9 +9,9 @@ from pathlib import Path
 import numpy as np
 from astropy import units as un
 from astropy.constants import c as speed_of_light
+from edges_io.io3 import get_s1p_files
 from pygsdata.select import select_times
 from read_acq.gsdata import read_acq_to_gsdata
-from edges_io.io3 import get_s1p_files
 
 from . import modelling as mdl
 from . import reflection_coefficient as rc
@@ -363,15 +363,15 @@ def _average_spectra(
         spectra[load] = spec["spectra"]
     return spfreq, spectra
 
-def get_s11date(
-        datadir,
-        year,
-        day
-):
-    """Return the name of the s11 date: 2022_318_14 for an input (2022,316)."""
-    file_name = str(get_s1p_files(root_dir=datadir, year=year, day=day, load='open')['input']).split('/')[-1]
 
-    return file_name.rsplit('_', 1)[0]
+def get_s11date(datadir, year, day):
+    """Return the name of the s11 date: 2022_318_14 for an input (2022,316)."""
+    file_name = str(
+        get_s1p_files(root_dir=datadir, year=year, day=day, load="open")["input"]
+    ).split("/")[-1]
+
+    return file_name.rsplit("_", 1)[0]
+
 
 def alancal(
     s11date,
