@@ -371,11 +371,7 @@ def get_s11date(datadir, year, day):
     Default finds a file within 5 days of the input.
     This can be changed with allow_closes_within argument.
     """
-    file_name = get_s1p_files(
-        root_dir=datadir,
-        year=year,
-        day=day,
-        load="open")[
+    file_name = get_s1p_files(root_dir=datadir, year=year, day=day, load="open")[
         "input"
     ].name
 
