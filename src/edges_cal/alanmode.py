@@ -366,11 +366,16 @@ def _average_spectra(
 
 def get_s11date(datadir, year, day):
     """Return the name of the nearest s11 date.
+
     Eg. 2022_318_14 for an input (2022,316).
     Default finds a file within 5 days of the input.
     This can be changed with allow_closes_within argument.
     """
-    file_name = get_s1p_files(root_dir=datadir, year=year, day=day, load="open")[
+    file_name = get_s1p_files(
+        root_dir=datadir,
+        year=year,
+        day=day,
+        load="open")[
         "input"
     ].name
 
@@ -430,7 +435,8 @@ def alancal(
     s11date
         A date-string of the form 2022_319_04 (if doing EDGES-3 cal) or a full path
         to a file containing all calibrated S11s (if doing EDGES-2 cal).
-        If no input is provided, a file within 5 days of the (specyear, specday) will be taken.
+        If no input is provided, a file within 5 days of the
+        (specyear, specday) will be taken.
     specyear
         The year the spectra were taken in, if doing EDGES-3 cal. Otherwise, zero.
     specday
