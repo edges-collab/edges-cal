@@ -363,57 +363,57 @@ def _average_spectra(
         spectra[load] = spec["spectra"]
     return spfreq, spectra
 
-def get_s11date(
-        datadir,
-        year,
-        day
-):
+
+def get_s11date(datadir, year, day):
     """Return the name of the nearest s11 date.
     Eg. 2022_318_14 for an input (2022,316).
     Default finds a file within 5 days of the input.
     This can be changed with allow_closes_within argument.
     """
-    file_name = get_s1p_files(root_dir=datadir, year=year, day=day, load="open")["input"].name
+    file_name = get_s1p_files(root_dir=datadir, year=year, day=day, load="open")[
+        "input"
+    ].name
 
     return file_name.rsplit("_", 1)[0]
+
 
 def alancal(
     specyear,
     specday,
-    datadir = "/data5/edges/data/EDGES3_data/MRO/",
-    out = ".",
-    redo_s11 = True,
-    redo_spectra = False,
-    redo_cal = True,
-    match_resistance = 49.8,
-    calkit_delays = 33,
-    load_delay = None,
-    open_delay = None,
-    short_delay = None,
-    lna_cable_length = 4.26,
-    lna_cable_loss = -91.5,
-    lna_cable_dielectric = -1.24,
-    fstart= 50.0,
-    fstop = 120.0,
-    smooth =8,
-    tload = 300,
-    tcal= 1000,
-    Lh = -1,
+    datadir="/data5/edges/data/EDGES3_data/MRO/",
+    out=".",
+    redo_s11=True,
+    redo_spectra=False,
+    redo_cal=True,
+    match_resistance=49.8,
+    calkit_delays=33,
+    load_delay=None,
+    open_delay=None,
+    short_delay=None,
+    lna_cable_length=4.26,
+    lna_cable_loss=-91.5,
+    lna_cable_dielectric=-1.24,
+    fstart=50.0,
+    fstop=120.0,
+    smooth=8,
+    tload=300,
+    tcal=1000,
+    Lh=-1,
     wfstart=52.0,
-    wfstop = 118.0,
-    tcold = 306.5,
-    thot = 393.22,
-    tcab = 306.5,
-    cfit =5,
-    wfit =6,
-    nfit3 =10,
+    wfstop=118.0,
+    tcold=306.5,
+    thot=393.22,
+    tcab=306.5,
+    cfit=5,
+    wfit=6,
+    nfit3=10,
     nfit2=23,
     plot=False,
-    avg_spectra_path = None,
-    tstart =0,
+    avg_spectra_path=None,
+    tstart=0,
     tstop=24,
     delaystart=0,
-    s11date = None,
+    s11date=None,
 ):
     """Run a calibration in as close a manner to Alan's code as possible.
 
