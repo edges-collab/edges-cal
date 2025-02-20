@@ -9,9 +9,9 @@ from pathlib import Path
 import numpy as np
 from astropy import units as un
 from astropy.constants import c as speed_of_light
+from edges_io.io3 import get_s1p_files
 from pygsdata.select import select_times
 from read_acq.gsdata import read_acq_to_gsdata
-from edges_io.io3 import get_s1p_files
 
 from . import modelling as mdl
 from . import reflection_coefficient as rc
@@ -369,18 +369,19 @@ def get_s11date(
         day
 ):
     """Return the name of the nearest s11 date.
-     Eg. 2022_318_14 for an input (2022,316).
-     Default finds a file within 5 days of the input.
-     This can be changed with allow_closes_within argument."""
-    file_name = get_s1p_files(root_dir=datadir, year=year, day=day, load='open')['input'].name
+    Eg. 2022_318_14 for an input (2022,316).
+    Default finds a file within 5 days of the input.
+    This can be changed with allow_closes_within argument.
+    """
+    file_name = get_s1p_files(root_dir=datadir, year=year, day=day, load="open")["input"].name
 
-    return file_name.rsplit('_', 1)[0]
+    return file_name.rsplit("_", 1)[0]
 
 def alancal(
     specyear,
     specday,
     datadir = "/data5/edges/data/EDGES3_data/MRO/",
-    out = '.',
+    out = ".",
     redo_s11 = True,
     redo_spectra = False,
     redo_cal = True,
