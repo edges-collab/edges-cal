@@ -9,9 +9,9 @@ from pathlib import Path
 import numpy as np
 from astropy import units as un
 from astropy.constants import c as speed_of_light
-from edges_io.io3 import get_s1p_files
 from pygsdata.select import select_times
 from read_acq.gsdata import read_acq_to_gsdata
+from edges_io.io3 import get_s1p_files
 
 from . import modelling as mdl
 from . import reflection_coefficient as rc
@@ -363,53 +363,56 @@ def _average_spectra(
         spectra[load] = spec["spectra"]
     return spfreq, spectra
 
+def get_s11date(
+        datadir,
+        year,
+        day
+):
+    """Return the name of the nearest s11 date.
+     Eg. 2022_318_14 for an input (2022,316).
+     Default finds a file within 5 days of the input.
+     This can be changed with allow_closes_within argument."""
+    file_name = get_s1p_files(root_dir=datadir, year=year, day=day, load='open')['input'].name
 
-def get_s11date(datadir, year, day):
-    """Return the name of the s11 date: 2022_318_14 for an input (2022,316)."""
-    file_name = str(
-        get_s1p_files(root_dir=datadir, year=year, day=day, load="open")["input"]
-    ).split("/")[-1]
-
-    return file_name.rsplit("_", 1)[0]
-
+    return file_name.rsplit('_', 1)[0]
 
 def alancal(
-    s11date,
     specyear,
     specday,
-    datadir,
-    out,
-    redo_s11,
-    redo_spectra,
-    redo_cal,
-    match_resistance,
-    calkit_delays,
-    load_delay,
-    open_delay,
-    short_delay,
-    lna_cable_length,
-    lna_cable_loss,
-    lna_cable_dielectric,
-    fstart,
-    fstop,
-    smooth,
-    tload,
-    tcal,
-    Lh,
-    wfstart,
-    wfstop,
-    tcold,
-    thot,
-    tcab,
-    cfit,
-    wfit,
-    nfit3,
-    nfit2,
-    plot,
-    avg_spectra_path,
-    tstart,
-    tstop,
-    delaystart,
+    datadir = "/data5/edges/data/EDGES3_data/MRO/",
+    out = '.',
+    redo_s11 = True,
+    redo_spectra = False,
+    redo_cal = True,
+    match_resistance = 49.8,
+    calkit_delays = 33,
+    load_delay = None,
+    open_delay = None,
+    short_delay = None,
+    lna_cable_length = 4.26,
+    lna_cable_loss = -91.5,
+    lna_cable_dielectric = -1.24,
+    fstart= 50.0,
+    fstop = 120.0,
+    smooth =8,
+    tload = 300,
+    tcal= 1000,
+    Lh = -1,
+    wfstart=52.0,
+    wfstop = 118.0,
+    tcold = 306.5,
+    thot = 393.22,
+    tcab = 306.5,
+    cfit =5,
+    wfit =6,
+    nfit3 =10,
+    nfit2=23,
+    plot=False,
+    avg_spectra_path = None,
+    tstart =0,
+    tstop=24,
+    delaystart=0,
+    s11date = None,
 ):
     """Run a calibration in as close a manner to Alan's code as possible.
 
@@ -426,6 +429,7 @@ def alancal(
     s11date
         A date-string of the form 2022_319_04 (if doing EDGES-3 cal) or a full path
         to a file containing all calibrated S11s (if doing EDGES-2 cal).
+        If no input is provided, a file within 5 days of the (specyear, specday) will be taken.
     specyear
         The year the spectra were taken in, if doing EDGES-3 cal. Otherwise, zero.
     specday
