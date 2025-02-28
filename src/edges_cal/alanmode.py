@@ -161,6 +161,8 @@ def edges(
     Lh: int = -1,
     wfstart: float = 50,
     wfstop: float = 190,
+    fstart: float = 48,
+    fstop: float = 198,
     tcold: float = 306.5,
     thot: float = 393.22,
     tcab: float | None = None,
@@ -215,9 +217,7 @@ def edges(
     sources = ["ambient", "hot_load", "open", "short"]
     s11_models = {}
     if not isinstance(s11freq, FrequencyRange):
-        s11freq = FrequencyRange(
-            s11freq, f_low=wfstart * un.MHz, f_high=wfstop * un.MHz
-        )
+        s11freq = FrequencyRange(s11freq, f_low=fstart * un.MHz, f_high=fstop * un.MHz)
 
     for name, s11 in zip(sources, [s11cold, s11hot, s11open, s11short], strict=False):
         s11_models[name] = LoadS11(
@@ -521,6 +521,8 @@ def alancal(
         Lh=Lh,
         wfstart=wfstart,
         wfstop=wfstop,
+        fstart=fstart,
+        fstop=fstop,
         tcold=tcold,
         thot=thot,
         tcab=tcab,
