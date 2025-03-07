@@ -299,10 +299,13 @@ class NoiseWaveLinearModel:
         spectrum: dict[str, np.ndarray],
         temp_thermistor: dict[str, np.ndarray],
         method="lstsq",
+        freq_scale: float | None = None,
     ):
         """Obtain a fit of the compositie model to given data."""
         x = np.concatenate([self.freq] * len(self.gamma_src))
-        tr = mdl.ScaleTransform(scale=self.freq[len(self.freq) // 2])
+        if freq_scale is None:
+            freq_scale = self.freq[len(self.freq) // 2]
+        tr = mdl.ScaleTransform(scale=freq_scale)
 
         unc_model = self.model_type(
             n_terms=self.n_terms,
@@ -360,6 +363,7 @@ def get_calibration_quantities_iterative(
     fit_method="lstsq",
     poly_spacing: float = 1.0,
     return_early: bool = False,
+    nwp_freq_scale: float | None = None,
 ) -> Generator[tuple[mdl.Polynomial, mdl.Polynomial, NoiseWaveLinearModelFit]]:
     """
     Derive calibration parameters using the scheme laid out in Monsalve (2017).
@@ -526,6 +530,7 @@ def get_calibration_quantities_iterative(
                 {k: temp_cal_iter[k] for k in srcs},
                 {k: temp_ant[k] for k in srcs},
                 method=fit_method,
+                freq_scale=nwp_freq_scale,
             )
             if best is None or nwmfit.rms < best.rms:
                 best = nwmfit

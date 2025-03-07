@@ -162,6 +162,8 @@ def edges(
     Lh: int = -1,
     wfstart: float = 50,
     wfstop: float = 190,
+    fstart: float = 48,
+    fstop: float = 198,
     tcold: float = 306.5,
     thot: float = 393.22,
     tcab: float | None = None,
@@ -216,9 +218,7 @@ def edges(
     sources = ["ambient", "hot_load", "open", "short"]
     s11_models = {}
     if not isinstance(s11freq, FrequencyRange):
-        s11freq = FrequencyRange(
-            s11freq, f_low=wfstart * un.MHz, f_high=wfstop * un.MHz
-        )
+        s11freq = FrequencyRange(s11freq, f_low=fstart * un.MHz, f_high=fstop * un.MHz)
 
     for name, s11 in zip(sources, [s11cold, s11hot, s11open, s11short], strict=False):
         s11_models[name] = LoadS11(
@@ -394,8 +394,8 @@ def alancal(
     lna_cable_length=4.26,
     lna_cable_loss=-91.5,
     lna_cable_dielectric=-1.24,
-    fstart=50.0,
-    fstop=120.0,
+    fstart=48.0,
+    fstop=198.0,
     smooth=8,
     tload=300,
     tcal=1000,
@@ -408,7 +408,7 @@ def alancal(
     cfit=5,
     wfit=6,
     nfit3=10,
-    nfit2=23,
+    nfit2=27,
     plot=False,
     avg_spectra_path=None,
     tstart=0,
@@ -541,6 +541,8 @@ def alancal(
         Lh=Lh,
         wfstart=wfstart,
         wfstop=wfstop,
+        fstart=fstart,
+        fstop=fstop,
         tcold=tcold,
         thot=thot,
         tcab=tcab,
