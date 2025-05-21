@@ -570,7 +570,7 @@ class LoadSpectrum:
             ).to_value("K")
 
         freq = FrequencyRange.from_edges(f_low=f_low, f_high=f_high)
-        mask = ~spec.complete_flags[0,0,:,freq.mask]
+        mask = ~spec.complete_flags[0, 0, :, freq.mask]
         q = dicke_calibration(spec).data[0, 0, :, freq.mask]
 
         freq = freq.decimate(
@@ -591,7 +591,7 @@ class LoadSpectrum:
 
         out = cls(
             freq=freq,
-            q = q.sum(axis=0)/np.sum(mask,axis=0),
+            q=q.sum(axis=0) / np.sum(mask, axis=0),
             variance=np.var(q, axis=0),
             n_integrations=q.shape[0],
             temp_ave=temperature,
