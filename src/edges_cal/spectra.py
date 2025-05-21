@@ -570,6 +570,7 @@ class LoadSpectrum:
             ).to_value("K")
 
         freq = FrequencyRange.from_edges(f_low=f_low, f_high=f_high)
+        mask = ~spec.complete_flags[0,0,:,freq.mask]
         q = dicke_calibration(spec).data[0, 0, :, freq.mask]
 
         freq = freq.decimate(
@@ -581,14 +582,16 @@ class LoadSpectrum:
         if freq_bin_size > 1:
             if frequency_smoothing == "bin":
                 q = tools.bin_array(q, size=freq_bin_size)
+                mask = tools.bin_array(mask, size=freq_bin_size)
             elif frequency_smoothing == "gauss":
                 q = tools.gauss_smooth(q, size=freq_bin_size, decimate_at=0)
+                mask = tools.gauss_smooth(mask, size=freq_bin_size, decimate_at=0)
             else:
                 raise ValueError("frequency_smoothing must be one of ('bin', 'gauss').")
 
         out = cls(
             freq=freq,
-            q=q.mean(axis=0),
+            q = q.sum(axis=0)/np.sum(mask,axis=0),
             variance=np.var(q, axis=0),
             n_integrations=q.shape[0],
             temp_ave=temperature,
