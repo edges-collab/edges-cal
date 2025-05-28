@@ -573,7 +573,7 @@ class LoadSpectrum:
         mask = ~spec.complete_flags[0, 0, :, freq.mask]
         q = dicke_calibration(spec).data[0, 0, :, freq.mask]
         q[~mask] = np.nan
-        
+
         freq = freq.decimate(
             bin_size=freq_bin_size,
             decimate_at=0 if frequency_smoothing == "gauss" else "centre",
