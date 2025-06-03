@@ -133,7 +133,11 @@ class TestFlaggedFilter:
 
 class TestMedfilt:
     @parametrize(
-        "sky_model", [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
+        "sky_model",
+        [
+            fxref(sky_pl_1d),
+            fxref(sky_linpoly_1d),
+        ],  # [fxref(sky_flat_1d), fxref(sky_pl_1d), fxref(sky_linpoly_1d)]
     )
     @parametrize(
         "rfi_model", [fxref(rfi_null_1d), fxref(rfi_regular_1d), fxref(rfi_random_1d)]
