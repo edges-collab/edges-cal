@@ -69,7 +69,7 @@ report = [
 
 dev = [
     "edges-cal[docs,report]",
-    "pytest",
+    "pytest<8.4.0",  # 8.4.0 has a bug that breaks our tests see https://github.com/smarie/python-pytest-cases/issues/364
     "pytest-cov",
     "pytest-cases",
     "pre-commit",
