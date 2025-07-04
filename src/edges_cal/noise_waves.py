@@ -427,7 +427,8 @@ def get_calibration_quantities_iterative(
         for key, value in temp_ant.items()
     }
     temp_ant_hot = temp_ant["hot_load"]
-
+    hot_load_loss = hot_load_loss[mask]
+    
     # The denominator of each term in Eq. 7
     G = 1 - np.abs(gamma_rec(fmask)) ** 2
 
