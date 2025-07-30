@@ -570,7 +570,9 @@ class LoadSpectrum:
             ).to_value("K")
 
         freq = FrequencyRange.from_edges(f_low=f_low, f_high=f_high)
+        mask = ~spec.complete_flags[0, 0, :, freq.mask]
         q = dicke_calibration(spec).data[0, 0, :, freq.mask]
+        q[~mask] = np.nan
 
         freq = freq.decimate(
             bin_size=freq_bin_size,
@@ -588,7 +590,7 @@ class LoadSpectrum:
 
         out = cls(
             freq=freq,
-            q=q.mean(axis=0),
+            q=np.nanmean(q, axis=0),
             variance=np.var(q, axis=0),
             n_integrations=q.shape[0],
             temp_ave=temperature,
