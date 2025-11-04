@@ -9,7 +9,7 @@ black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://gith
 
 **Calculate calibration coefficients for EDGES Calibration Observations**
 
-### NOTE: this repo is deprecated. All functionality is included in `edges-analysis <https://github.com/edges-collab/edges-analysis>`_.
+### NOTE: this repo is deprecated. All functionality is included in `edges-analysis`
 
 ## Installation
 
